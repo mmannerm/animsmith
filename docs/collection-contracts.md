@@ -192,20 +192,35 @@ candidate may truthfully retain the input content identity; freshness comes
 from capturing the serialization result, not from requiring unequal digests.
 
 Each member must contain complete positive left/right support windows, each
-with exactly one same-side marker. Linear and circular overlaps, simultaneous
-boundaries (including the normalized 0/1 seam), missing sides, repeated sides,
-and non-alternating runs refuse. The planner rotates only the *topology
-signature* to each member's first left-support onset for positional
-correspondence; it does not cyclically rotate clip time. Therefore the
-reference boundary phase remains its authored normalized phase and a member
-that would require moving phase zero refuses as non-monotone.
+with exactly one same-side marker. Fragment rows stay physically linear:
+windows are partitioned by side, and same-side runs must be strictly disjoint
+(even touching same-side runs refuse). When one side has both a first run
+starting at `0` and a distinct last run ending at `1`, those two physical rows
+form one logical cyclic stance. Their artificial seam edges are omitted from
+topology correspondence, while both windows and both markers remain in the
+transformed fragment. A single full-cycle `[0,1]` stance refuses. Opposite-side
+windows may overlap or touch. After seam coalescing, both sides must have the
+same nonzero logical-run count and their onsets must alternate around the
+cycle.
+
+The planner derives true logical onsets/releases in deterministic cyclic
+chronological order, including a fixed kind order for simultaneous phases. It
+rotates only the correspondence sequence to a true left-support onset; it does
+not rotate numeric clip phases. Therefore the reference boundary phase remains
+its authored normalized phase and a member that would require moving phase
+zero, including incompatible wrap/non-wrap correspondence, refuses as
+non-monotone.
 
 For matching signatures, corresponding source onsets/releases map to the
-reference phases. `(0,0)` and `(1,1)` are added, exact duplicate endpoint
-boundaries are collapsed, and every resulting segment must be finite, strictly
-increasing, continuous, and within the inclusive declared slope range. The
-planner preflights the 4,096-point contact-transform cap and returns one
-duration-preserving `ContactTransformOperationV1::TimeWarp` plus exact
+reference phases. Simultaneous source boundaries are admitted only when all
+corresponding reference boundaries are simultaneous at one phase, and vice
+versa. Identical `(source, output)` pairs collapse to one map knot; a group
+split on either axis refuses. `(0,0)` and `(1,1)` are then included in that same
+deduplication, so the planner preflights the 4,096-point contact-transform cap
+from the retained knots rather than raw boundary rows. Every resulting segment
+must be finite, strictly increasing, continuous, and within the inclusive
+declared slope range. The planner returns one duration-preserving
+`ContactTransformOperationV1::TimeWarp` plus exact
 `ContactTransformBindingV1` per member.
 
 The separate pure `time_warp_clip_v1` seam consumes one such member plan only

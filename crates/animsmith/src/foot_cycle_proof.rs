@@ -654,6 +654,20 @@ struct ContactBoundary {
     edge: ContactEdge,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ContactWindow {
+    side: ContactSide,
+    start: f64,
+    end: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LogicalContactWindow {
+    side: ContactSide,
+    onset: f64,
+    release: f64,
+}
+
 fn prove_contact_boundaries(
     expected: &ContactFragmentV1,
     detected: &ContactFragmentV1,
@@ -662,6 +676,19 @@ fn prove_contact_boundaries(
     let expected = contact_boundaries(expected)?;
     let detected = contact_boundaries(detected)?;
     if expected.len() != detected.len() {
+        return Err(FootCycleProofError::new(
+            FootCycleProofKind::ContactTopology,
+        ));
+    }
+    if expected
+        .iter()
+        .zip(expected.iter().cycle().skip(1))
+        .zip(detected.iter().zip(detected.iter().cycle().skip(1)))
+        .take(expected.len())
+        .any(|((expected, expected_next), (detected, detected_next))| {
+            (expected.phase == expected_next.phase) != (detected.phase == detected_next.phase)
+        })
+    {
         return Err(FootCycleProofError::new(
             FootCycleProofKind::ContactTopology,
         ));
@@ -931,7 +958,8 @@ fn is_admissible_constant_cubic(track: &Track) -> bool {
 fn contact_boundaries(
     fragment: &ContactFragmentV1,
 ) -> Result<Vec<ContactBoundary>, FootCycleProofError> {
-    let mut boundaries = Vec::new();
+    let mut windows = [Vec::new(), Vec::new()];
+    let mut markers = [Vec::new(), Vec::new()];
     for event in fragment.events() {
         let side = match event.role() {
             ContactRoleV1::LeftFoot | ContactRoleV1::LeftToe => ContactSide::Left,
@@ -946,18 +974,15 @@ fn contact_boundaries(
             (ContactPhaseV1::Begin, ContactEventKindV1::Window(window))
                 if window.start() < window.end() =>
             {
-                boundaries.push(ContactBoundary {
-                    phase: window.start(),
+                windows[contact_side_index(side)].push(ContactWindow {
                     side,
-                    edge: ContactEdge::Onset,
-                });
-                boundaries.push(ContactBoundary {
-                    phase: window.end(),
-                    side,
-                    edge: ContactEdge::Release,
+                    start: window.start(),
+                    end: window.end(),
                 });
             }
-            (ContactPhaseV1::Marker, ContactEventKindV1::Point(_)) => {}
+            (ContactPhaseV1::Marker, ContactEventKindV1::Point(phase)) => {
+                markers[contact_side_index(side)].push(phase);
+            }
             _ => {
                 return Err(FootCycleProofError::new(
                     FootCycleProofKind::ContactTopology,
@@ -965,35 +990,123 @@ fn contact_boundaries(
             }
         }
     }
-    boundaries.sort_by(|left, right| left.phase.total_cmp(&right.phase));
-    let windows = boundaries
-        .as_chunks::<2>()
-        .0
+
+    let mut logical = Vec::new();
+    for (side_windows, side_markers) in windows.iter_mut().zip(&mut markers) {
+        side_windows.sort_by(|left, right| left.start.total_cmp(&right.start));
+        side_markers.sort_by(|left, right| left.total_cmp(right));
+        if side_windows.is_empty()
+            || side_windows.len() != side_markers.len()
+            || side_windows
+                .windows(2)
+                .any(|pair| pair[0].end >= pair[1].start)
+            || side_windows
+                .iter()
+                .zip(side_markers)
+                .any(|(window, marker)| *marker < window.start || *marker > window.end)
+        {
+            return Err(FootCycleProofError::new(
+                FootCycleProofKind::ContactTopology,
+            ));
+        }
+        let first = side_windows[0];
+        let last = side_windows[side_windows.len() - 1];
+        if first.start == 0.0 && last.end == 1.0 {
+            if side_windows.len() == 1 {
+                return Err(FootCycleProofError::new(
+                    FootCycleProofKind::ContactTopology,
+                ));
+            }
+            logical.push(LogicalContactWindow {
+                side: first.side,
+                onset: last.start,
+                release: first.end,
+            });
+            logical.extend(
+                side_windows[1..side_windows.len() - 1]
+                    .iter()
+                    .map(|window| LogicalContactWindow {
+                        side: window.side,
+                        onset: window.start,
+                        release: window.end,
+                    }),
+            );
+        } else {
+            logical.extend(side_windows.iter().map(|window| LogicalContactWindow {
+                side: window.side,
+                onset: window.start,
+                release: window.end,
+            }));
+        }
+    }
+
+    let left_count = logical
         .iter()
-        .map(|pair| (pair[0].side, pair[0].edge, pair[1].side, pair[1].edge))
-        .collect::<Vec<_>>();
-    if boundaries.is_empty()
-        || !boundaries.len().is_multiple_of(2)
-        || boundaries
+        .filter(|window| window.side == ContactSide::Left)
+        .count();
+    let right_count = logical.len() - left_count;
+    logical.sort_by(|left, right| {
+        left.onset
+            .total_cmp(&right.onset)
+            .then_with(|| contact_side_index(left.side).cmp(&contact_side_index(right.side)))
+    });
+    if left_count == 0
+        || left_count != right_count
+        || logical
             .iter()
-            .any(|boundary| !boundary.phase.is_finite())
-        || boundaries
-            .windows(2)
-            .any(|pair| pair[0].phase >= pair[1].phase)
-        || windows
-            .iter()
-            .any(|&(left_side, left_edge, right_side, right_edge)| {
-                left_side != right_side
-                    || left_edge != ContactEdge::Onset
-                    || right_edge != ContactEdge::Release
-            })
-        || windows.windows(2).any(|pair| pair[0].0 == pair[1].0)
+            .zip(logical.iter().cycle().skip(1))
+            .take(logical.len())
+            .any(|(left, right)| left.side == right.side)
     {
         return Err(FootCycleProofError::new(
             FootCycleProofKind::ContactTopology,
         ));
     }
+
+    let mut boundaries = Vec::with_capacity(logical.len() * 2);
+    for window in logical {
+        boundaries.push(ContactBoundary {
+            phase: window.onset,
+            side: window.side,
+            edge: ContactEdge::Onset,
+        });
+        boundaries.push(ContactBoundary {
+            phase: window.release,
+            side: window.side,
+            edge: ContactEdge::Release,
+        });
+    }
+    boundaries.sort_by(|left, right| {
+        left.phase.total_cmp(&right.phase).then_with(|| {
+            contact_boundary_key(left.side, left.edge)
+                .cmp(&contact_boundary_key(right.side, right.edge))
+        })
+    });
+    let origin = boundaries
+        .iter()
+        .position(|boundary| {
+            boundary.side == ContactSide::Left && boundary.edge == ContactEdge::Onset
+        })
+        .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::ContactTopology))?;
+    boundaries.rotate_left(origin);
     Ok(boundaries)
+}
+
+const fn contact_side_index(side: ContactSide) -> usize {
+    match side {
+        ContactSide::Left => 0,
+        ContactSide::Right => 1,
+    }
+}
+
+const fn contact_boundary_key(side: ContactSide, edge: ContactEdge) -> (usize, usize) {
+    (
+        contact_side_index(side),
+        match edge {
+            ContactEdge::Onset => 0,
+            ContactEdge::Release => 1,
+        },
+    )
 }
 
 fn metric_work(
@@ -1404,7 +1517,7 @@ mod tests {
             0.0078125
         );
         let wrong_side = contact_fragment(&[
-            (ContactRoleV1::RightFoot, 0.125, 0.25),
+            (ContactRoleV1::LeftFoot, 0.125, 0.25),
             (ContactRoleV1::LeftFoot, 0.625, 0.75),
         ]);
         assert_eq!(
@@ -1422,6 +1535,83 @@ mod tests {
                 .unwrap_err()
                 .kind(),
             FootCycleProofKind::ContactBoundary
+        );
+    }
+
+    #[test]
+    fn contact_proof_accepts_overlap_and_seam_but_rejects_same_side_overlap() {
+        let overlap = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.1, 0.45),
+            (ContactRoleV1::RightFoot, 0.3, 0.7),
+        ]);
+        let shifted_overlap = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.11, 0.46),
+            (ContactRoleV1::RightFoot, 0.31, 0.71),
+        ]);
+        assert!(prove_contact_boundaries(&overlap, &shifted_overlap, 0.011).is_ok());
+
+        let seam = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.0, 0.3),
+            (ContactRoleV1::RightFoot, 0.2, 0.8),
+            (ContactRoleV1::LeftFoot, 0.7, 1.0),
+        ]);
+        let shifted_seam = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.0, 0.31),
+            (ContactRoleV1::RightFoot, 0.21, 0.81),
+            (ContactRoleV1::LeftFoot, 0.71, 1.0),
+        ]);
+        assert!(prove_contact_boundaries(&seam, &shifted_seam, 0.011).is_ok());
+
+        let both_seams = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.0, 0.2),
+            (ContactRoleV1::RightFoot, 0.0, 0.3),
+            (ContactRoleV1::LeftFoot, 0.7, 1.0),
+            (ContactRoleV1::RightFoot, 0.8, 1.0),
+        ]);
+        let shifted_both_seams = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.0, 0.21),
+            (ContactRoleV1::RightFoot, 0.0, 0.31),
+            (ContactRoleV1::LeftFoot, 0.71, 1.0),
+            (ContactRoleV1::RightFoot, 0.81, 1.0),
+        ]);
+        assert!(prove_contact_boundaries(&both_seams, &shifted_both_seams, 0.011).is_ok());
+
+        let simultaneous = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.1, 0.3),
+            (ContactRoleV1::RightFoot, 0.3, 0.6),
+        ]);
+        let shifted_simultaneous = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.11, 0.31),
+            (ContactRoleV1::RightFoot, 0.31, 0.61),
+        ]);
+        assert!(prove_contact_boundaries(&simultaneous, &shifted_simultaneous, 0.011).is_ok());
+
+        let malformed = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.1, 0.3),
+            (ContactRoleV1::LeftFoot, 0.2, 0.4),
+            (ContactRoleV1::RightFoot, 0.5, 0.6),
+            (ContactRoleV1::RightFoot, 0.7, 0.8),
+        ]);
+        assert_eq!(
+            prove_contact_boundaries(&malformed, &malformed, 0.5)
+                .unwrap_err()
+                .kind(),
+            FootCycleProofKind::ContactTopology
+        );
+
+        let touching = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.1, 0.3),
+            (ContactRoleV1::RightFoot, 0.3, 0.6),
+        ]);
+        let separated = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.1, 0.29),
+            (ContactRoleV1::RightFoot, 0.31, 0.6),
+        ]);
+        assert_eq!(
+            prove_contact_boundaries(&touching, &separated, 0.02)
+                .unwrap_err()
+                .kind(),
+            FootCycleProofKind::ContactTopology
         );
     }
 
