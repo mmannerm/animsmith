@@ -7,6 +7,10 @@ h1 { font-size: 1.1rem }
 .warning { color: var(--warning) }
 .sync { background: var(--surface); display: flex; gap: 1rem; align-items: center }
 .sync input { min-width: 20rem }
+.sync button {
+  background: var(--raised); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 5px; padding: .25rem .6rem; font: inherit; cursor: pointer;
+}
 /* The shared root panel is one full-width row inside the same grid as the
    panes, placed after both judged poses: it is one panel about one channel,
    so leading with it made the least of the comparison read as the most. */

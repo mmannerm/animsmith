@@ -512,7 +512,7 @@ pub fn render_comparison(
     let after_gait = pose_panel("after-gait", "0 0 360 180", options.evidence_only);
     let shared_js = shared_runtime();
     // Every comparison panel is drawn from the pose grid, so an
-    // evidence-only document has no shared phase left to scrub.
+    // evidence-only document has no shared phase left to scrub or play.
     let scrub_state = if options.evidence_only {
         " disabled"
     } else {
@@ -525,7 +525,7 @@ pub fn render_comparison(
          <body><header><h1>animsmith visual comparison</h1></header>\n\
          <section class=\"disclosure\"><p id=\"mapping\"></p>\n\
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
-         <section class=\"sync\"><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
+         <section class=\"sync\"><button id=\"play\"{scrub_state}>▶</button><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
          <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><h3>Judged pose at the shared phase</h3>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p></section>\n\
          <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><h3>Judged pose at the shared phase</h3>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p></section>\n\
          <section class=\"side shared-chart\" id=\"root-panel\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\

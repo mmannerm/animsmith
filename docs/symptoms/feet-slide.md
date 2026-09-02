@@ -27,7 +27,7 @@ interval.
 [Open the interactive comparison](../visuals/foot-slide.comparison.html) to
 see the before and after side by side, or the
 [single-clip report of the defective clip](../visuals/foot-slide-before.report.html).
-Scrub the shared phase to move both sides together: the two feet
+Press play beside the shared phase to run both sides together: the two feet
 should alternate, one planted flat at contact height while the other swings,
 and a foot that moves horizontally inside its shaded band is the slide.
 

@@ -3895,3 +3895,37 @@ fn the_comparison_orders_its_panels_pose_root_trails_gait() {
         );
     }
 }
+
+/// The shared phase is playable as well as scrubbable.
+///
+/// Both sides already draw whatever that one number says, so playing it runs
+/// the two clips together — which is what a reader compares a repair on. The
+/// control sits beside the scrub rather than inside a panel, because it
+/// drives the document rather than one picture.
+#[test]
+fn the_comparison_can_play_its_shared_phase() {
+    let html = comparison_documents(full());
+    let sync = html
+        .split_once("<section class=\"sync\">")
+        .expect("the shared-phase controls")
+        .1
+        .split_once("</section>")
+        .expect("the controls close")
+        .0;
+    assert!(
+        sync.contains("<button id=\"play\"") && sync.contains("id=\"scrub\""),
+        "play sits beside the scrub: {sync}"
+    );
+    assert!(
+        !element_with_id(&html, "play").contains("disabled"),
+        "a comparison with poses can play them"
+    );
+
+    // With no pose grid there is no shared phase to advance, so the control
+    // is disabled in the document rather than left to fail on a press.
+    let evidence = comparison_documents(evidence_only());
+    assert!(
+        element_with_id(&evidence, "play").contains("disabled"),
+        "an evidence-only comparison leaves playback enabled"
+    );
+}

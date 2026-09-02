@@ -122,6 +122,11 @@ function run(parts, dataId, html, payload, options) {
   // The fragment is read, never written: every assignment to location.hash
   // is counted so a viewer that rewrites the URL cannot pass unnoticed.
   const hash = { value: settings.hash || "", writes: 0 };
+  // A frame loop the harness drives: `requestAnimationFrame` records the
+  // callback instead of scheduling it, so a viewer that animates does
+  // nothing until a test asks for the next frame — and a test that asks can
+  // observe exactly what one frame changed.
+  const clock = { now: 0, pending: [] };
   const location = {
     get hash() { return hash.value; },
     set hash(next) { hash.writes++; hash.value = next; },
@@ -146,13 +151,22 @@ function run(parts, dataId, html, payload, options) {
     location,
     getComputedStyle: () => settings.styles || noStyles,
     matchMedia: () => ({ matches: false, addEventListener(kind, handler) { media[kind] = handler; }, removeEventListener() {} }),
-    performance: { now: () => 0 }, requestAnimationFrame: () => 0,
+    performance: { now: () => clock.now },
+    requestAnimationFrame: (callback) => clock.pending.push(callback),
     atob: value => Buffer.from(value, "base64").toString("binary"),
     Uint8Array, Float32Array, Buffer, Math, Map, Set, Array, Number, Object, Infinity, JSON, console,
   };
   vm.createContext(context);
   vm.runInContext(`${parts.shared}\n${parts.viewer}`, context);
-  return { nodes, root, listeners, context, charts, hash, media, settings };
+  return { nodes, root, listeners, context, charts, hash, media, settings, clock };
+}
+
+// One animation frame, `seconds` after the last one.
+function stepFrame(state, seconds) {
+  state.clock.now += seconds * 1000;
+  const pending = state.clock.pending.splice(0, state.clock.pending.length);
+  for (const callback of pending) callback(state.clock.now);
+  return pending.length;
 }
 
 // SVG shows no text unless an element carries it, so no panel may explain
@@ -405,6 +419,39 @@ for (const side of ["before", "after"]) {
   if (panelAt(`${side}-path`) > panelAt(`${side}-gait`)) throw new Error(`${side}: its gait panel is rendered before its role trajectories`);
 }
 
+// ---- the shared phase plays --------------------------------------------
+// One number drives both sides, so playing it animates the two clips
+// together at the before clip's own duration. Nothing about it touches the
+// fragment: `#frame=` stays a way in, never something the document writes.
+const playback = run(generated, "comparison-report-data", html, data);
+const playMax = Number(playback.nodes.scrub.max);
+const poseArcs = (state, side) => JSON.stringify(state.nodes[`${side}-gl`].context.arcs);
+if (!/<button id="play"[^>]*>▶<\/button>/.test(html)) throw new Error("the comparison does not open paused, with a play control the document itself labels");
+const paused = {before: poseArcs(playback, "before"), after: poseArcs(playback, "after")};
+playback.nodes.play.listeners.click();
+if (playback.nodes.play.textContent !== "⏸") throw new Error("pressing play did not start the shared phase");
+if (!stepFrame(playback, data.before.clip.duration / 4)) throw new Error("playing scheduled no animation frame");
+const quarter = Number(playback.nodes.scrub.value);
+if (Math.abs(quarter - playMax / 4) > 1) throw new Error(`the shared phase does not advance at the before clip's ${data.before.clip.duration}s duration: frame ${quarter} after a quarter of it, against ${playMax / 4}`);
+for (const side of ["before", "after"]) {
+  if (poseArcs(playback, side) === paused[side]) throw new Error(`playing the shared phase did not redraw the ${side} pose pane`);
+}
+// Past the end it loops rather than stopping there.
+stepFrame(playback, data.before.clip.duration);
+const looped = Number(playback.nodes.scrub.value);
+if (!(looped >= 0 && looped <= quarter + 1)) throw new Error(`the shared phase did not loop at the end of the clip: frame ${looped} of ${playMax}`);
+// Scrubbing takes the phase back, the way the single-clip viewer does.
+playback.nodes.scrub.value = "10";
+playback.nodes.scrub.listeners.input();
+if (playback.nodes.play.textContent !== "▶") throw new Error("scrubbing did not pause the shared phase");
+stepFrame(playback, data.before.clip.duration / 4);
+if (Number(playback.nodes.scrub.value) !== 10) throw new Error("a paused comparison kept advancing the shared phase");
+// And so does selecting a finding, which would otherwise be overwritten by
+// the next frame.
+playback.nodes.play.listeners.click();
+playback.nodes["before-findings"].children[0].listeners.click();
+if (playback.nodes.play.textContent !== "▶") throw new Error("selecting a finding did not pause the shared phase");
+assertNoHashWrites(playback, "playing the shared phase");
 
 // Two stance windows at the same frames stay two visible bands. The left
 // and right shading are semi-transparent, so drawing them over each other
@@ -624,6 +671,11 @@ if (!/<path class="root-path"/.test(singleEvidenceHtml)) throw new Error("an evi
 const evidenceRun = run(comparisonEvidence, "comparison-report-data", comparisonEvidenceHtml, evidencePayload, {omitted: poseSurfaces});
 const evidenceNodes = evidenceRun.nodes;
 if (!evidenceNodes.scrub.disabled) throw new Error("the shared phase stayed scrubbable with no pose grid behind it");
+if (!/<button id="play"[^>]*\sdisabled/.test(comparisonEvidenceHtml)) throw new Error("the evidence-only comparison leaves playback enabled in its markup");
+if (!evidenceNodes.play.disabled) throw new Error("the shared phase stayed playable with no pose grid behind it");
+evidenceNodes.play.listeners.click();
+if (evidenceNodes.play.textContent === "⏸") throw new Error("an evidence-only comparison started playing a grid it does not carry");
+if (evidenceRun.clock.pending.length) throw new Error("an evidence-only comparison scheduled an animation frame");
 if (evidenceNodes["before-findings"].children.length !== evidencePayload.before.findings.length || !evidenceNodes["before-identity"].textContent.includes(evidencePayload.before.dependency_closure_identity.sha256)) throw new Error("an evidence-only comparison dropped findings or identities");
 if (!evidenceNodes.times.textContent.includes("not a time warp") || !evidenceNodes.mapping.textContent) throw new Error("an evidence-only comparison dropped its phase disclosures");
 

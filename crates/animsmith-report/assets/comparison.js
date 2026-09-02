@@ -419,6 +419,7 @@ function nearestFrame(side, time) {
 }
 function selectFinding(name, index) {
   const row = data[name].findings[index], side = data[name]; if (!row) return;
+  pausePlayback();
   const frame = nearestFrame(side, row.time == null ? 0 : row.time), phase = frame / Math.max(1, side.clip.frames - 1);
   selectedFrames = { before: Math.round(phase * Math.max(0, data.before.clip.frames - 1)), after: Math.round(phase * Math.max(0, data.after.clip.frames - 1)) };
   selectedFrames[name] = frame; q("scrub").value = Math.round(sharedFrameMax * phase);
@@ -480,10 +481,57 @@ function applyFragment() {
   // the parser could not read restores frame 0. Either way the previous
   // selection does not stand.
   selectedFrames = null; selectedContext = null;
+  pausePlayback();
   q("scrub").value = options.frame == null ? 0 : Math.min(options.frame, sharedFrameMax);
 }
 
-q("scrub").addEventListener("input", () => { selectedFrames = null; selectedContext = null; update(); });
+// ---- shared-phase playback ---------------------------------------------
+// Both panes already draw whatever the shared phase says, so playing is
+// nothing more than advancing that one number. It advances at the before
+// clip's own duration — the phase is a display mapping, not a retime, so
+// there is no combined timeline to run at — and wraps at the end the way a
+// looping clip does. Nothing here touches the fragment: the `#frame=` deep
+// link stays a way in, never a thing the document writes back.
+const playButton = q("play");
+// Frames of shared phase per second. A clip with no positive duration, a
+// single judged frame, or no embedded poses has nothing to advance through,
+// and the button stays disabled rather than becoming a control that does
+// nothing when pressed.
+const playRate = (() => {
+  const duration = data.before.clip.duration;
+  if (posesOmitted || !(duration > 0) || !Number.isFinite(duration) || sharedFrameMax < 1) return 0;
+  return sharedFrameMax / duration;
+})();
+if (!playRate) playButton.disabled = true;
+let playing = false, playFrame = 0, playedAt = 0;
+function pausePlayback() {
+  if (!playing) return;
+  playing = false;
+  playButton.textContent = "▶";
+}
+function tick(now) {
+  if (!playing) return;
+  const elapsed = Number.isFinite(now - playedAt) ? Math.max(0, (now - playedAt) / 1000) : 0;
+  playedAt = now;
+  playFrame += elapsed * playRate;
+  if (playFrame > sharedFrameMax) playFrame = 0;
+  selectedFrames = null; selectedContext = null;
+  q("scrub").value = Math.round(playFrame);
+  update();
+  requestAnimationFrame(tick);
+}
+playButton.addEventListener("click", () => {
+  if (!playRate) return;
+  playing = !playing;
+  playButton.textContent = playing ? "⏸" : "▶";
+  if (!playing) return;
+  // Resume from wherever the reader left the phase, not from where playback
+  // last stopped: a scrub between two presses is the position they chose.
+  playFrame = Number(q("scrub").value) || 0;
+  playedAt = performance.now();
+  requestAnimationFrame(tick);
+});
+q("scrub").addEventListener("input", () => { pausePlayback(); selectedFrames = null; selectedContext = null; update(); });
 window.addEventListener("resize", update);
 animsmithOnSchemeChange(() => { documentPalette = animsmithPalette(); update(); });
 window.addEventListener("hashchange", () => { applyFragment(); selectHash(); update(); });
