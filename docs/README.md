@@ -26,7 +26,6 @@ structure in the same order.
 | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) | Separate a bone that is absent from one that is keyed but frozen, and both from a clip authored against another bind. | Symptoms |
 | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) | Keep the exact `(file, clip)` identity of a pack instead of trusting a repeated display name, and decide what a retarget still owes you. | Symptoms |
 | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) | Decide what is redundant exported data and what is authored scale, then remove only the part a transform can prove. | Symptoms |
-| [Animation troubleshooting](animation-troubleshooting.md) | Route a visible runtime symptom to the page that owns it, and answer the two that are not about a clip: a loader refusal and an unaddressable clip. | Symptoms |
 | [For artists: from export to handoff](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
 | [For game developers: from pack to engine gate](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |
 | [Pipeline scenario guide](pipeline-scenarios.md) | Plan a raw-to-game-ready asset process — marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and artifact storage. | Workflows |

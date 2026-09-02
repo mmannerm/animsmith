@@ -110,7 +110,7 @@ be expected evidence that a candidate materially differs.
 
 ## Next step
 
-Use [animation troubleshooting](animation-troubleshooting.md) for a symptom
-first route, or hand the candidate to the
+Use the [symptom index](symptoms/README.md) for a symptom-first route, or
+hand the candidate to the
 [game-developer intake workflow](game-developer-intake-workflow.md) for the
 engine-observed gates.

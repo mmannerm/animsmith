@@ -8,3 +8,5 @@
 # resolved from the route's directory.  `just docs-check` fails when a target
 # is missing from the built artifact, so retire a route and add its redirect
 # in the same change.  This file is configuration, not a published page.
+
+"/docs/animation-troubleshooting.html" = "symptoms/index.html"
