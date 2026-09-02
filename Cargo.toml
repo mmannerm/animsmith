@@ -45,7 +45,7 @@ animsmith-fbx = { path = "crates/animsmith-fbx", version = "0.11.0" }
 animsmith-report = { path = "crates/animsmith-report", version = "0.11.0" }
 animsmith-testkit = { path = "crates/animsmith-testkit" }
 ufbx = "0.11"
-glam = "0.33"
+glam = { version = "0.33", features = ["scalar-math", "libm"] }
 libm = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }

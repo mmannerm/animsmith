@@ -121,6 +121,31 @@ generation publication helpers live in `crates/animsmith/src/publish.rs`
 rather than inside the feature-gated `assembly` module. Both `scale_cli` and
 `foot_cycle_cli` are part of the no-default-features gate.
 
+## Cross-platform determinism
+
+Committed example assets and documentation visuals are byte-compared, and
+CI runs that comparison on Linux, macOS, and Windows, so every number that
+reaches those bytes has to be identical on x86-64 and arm64.
+
+Model-space sampling is where that bites. `glam` is pinned to its
+`scalar-math` and `libm` features in the workspace `Cargo.toml`, so the FK
+that builds a pose grid uses scalar Rust `f32` arithmetic and the `libm`
+crate's transcendentals rather than SIMD intrinsics and the platform's own
+`libm`. Rust never contracts `a * b + c` into a fused multiply-add, so
+scalar IEEE-754 arithmetic gives bit-identical results everywhere; glam's
+NEON path on arm64 does fuse, and its SSE2 path on x86-64 does not, which
+moves the last bits of every matrix product. A committed report embeds the
+sampled grid as base64, so those last bits are the file.
+
+Fixtures whose motion is translation-only never saw this — adding exact
+values is bit-identical on any IEEE platform. The first committed report
+whose model positions come from a rotation (`clip-dirty.report.html`) is
+what surfaced it, as a macOS-only failure of
+`committed_visuals_match_the_generator_output`.
+
+Prefer fixing determinism at the source over loosening a byte comparison:
+the comparison is what makes a committed picture evidence.
+
 ## Golden Tests
 
 Golden tests include an env-gated reference test against licensed assets

@@ -76,8 +76,8 @@ clips: 1
 
 $ animsmith lint examples/assets/clip.glb
 examples/assets/clip.glb:
-  coverage[bind-pose] first_frame_rest_delta 'swing': insufficient_rotation_evidence: ...
-0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 0
+  coverage[bind-pose] insufficient_rotation_evidence ×1 (scopes: first_frame_rest_delta; ...
+0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s), 0 available prediction facet(s), ...   # exits 0
 ```
 
 A defective asset produces findings and a non-zero exit:
@@ -87,7 +87,8 @@ $ animsmith lint examples/assets/clip-dirty.glb
 examples/assets/clip-dirty.glb:
   error[quat-norm] clip 'swing' bone 'spine' @0.500s: non-unit rotation key ...
   warning[quat-flip] clip 'swing' bone 'spine' @0.750s: 2 hemisphere flip(s) ...
-1 error(s), 1 warning(s), 0 note(s), 0 coverage gap(s)   # exits 1
+  coverage[bind-pose] insufficient_rotation_evidence ×1 (scopes: first_frame_rest_delta; ...
+1 error(s), 1 warning(s), 0 note(s), 1 coverage gap(s), 0 available prediction facet(s), ...   # exits 1
 ```
 
 Warnings alone keep the exit code at 0. Use `--deny-warnings` when CI
@@ -190,8 +191,8 @@ $ animsmith fix examples/assets/clip-dirty.glb -o fixed.glb
 
 $ animsmith lint fixed.glb
 fixed.glb:
-  coverage[bind-pose] first_frame_rest_delta 'swing': insufficient_rotation_evidence: ...
-0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 0
+  coverage[bind-pose] insufficient_rotation_evidence ×1 (scopes: first_frame_rest_delta; ...
+0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s), 0 available prediction facet(s), ...   # exits 0
 ```
 
 Because the repairs are lossless, `diff` confirms no measurement moved —
@@ -458,13 +459,17 @@ $ animsmith measure --format json examples/assets/walk.glb
 [`examples/walk.animsmith.toml`](walk.animsmith.toml) is the
 contract: it declares the clip a loop (which arms the loop checks) and
 in-place, and caps their tolerances. Against the clean rig every semantic check
-passes:
+passes, and the run exits 0. The one warning is not a defect in the motion: a
+cycle whose last key repeats its first is a representation an engine can trim,
+which [editing a clip](#3-editing-a-clip) covers with
+`transform --drop-duplicate-loop-endpoint`.
 
 ```console
 $ animsmith lint --config examples/walk.animsmith.toml examples/assets/walk.glb
 examples/assets/walk.glb:
-  coverage[bind-pose] first_frame_rest_delta 'walk': insufficient_rotation_evidence: ...
-0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)   # exits 0
+  warning[duplicate-loop-endpoint] clip 'walk' @1.000s: declared loop repeats its first pose ...
+  coverage[bind-pose] insufficient_rotation_evidence ×1 (scopes: first_frame_rest_delta; ...
+0 error(s), 1 warning(s), 0 note(s), 1 coverage gap(s), 0 available prediction facet(s), ...   # exits 0
 ```
 
 `examples/assets/walk-dirty.glb` is the same rig with the clip cut a
@@ -474,16 +479,11 @@ the classic popped loop seam. The same contract catches it:
 ```console
 $ animsmith lint --config examples/walk.animsmith.toml examples/assets/walk-dirty.glb
 examples/assets/walk-dirty.glb:
-  error[loop-closure] clip 'walk' bone 'foot_r' @1.000s: loop does not close
-    in position: bone 'foot_r' is 0.1581 m from its first-frame model-space
-    position (cap 0.0100 m) (measured 0.1581, expected 0.0100)
-  error[loop-seam] clip 'walk' @1.000s: loop seam pops: wrap discontinuity
-    is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not
-    close its cycle (measured 6.8152, expected 1.6000)
-  error[loop-seam-vel] clip 'walk' bone 'foot_r' @1.000s: loop velocity
-    changes at the seam: bone 'foot_r' differs by 0.7972 m/s between the
-    incoming and outgoing model-space velocities (cap 0.1000 m/s)
-3 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s)  # exits 1
+  error[loop-closure] clip 'walk' bone 'foot_r' @1.000s: loop does not close in position: ...
+  error[loop-seam] clip 'walk' @1.000s: loop seam pops: wrap discontinuity is 6.82× ...
+  error[loop-seam-vel] clip 'walk' bone 'foot_r' @1.000s: loop velocity changes at the seam: ...
+  coverage[bind-pose] insufficient_rotation_evidence ×1 (scopes: first_frame_rest_delta; ...
+3 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s), 0 available prediction facet(s), ...   # exits 1
 ```
 
 The contract is load-bearing: a bare `animsmith lint examples/assets/walk-dirty.glb`
@@ -868,7 +868,7 @@ severity = "note"
 $ animsmith lint --config demote.toml examples/assets/clip-dirty.glb
   error[quat-norm] clip 'swing' bone 'spine' @0.500s: non-unit rotation key ...
   note[quat-flip] clip 'swing' bone 'spine' @0.750s: 2 hemisphere flip(s) ...
-1 error(s), 0 warning(s), 1 note(s), 0 coverage gap(s)   # exits 1
+1 error(s), 0 warning(s), 1 note(s), 1 coverage gap(s), 0 available prediction facet(s), ...   # exits 1
 ```
 
 See the [configuration reference](../docs/configuration-reference.md)

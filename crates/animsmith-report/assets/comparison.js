@@ -91,30 +91,34 @@ function svgElement(tag, attrs, label) {
   return element;
 }
 // SVG shows no text unless an element carries it, so a panel that cannot be
-// drawn says so through a <text> child. Assigning to an <svg>'s textContent
-// would leave a blank box in a real browser.
-function svgMessage(svg, palette, message) {
+// drawn marks the empty box with a <text> child. Assigning to an <svg>'s
+// textContent would leave a blank box in a real browser.
+//
+// The marker is the headline only; the sentence explaining it goes in the
+// panel's caption, which the browser wraps. A whole sentence drawn into the
+// box would be cut at its edge exactly like a caption would.
+function svgMessage(id, svg, palette, message) {
   svg.replaceChildren();
-  svg.append(svgElement("text", { x: 8, y: 20, fill: palette.muted }, message));
+  const headline = message.split(":")[0];
+  svg.append(svgElement("text", { x: 8, y: 20, fill: palette.muted }, headline));
+  panelCaption(id, message);
 }
-// A panel caption is one sentence plus whatever the run has to disclose, so
-// its length is not known here. SVG does not wrap text, and an over-long
-// <text> is simply cut at the panel edge — which is how the stance and
-// scale disclosures came to end mid-word. Break on spaces instead and stack
-// the lines upwards from the caption's baseline.
-const CAPTION_CHARS = 70;
-function svgCaption(svg, palette, x, baseline, message) {
-  const lines = [];
-  for (const word of String(message).split(" ")) {
-    const last = lines.length - 1;
-    if (last >= 0 && lines[last].length + 1 + word.length <= CAPTION_CHARS) lines[last] += ` ${word}`;
-    else lines.push(word);
-  }
-  lines.forEach((line, index) => {
-    const y = baseline - (lines.length - 1 - index) * 10;
-    svg.append(svgElement("text", { x, y, fill: palette.muted }, line));
-  });
+// A panel's caption is the HTML paragraph the document emits beside it,
+// not text drawn into the picture. SVG does not wrap, so a caption drawn
+// inside a panel is cut at its edge on a narrow column — and guessing
+// where to break it from a character count ignores the width the reader
+// actually has. The browser reflows a <p> at any width for free.
+function panelCaption(id, message) {
+  const caption = q(`${id}-caption`);
+  if (caption) caption.textContent = message;
 }
+// One type scale for every label this viewer draws, matching the 8-unit
+// size `comparison.css` sets on panel text. `advance` is the average glyph
+// width at that size and `gap` the space between legend entries; both are
+// only used to lay entries out left to right, so an approximation that
+// tracks the size is enough.
+const CHART_TYPE = { size: 8, advance: 4.6, gap: 16 };
+const legendAdvance = (label) => label.length * CHART_TYPE.advance + CHART_TYPE.gap;
 function topDownMap(bounds, width, height, pad) {
   const spanX = Math.max(.001, bounds.x[1] - bounds.x[0]);
   const spanZ = Math.max(.001, bounds.z[1] - bounds.z[0]);
@@ -192,7 +196,7 @@ function drawRootComparison(palette, phase) {
   const svg = q("comparison-root-path");
   if (!svg) return;
   svg.replaceChildren();
-  if (!sharedRootBounds) { svgMessage(svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
+  if (!sharedRootBounds) { svgMessage("comparison-root-path", svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
   // The drawing is mapped into the upper 180 of the 220-tall panel so the
   // caption below it has room for its own lines.
   const map = topDownMap(sharedRootBounds, 720, 180, 28);
@@ -231,9 +235,9 @@ function drawRootComparison(palette, phase) {
   let legendX = 18;
   for (const [label, state, token] of [[beforeLabel, beforeState, "accent"], [afterLabel, afterState, "warning"]]) {
     svg.append(svgElement("text", { x: legendX, y: 20, fill: state === "unavailable" ? palette.muted : palette[token] }, label));
-    legendX += label.length * 4.6 + 16;
+    legendX += legendAdvance(label);
   }
-  svgCaption(svg, palette, 18, 212,
+  panelCaption("comparison-root-path",
     `the root's top-down path over the whole clip · the dot marks the shared phase · `
     + `after dashed, before solid · `
     + `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m `
@@ -249,7 +253,7 @@ function drawTrails(name, palette, phase) {
   const side = data[name], svg = q(`${name}-path`);
   if (!svg) return;
   svg.replaceChildren();
-  if (!sharedTrailBounds) { svgMessage(svg, palette, "role trajectories unavailable"); return; }
+  if (!sharedTrailBounds) { svgMessage(`${name}-path`, svg, palette, "role trajectories unavailable"); return; }
   const map = topDownMap(sharedTrailBounds, 360, 180, 24);
   let legendX = 8, unavailable = [], incomplete = [];
   for (const role of Object.keys(TRAIL_TOKENS)) {
@@ -265,18 +269,18 @@ function drawTrails(name, palette, phase) {
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 3, fill: color, "data-role-dot": role }));
     const legend = finite === points.length ? label : `${label} incomplete`;
     svg.append(svgElement("text", { x: legendX, y: 14, fill: color }, legend));
-    legendX += label.length * 7 + 16;
+    legendX += legendAdvance(label);
   }
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
   const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
-  svgCaption(svg, palette, 8, 174, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
+  panelCaption(`${name}-path`, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
 }
 
 function drawGait(name, palette, phase) {
   const side = data[name], svg = q(`${name}-gait`), gait = side.contexts.gait;
   if (!svg) return;
   svg.replaceChildren();
-  if (!gait) { svgMessage(svg, palette, "gait unavailable: hips and bilateral foot/toe roles did not all resolve"); return; }
+  if (!gait) { svgMessage(`${name}-gait`, svg, palette, "gait unavailable: hips and bilateral foot/toe roles did not all resolve"); return; }
   const series = { left: [], right: [] };
   for (let frame = 0; frame < side.clip.frames; frame++) {
     const hipsY = posePoint(side, frame, gait.hips)[1];
@@ -285,7 +289,7 @@ function drawGait(name, palette, phase) {
   }
   const gaitFinite = series.left.every(Number.isFinite) && series.right.every(Number.isFinite);
   const yrange = finiteRange(series.left.concat(series.right));
-  if (!yrange) { svgMessage(svg, palette, "gait drawing unavailable: sampled relative heights are non-finite; stance and coverage evidence remain listed"); return; }
+  if (!yrange) { svgMessage(`${name}-gait`, svg, palette, "gait drawing unavailable: sampled relative heights are non-finite; stance and coverage evidence remain listed"); return; }
   const span = Math.max(.001, yrange[1] - yrange[0]);
   const x = (frame) => 20 + frame * 320 / Math.max(1, side.clip.frames - 1);
   const y = (value) => 150 - (value - yrange[0]) * 120 / span;
@@ -306,9 +310,13 @@ function drawGait(name, palette, phase) {
   const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
   svg.append(svgElement("line", { x1: x(frame), x2: x(frame), y1: 20, y2: 154, stroke: palette.error, "stroke-width": 1 }));
   const roleLabel = (role) => role.replace("_", " ");
-  svg.append(svgElement("text", { x: 8, y: 14, fill: palette.accent }, `${roleLabel(gait.left_role)} height rel hips`));
-  svg.append(svgElement("text", { x: 170, y: 14, fill: palette.warning }, `${roleLabel(gait.right_role)} height rel hips`));
-  svgCaption(svg, palette, 8, 174, gaitFinite
+  let legendX = 8;
+  for (const [role, token] of [[gait.left_role, "accent"], [gait.right_role, "warning"]]) {
+    const label = `${roleLabel(role)} height rel hips`;
+    svg.append(svgElement("text", { x: legendX, y: 14, fill: palette[token] }, label));
+    legendX += legendAdvance(label);
+  }
+  panelCaption(`${name}-gait`, gaitFinite
     ? "exact sampled height in metres · shaded runs are sampled foot-slide stance evidence · left in the upper band, right in the lower"
     : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed");
 }

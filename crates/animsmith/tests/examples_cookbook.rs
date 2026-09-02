@@ -117,6 +117,12 @@ fn canonical_character_assembly_example_keeps_all_property_pruning_disabled() {
 // character.animsmith.toml parse is covered separately by
 // `example_config_parses_verbatim` in cli_contract.rs.
 
+/// The commands of the cookbook's first section behave as it says.
+///
+/// What the page *prints* is compared line by line by
+/// `every_runnable_cookbook_transcript_still_matches_the_cli`; this covers
+/// the contract details around them — exit codes, `--select`/`--allow`
+/// steering, and the JSON envelope the page only projects.
 #[test]
 fn cookbook_first_gate() {
     let clean = asset("clip.glb");
@@ -219,6 +225,12 @@ fn cookbook_repair_roundtrip() {
     );
 }
 
+/// The `transform` transcripts, pinned as whole outputs.
+///
+/// The page's own copies are executed and compared by
+/// `every_runnable_cookbook_transcript_still_matches_the_cli`; this adds
+/// exact whole-stdout equality, which covers the written-artifact summary
+/// the page abridges.
 #[test]
 fn cookbook_transform() {
     let clean = asset("clip.glb");
@@ -498,5 +510,152 @@ fn cookbook_addressability_inventory() {
     assert!(
         out.starts_with("# glTF animation addressability v1\n") && out.contains("Animation0"),
         "Bevy presentation renders the documented selector: {out}"
+    );
+}
+
+// --- 3. The cookbook's transcripts are executed, not spot-checked ----
+
+/// Every path-shaped argument a documented command reads.
+///
+/// The value of `-o`/`--output` is what the command writes, so it is not
+/// expected to exist beforehand — requiring it would skip every command
+/// that produces a file, and with it every command reading what it wrote.
+fn named_inputs(command: &str) -> Vec<&str> {
+    const SUFFIXES: [&str; 6] = [".glb", ".gltf", ".fbx", ".toml", ".html", ".json"];
+    let words: Vec<&str> = command.split_whitespace().collect();
+    words
+        .iter()
+        .enumerate()
+        .filter(|(index, word)| {
+            SUFFIXES.iter().any(|suffix| word.ends_with(suffix))
+                && !matches!(
+                    index.checked_sub(1).map(|at| words[at]),
+                    Some("-o" | "--output")
+                )
+        })
+        .map(|(_, word)| *word)
+        .collect()
+}
+
+/// A checkout-shaped directory holding the committed `examples/` tree, so
+/// a documented relative path resolves exactly as it does for a reader.
+fn cookbook_checkout() -> tempfile::TempDir {
+    let temporary = unique_temp_dir("readme");
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    copy_tree(&source, &temporary.path().join("examples"));
+    temporary
+}
+
+fn copy_tree(source: &std::path::Path, destination: &std::path::Path) {
+    std::fs::create_dir_all(destination).expect("creates fixture directory");
+    for entry in std::fs::read_dir(source).expect("lists fixture directory") {
+        let entry = entry.expect("directory entry");
+        let target = destination.join(entry.file_name());
+        if entry.file_type().expect("file type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copies fixture");
+        }
+    }
+}
+
+/// The cookbook's console transcripts are real output, and this runs them.
+///
+/// Every `$ animsmith …` command whose named files all exist by the time
+/// the page reaches it is executed in a throwaway copy of `examples/`, in
+/// the order the page prints it, and every line the page quotes under it
+/// must still appear in that order — with a trailing `...` promising only
+/// its prefix, the cookbook's own convention. The rest are skipped: the
+/// page also documents placeholder inputs a reader supplies (`export.fbx`,
+/// `old.glb`) and configs it tells the reader to write.
+///
+/// Spot-checking a transcript for a substring is how the `diff` block in
+/// the transform section went one row stale on `main` without any gate
+/// noticing, and how the first-gate `lint` block kept printing a coverage
+/// line and a summary the CLI had stopped emitting.
+#[test]
+fn every_runnable_cookbook_transcript_still_matches_the_cli() {
+    use animsmith_testkit::docs_markdown::fenced_blocks;
+    use animsmith_testkit::docs_transcripts::{documented_commands, misdocumented_line};
+
+    let page = "examples/README.md";
+    let markdown = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(page),
+    )
+    .expect("reads the cookbook");
+    let checkout = cookbook_checkout();
+    let mut ran = 0usize;
+    let mut skipped = 0usize;
+    let mut projections = 0usize;
+
+    for block in fenced_blocks(&markdown, "console") {
+        for documented in documented_commands(&block, page) {
+            let Some(arguments) = documented.command.strip_prefix("animsmith ") else {
+                continue;
+            };
+            // A trailing `# …` aside is for the reader, not the shell.
+            let arguments = arguments
+                .split_once(" # ")
+                .map_or(arguments, |(head, _)| head);
+            if arguments.contains('|') {
+                skipped += 1;
+                continue;
+            }
+            let missing = named_inputs(arguments)
+                .into_iter()
+                .any(|path| !checkout.path().join(path).exists());
+            if missing {
+                skipped += 1;
+                continue;
+            }
+
+            let output = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+                .args(arguments.split_whitespace())
+                .current_dir(checkout.path())
+                .output()
+                .unwrap_or_else(|error| panic!("{page}: runs {arguments}: {error}"));
+            let printed = stdout(&output);
+            if let Some(claimed) = documented.exit {
+                assert_eq!(
+                    output.status.code(),
+                    Some(claimed),
+                    "{page}: `animsmith {arguments}` exit code changed\nstdout:\n{printed}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            // The page's own preamble says its JSON envelopes are abridged
+            // illustrative projections with placeholder digests and build
+            // provenance, so those are run for their exit code and not
+            // compared line by line. Everything else is real output.
+            let projected = documented
+                .output
+                .first()
+                .is_some_and(|line| line.trim_start().starts_with('{'));
+            if projected {
+                projections += 1;
+                ran += 1;
+                continue;
+            }
+            let lines: Vec<&str> = printed.lines().collect();
+            if let Some(index) = misdocumented_line(&documented.output, &lines) {
+                let line = &documented.output[index];
+                panic!(
+                    "{page}: `animsmith {arguments}` no longer prints {line:?} where the page \
+                     documents it, below the lines quoted before it\nstdout:\n{printed}"
+                );
+            }
+            ran += 1;
+        }
+    }
+    assert!(
+        ran >= 22,
+        "the cookbook must keep documenting runnable commands, ran {ran} and skipped {skipped}"
+    );
+    assert!(
+        ran - projections >= 19,
+        "most runnable cookbook commands must have their output compared, not just their \
+         exit code: {ran} ran, {projections} of them abridged JSON projections"
     );
 }

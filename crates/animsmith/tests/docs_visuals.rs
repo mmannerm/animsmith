@@ -268,6 +268,13 @@ fn untokenized_colours(svg: &str) -> Vec<String> {
 /// One centimetre is deliberately low: it is far below anything a fixture
 /// authored to demonstrate a symptom would move, and far above the noise
 /// of a genuinely static bone.
+///
+/// A fixture that passes this is also the kind whose committed report is
+/// sensitive to how the model matrices are multiplied, because its bone
+/// positions come from a rotation rather than from exact adds. The
+/// workspace pins `glam` to scalar arithmetic and the `libm` crate for
+/// exactly that reason — see the cross-platform determinism section of
+/// `DEVELOPMENT.md`.
 #[test]
 fn every_report_fixture_moves_a_bone_the_reader_can_see() {
     const FLOOR_M: f32 = 0.01;

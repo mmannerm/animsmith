@@ -23,6 +23,7 @@
 
 pub mod docs_html;
 pub mod docs_markdown;
+pub mod docs_transcripts;
 pub mod docs_visuals;
 
 use animsmith_core::model::*;
@@ -77,34 +78,53 @@ pub fn scaled_quat(q: Quat, scale: f32) -> Quat {
     Quat::from_xyzw(x * scale, y * scale, z * scale, w * scale)
 }
 
-/// The two-bone `root -> spine` skeleton the rotation fixtures animate.
-fn two_bone_skeleton() -> Skeleton {
+/// A straight `joints` chain running up +Y: the first joint is the
+/// skeleton root at the origin, and every joint after it hangs half a
+/// metre above its predecessor.
+fn rotation_chain_skeleton(joints: &[&str]) -> Skeleton {
     Skeleton {
-        bones: vec![
-            Bone {
-                name: "root".into(),
-                parent: None,
-                rest: Transform::IDENTITY,
-                inverse_bind: None,
-            },
-            Bone {
-                name: "spine".into(),
-                parent: Some(0),
-                rest: Transform {
-                    translation: Vec3::new(0.0, 0.5, 0.0),
-                    ..Transform::IDENTITY
+        bones: joints
+            .iter()
+            .enumerate()
+            .map(|(index, name)| Bone {
+                name: (*name).into(),
+                parent: index.checked_sub(1),
+                rest: if index == 0 {
+                    Transform::IDENTITY
+                } else {
+                    Transform {
+                        translation: Vec3::new(0.0, 0.5, 0.0),
+                        ..Transform::IDENTITY
+                    }
                 },
                 inverse_bind: None,
-            },
-        ],
+            })
+            .collect(),
     }
 }
 
-/// A two-bone `root -> spine` skeleton with one 1 s rotation clip on the
-/// spine. `with_translation` adds a root translation track (some fix tests
-/// assert it survives a repair byte-identically); the rotation track is
-/// emitted first either way.
-pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: bool) -> Document {
+/// A [`rotation_chain_skeleton`] with one 1 s rotation clip on its second
+/// joint, keyed on [`FIVE_KEY_TIMES`].
+///
+/// `with_translation` adds a root translation track (some fix tests assert
+/// it survives a repair byte-identically); the rotation track is emitted
+/// first either way.
+///
+/// The chain length is a parameter because the rotated joint's own
+/// position never moves — a bone's rotation moves its children. Two joints
+/// is enough for the checks that read the track's values, and is what the
+/// rotation test fixtures use; the committed `swing` example needs a third
+/// so that a report rendered from it has something to draw.
+pub fn rotation_chain_doc(
+    clip: &str,
+    joints: &[&str],
+    quats: Vec<Quat>,
+    with_translation: bool,
+) -> Document {
+    assert!(
+        joints.len() >= 2,
+        "a rotation chain needs a joint to rotate and a parent to hang it from"
+    );
     let mut tracks = vec![Track {
         bone: 1,
         property: Property::Rotation,
@@ -122,7 +142,7 @@ pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: boo
         });
     }
     Document {
-        skeleton: two_bone_skeleton(),
+        skeleton: rotation_chain_skeleton(joints),
         clips: vec![Clip {
             name: clip.into(),
             duration_s: 1.0,
@@ -131,6 +151,13 @@ pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: boo
         assets: Default::default(),
         source: SourceInfo::default(),
     }
+}
+
+/// The `root -> spine` chain the rotation fixtures animate: the shortest
+/// [`rotation_chain_doc`], and the one most of the workspace's rotation
+/// tests are written against.
+pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: bool) -> Document {
+    rotation_chain_doc(clip, &["root", "spine"], quats, with_translation)
 }
 
 /// Angles behind the committed example clip (`examples/assets/clip.glb`).
@@ -152,49 +179,11 @@ const EXAMPLE_ANGLES: [f32; 5] = [0.0, 0.1, 0.2, 0.3, 0.4];
 /// The tip is deliberately named `chest` rather than `head`: `head` is a
 /// role name in every built-in profile, and a second resolved role would
 /// turn this deliberately profile-less fixture into a detected rig.
-fn example_swing_skeleton() -> Skeleton {
-    let joint = |name: &str, parent: usize| Bone {
-        name: name.into(),
-        parent: Some(parent),
-        rest: Transform {
-            translation: Vec3::new(0.0, 0.5, 0.0),
-            ..Transform::IDENTITY
-        },
-        inverse_bind: None,
-    };
-    Skeleton {
-        bones: vec![
-            Bone {
-                name: "root".into(),
-                parent: None,
-                rest: Transform::IDENTITY,
-                inverse_bind: None,
-            },
-            joint("spine", 0),
-            joint("chest", 1),
-        ],
-    }
-}
+const EXAMPLE_SWING_JOINTS: [&str; 3] = ["root", "spine", "chest"];
 
-/// The committed `swing` example's document: [`example_swing_skeleton`]
-/// with one 1 s rotation clip on `spine`, keyed on [`FIVE_KEY_TIMES`].
+/// The committed `swing` example's document.
 fn example_swing_doc(quats: Vec<Quat>) -> Document {
-    Document {
-        skeleton: example_swing_skeleton(),
-        clips: vec![Clip {
-            name: "swing".into(),
-            duration_s: 1.0,
-            tracks: vec![Track {
-                bone: 1, // spine
-                property: Property::Rotation,
-                interpolation: Interpolation::Linear,
-                times: FIVE_KEY_TIMES.to_vec(),
-                values: TrackValues::Quats(quats),
-            }],
-        }],
-        assets: Default::default(),
-        source: SourceInfo::default(),
-    }
+    rotation_chain_doc("swing", &EXAMPLE_SWING_JOINTS, quats, false)
 }
 
 /// The clean committed example clip, `examples/assets/clip.glb`: a

@@ -2279,6 +2279,176 @@ fn the_gait_chart_scales_its_two_value_axes_independently() {
     );
 }
 
+/// A clip whose sampled positions are all non-finite still renders a
+/// chart, and that chart says the samples are unavailable.
+///
+/// The extents were folded from `f64::MAX`/`f64::MIN` seeds, so a channel
+/// that is NaN on every frame left the seeds in place and the resulting
+/// negative span read as "stationary": the chart claimed the root stayed
+/// at `X 179769313486231570000…000.00 m`. A non-finite channel is what the
+/// `nan` check exists to report, so it is a shape a real report reaches.
+#[test]
+fn non_finite_samples_are_reported_as_unavailable_rather_than_plotted() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    let nan = f32::NAN;
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![Clip {
+            name: "poisoned".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::splat(nan); 3]),
+            }],
+        }],
+        ..Document::default()
+    };
+    let grids = MetricGrids::new(&doc);
+    let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let path = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+
+    let axis = class_texts(&path, "axis");
+    assert!(
+        axis.iter()
+            .any(|label| label == "root path unavailable: sampled positions are non-finite"),
+        "{axis:?}"
+    );
+    for label in &axis {
+        assert!(
+            !label.contains("root stays"),
+            "a non-finite root is not a stationary one: {label:?}"
+        );
+        assert!(
+            !label.contains("e30") && !label.contains("17976931"),
+            "no float seed leaks into a label: {label:?}"
+        );
+    }
+    assert!(
+        attribute(&path, "aria-label").contains(
+            "every one of the 3 sampled root positions is \
+                                                 non-finite"
+        ),
+        "{}",
+        attribute(&path, "aria-label")
+    );
+    assert!(!path.contains("NaN"), "no NaN reaches the markup: {path}");
+}
+
+/// A series that is non-finite on every frame is not plotted, and the
+/// chart says so instead of printing `NaN m` in its gutter.
+#[test]
+fn an_all_non_finite_series_is_named_rather_than_plotted_as_nan() {
+    let mut doc = squashed_gait_fixture();
+    // The right foot is NaN throughout, so `L−R` is NaN throughout too.
+    let track = doc.clips[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.bone == 2)
+        .expect("right foot track");
+    track.values =
+        animsmith_core::model::TrackValues::Vec3s(vec![
+            animsmith_core::glam::Vec3::splat(f32::NAN);
+            3
+        ]);
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let gait = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait")
+        .expect("gait chart");
+
+    for label in class_texts(&gait, "axis") {
+        assert!(!label.contains("NaN"), "a gutter label reads {label:?}");
+    }
+    assert!(!gait.contains("NaN"), "no NaN reaches the markup: {gait}");
+    assert!(
+        attribute(&gait, "aria-label").contains("has no finite sample and is not plotted"),
+        "{}",
+        attribute(&gait, "aria-label")
+    );
+    // The left foot is still finite, so its curve is still drawn.
+    assert!(gait.contains("class=\"series-left\" d=\"M"), "{gait}");
+}
+
+/// A series that never changes is centred and labelled once, rather than
+/// pinned to the bottom row with the same number in both gutter labels.
+///
+/// Two feet exactly in phase make `L−R` identically zero, which a real
+/// clip does; the zero-span clamp turned that into a flat line along the
+/// axis captioned `0.00 m` above `0.00 m`.
+#[test]
+fn a_flat_series_is_centred_and_labelled_once() {
+    let mut doc = squashed_gait_fixture();
+    // Both feet swing together, so their difference is exactly zero.
+    let mirrored = doc.clips[0]
+        .tracks
+        .iter()
+        .find(|track| track.bone == 1)
+        .expect("left foot track")
+        .values
+        .clone();
+    let animsmith_core::model::TrackValues::Vec3s(left) = mirrored else {
+        panic!("the fixture keys translations")
+    };
+    let track = doc.clips[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.bone == 2)
+        .expect("right foot track");
+    track.values = animsmith_core::model::TrackValues::Vec3s(
+        left.iter()
+            .map(|value| animsmith_core::glam::Vec3::new(-0.1, value.y, value.z))
+            .collect(),
+    );
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let gait = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait")
+        .expect("gait chart");
+
+    let axis = class_texts(&gait, "axis");
+    assert_eq!(
+        axis.iter()
+            .filter(|label| label.starts_with("flat "))
+            .count(),
+        1,
+        "a flat axis is labelled exactly once: {axis:?}"
+    );
+    assert!(axis.iter().any(|label| label == "flat 0.00 m"), "{axis:?}");
+    // Centred, not pinned to the bottom row the unscaled clamp produced.
+    let (top, bottom) = series_band(&gait, "series-diff");
+    let centre = 18.0 + (150.0 - 18.0 - 16.0) / 2.0;
+    assert!(
+        (top - centre).abs() < 0.2 && (bottom - centre).abs() < 0.2,
+        "the flat series sits on the plot's centre line: {top}..{bottom} against {centre}"
+    );
+    assert!(
+        attribute(&gait, "aria-label").contains("flat at 0.00 m"),
+        "{}",
+        attribute(&gait, "aria-label")
+    );
+}
+
 /// An in-place clip's root path says the root does not move, instead of
 /// leaving an empty square captioned `X 0.00…0.00 m`.
 #[test]
@@ -2309,6 +2479,38 @@ fn a_stationary_root_path_says_so_in_words() {
     );
     // The figure keeps the classes the documentation extractor pins.
     assert!(path.contains("class=\"root-path\"") && path.contains("class=\"pathdot\""));
+
+    // A root that stands still somewhere other than the origin says where.
+    let mut parked = squashed_gait_fixture();
+    parked.skeleton.bones[0].rest.translation = animsmith_core::glam::Vec3::new(2.0, 1.0, -3.5);
+    let parked_html = animsmith_report::render(
+        &MetricGrids::new(&parked),
+        &ResolvedRoles::from_names(&parked.skeleton, [(Role::Root, "hips".to_string())]),
+        &[],
+        None,
+        None,
+        full(),
+    );
+    let parked_path = chart_figures(&parked_html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
+    let parked_axis = class_texts(&parked_path, "axis");
+    assert!(
+        parked_axis
+            .iter()
+            .any(|label| label == "root stays at X 2.00 m, Z -3.50 m"),
+        "a stationary root away from the origin names where it stands: {parked_axis:?}"
+    );
+    assert!(
+        !parked_axis.iter().any(|label| label.contains("the origin")),
+        "and does not claim the origin: {parked_axis:?}"
+    );
+    assert!(
+        attribute(&parked_path, "aria-label").contains("X 2.00 m, Z -3.50 m"),
+        "{}",
+        attribute(&parked_path, "aria-label")
+    );
 
     // A root that travels keeps the plotted ranges and gains no sentence.
     let travelled = animsmith_report::render(

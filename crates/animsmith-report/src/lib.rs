@@ -1531,7 +1531,15 @@ fn pose_panel(id: &str, view_box: &str, evidence_only: bool) -> String {
     if evidence_only {
         pose_surface(id, true)
     } else {
-        format!("<svg id=\"{id}\" viewBox=\"{view_box}\"></svg>")
+        // The panel's caption is an HTML paragraph beside the drawing, not
+        // text inside it: SVG never wraps, so a caption drawn into the
+        // picture is cut at the panel edge on a narrow column, while the
+        // browser reflows this one for free at whatever width the reader
+        // has. The viewer fills it in as it draws.
+        format!(
+            "<svg id=\"{id}\" viewBox=\"{view_box}\"></svg>\
+             <p id=\"{id}-caption\" class=\"context-label\"></p>"
+        )
     }
 }
 
@@ -1956,26 +1964,64 @@ const PLOT_H: f64 = H - PAD_TOP - PAD_BOTTOM;
 /// than left to the caption.
 const UNIT: &str = "m";
 const LEGEND_Y: f64 = 9.0;
-/// Advance per legend entry: a swatch, a gap, and an 8px label. Approximate
-/// on purpose — the entries only have to stay inside the plot width.
+/// Average glyph advance at the shared `--chart-type` scale the
+/// stylesheets set on chart labels, in viewBox units. Approximate on
+/// purpose — it only lays legend entries out left to right, and they have
+/// only to stay inside the plot width. The comparison viewer lays its own
+/// legends out from the same number.
 const LEGEND_CHAR_W: f64 = 4.6;
 /// Extent below which a top-down path is reported as stationary rather
 /// than plotted: a millimetre, which is finer than any clip an engine
 /// distinguishes from standing still.
 const STATIC_PATH_M: f64 = 0.001;
 
-/// The finite value range of one axis' series, if it has any samples.
+/// The value range of one axis' series, over the samples that are finite.
+///
+/// A channel can be non-finite for every frame it was sampled at — that is
+/// what the `nan` check exists to report — and a derived series inherits
+/// it, so an all-NaN right foot makes `L−R` NaN throughout. Folding those
+/// in yields a `NaN` range, which then prints `NaN m` in the gutter and
+/// plots a path of `NaN` coordinates that no renderer draws. `None` means
+/// there is nothing to scale and nothing to plot.
 fn axis_range(series: &[Series<'_>], axis: Side) -> Option<(f64, f64)> {
     let values = series
         .iter()
         .filter(|entry| entry.axis == axis)
-        .flat_map(|entry| entry.values.iter().copied());
+        .flat_map(|entry| entry.values.iter().copied())
+        .filter(|value| value.is_finite());
     values.fold(None, |range, value| {
         Some(match range {
             None => (value, value),
             Some((min, max)) => (min.min(value), max.max(value)),
         })
     })
+}
+
+/// Whether a range is a single value: every sample on that axis is the
+/// same number, so there is no span to scale across.
+fn is_flat((min, max): (f64, f64)) -> bool {
+    (max - min).abs() < f64::EPSILON
+}
+
+/// The polyline through `values`, skipping the samples that are not
+/// finite: a gap starts a new subpath rather than poisoning the whole
+/// `d` attribute. Empty when nothing is plottable.
+fn polyline(values: &[f64], x: impl Fn(usize) -> f64, y: impl Fn(f64) -> f64) -> String {
+    let mut path = String::new();
+    let mut drawing = false;
+    for (index, &value) in values.iter().enumerate() {
+        let (at, height) = (x(index), y(value));
+        if !value.is_finite() || !at.is_finite() || !height.is_finite() {
+            drawing = false;
+            continue;
+        }
+        path.push_str(&format!(
+            "{}{at:.1},{height:.1}",
+            if drawing { "L" } else { "M" }
+        ));
+        drawing = true;
+    }
+    path
 }
 
 /// A line chart of one or two independently scaled value axes.
@@ -2002,34 +2048,37 @@ fn line_chart(
     let n = frames.max(2);
     let last_frame = frames.saturating_sub(1);
     let x = |i: usize| PAD_LEFT + PLOT_W * i as f64 / (n - 1) as f64;
-    let y = |(min, max): (f64, f64), v: f64| {
-        H - PAD_BOTTOM - PLOT_H * (v - min) / (max - min).max(1e-6)
+    // A series that never changes has no span to scale across. Dividing by
+    // a clamped epsilon pins it to whichever gutter its own value sits at —
+    // the bottom row — and prints that one value twice, as though it were a
+    // range. Two feet exactly in phase make `L−R` identically zero, which
+    // is a real clip, so a flat series is centred instead and labelled once.
+    let y = |range: (f64, f64), v: f64| {
+        let (min, max) = range;
+        if is_flat(range) {
+            PAD_TOP + PLOT_H / 2.0
+        } else {
+            H - PAD_BOTTOM - PLOT_H * (v - min) / (max - min)
+        }
     };
 
     let mut body = String::new();
     for entry in series {
-        let range = match entry.axis {
-            Side::Left => left,
-            // An axis with a series on it has a range by construction.
-            Side::Right => right.unwrap_or(left),
+        // An axis with no finite sample has no range, so its series is not
+        // plotted at all rather than plotted against the other axis'.
+        let Some(range) = (match entry.axis {
+            Side::Left => Some(left),
+            Side::Right => right,
+        }) else {
+            continue;
         };
-        let d: Vec<String> = entry
-            .values
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| {
-                format!(
-                    "{}{:.1},{:.1}",
-                    if i == 0 { "M" } else { "L" },
-                    x(i),
-                    y(range, v)
-                )
-            })
-            .collect();
+        let d = polyline(entry.values, x, |v| y(range, v));
+        if d.is_empty() {
+            continue;
+        }
         body.push_str(&format!(
-            "<path class=\"{}\" d=\"{}\" fill=\"none\"/>",
+            "<path class=\"{}\" d=\"{d}\" fill=\"none\"/>",
             entry.class,
-            d.join("")
         ));
     }
     body.push_str(&format!(
@@ -2049,6 +2098,15 @@ fn line_chart(
             Side::Left => (2.0, Anchor::Start),
             Side::Right => (W - 2.0, Anchor::End),
         };
+        if is_flat((min, max)) {
+            axis.push(AxisLabel {
+                x: at,
+                y: PAD_TOP + PLOT_H / 2.0 + 3.0,
+                anchor,
+                text: format!("flat {min:.2} {UNIT}"),
+            });
+            continue;
+        }
         axis.push(AxisLabel {
             x: at,
             y: PAD_TOP + 3.0,
@@ -2090,9 +2148,23 @@ fn line_chart(
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let scale =
-        |axis: Side, (min, max): (f64, f64)| format!("{} {min:.2} to {max:.2} {UNIT}", named(axis));
+    let scale = |axis: Side, range: (f64, f64)| {
+        let (min, max) = range;
+        if is_flat(range) {
+            format!("{} flat at {min:.2} {UNIT}", named(axis))
+        } else {
+            format!("{} {min:.2} to {max:.2} {UNIT}", named(axis))
+        }
+    };
     let described = match right {
+        // No finite sample on the right axis: its series is named as
+        // unplottable rather than left out, so the description still
+        // accounts for every series the legend lists.
+        None if series.iter().any(|entry| entry.axis == Side::Right) => format!(
+            "{}; {} has no finite sample and is not plotted",
+            scale(Side::Left, left),
+            named(Side::Right)
+        ),
         None => scale(Side::Left, left),
         Some(right) => format!(
             "{}; {} on its own right-hand axis",
@@ -2118,18 +2190,55 @@ fn line_chart(
     .render()
 }
 
+/// The min and max of the finite values of `values`, or `None` when it
+/// has none.
+fn finite_extent(values: &[f64]) -> Option<(f64, f64)> {
+    values
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .fold(None, |extent, value| {
+            Some(match extent {
+                None => (value, value),
+                Some((min, max)) => (min.min(value), max.max(value)),
+            })
+        })
+}
+
 fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String {
     if xs.is_empty() {
         return String::new();
     }
-    let (min_x, max_x) = (
-        xs.iter().copied().fold(f64::MAX, f64::min),
-        xs.iter().copied().fold(f64::MIN, f64::max),
-    );
-    let (min_z, max_z) = (
-        zs.iter().copied().fold(f64::MAX, f64::min),
-        zs.iter().copied().fold(f64::MIN, f64::max),
-    );
+    // Every sampled frame can be non-finite — that is what the `nan` check
+    // reports. Folding those against `f64::MAX`/`f64::MIN` seeds leaves the
+    // seeds in place, and the resulting negative span reads as stationary:
+    // the chart then claims the root "stays at X 179769313486231570000… m".
+    // Say the samples are unavailable instead, the way the comparison
+    // viewer's root panel does.
+    let (Some((min_x, max_x)), Some((min_z, max_z))) = (finite_extent(xs), finite_extent(zs))
+    else {
+        return Chart {
+            clip,
+            kind: "rootpath",
+            title,
+            description: format!(
+                "{title}: unavailable — every one of the {} sampled root positions is \
+                 non-finite; findings and coverage remain listed",
+                xs.len()
+            ),
+            legend: &[("root-path", "root")],
+            axis: vec![AxisLabel {
+                x: W / 2.0,
+                y: PAD_TOP + PLOT_H / 2.0,
+                anchor: Anchor::Middle,
+                text: "root path unavailable: sampled positions are non-finite".to_owned(),
+            }],
+            plot_hooks: false,
+            body: String::new(),
+            trailer: String::new(),
+        }
+        .render();
+    };
     // One metres scale for both axes: a top-down path that is squashed in Z
     // would misdescribe the trajectory it is evidence for.
     let span = (max_x - min_x).max(max_z - min_z).max(1e-3);
@@ -2138,9 +2247,12 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
     let center_y = PAD_TOP + PLOT_H / 2.0;
     let x = |v: f64| center_x + (v - (min_x + max_x) / 2.0) * scale;
     let y = |v: f64| center_y - (v - (min_z + max_z) / 2.0) * scale;
+    // A run of finite samples either side of a non-finite one is two
+    // subpaths, not one line drawn through a hole.
     let points: Vec<String> = xs
         .iter()
         .zip(zs)
+        .filter(|(px, pz)| px.is_finite() && pz.is_finite())
         .map(|(&px, &pz)| format!("{:.1},{:.1}", x(px), y(pz)))
         .collect();
     let d: Vec<String> = points
@@ -2148,6 +2260,12 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         .enumerate()
         .map(|(i, point)| format!("{}{point}", if i == 0 { "M" } else { "L" }))
         .collect();
+    let (first_x, first_z) = xs
+        .iter()
+        .zip(zs)
+        .find(|(px, pz)| px.is_finite() && pz.is_finite())
+        .map(|(&px, &pz)| (px, pz))
+        .expect("a finite extent means at least one finite sample");
 
     // An in-place clip plots one dot, and an empty square captioned
     // `X 0.00…0.00 m` reads as a chart that failed rather than as the
@@ -2206,8 +2324,8 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
             "<path class=\"root-path\" d=\"{}\" fill=\"none\"/>\
              <circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",
             d.join(""),
-            x(xs[0]),
-            y(zs[0])
+            x(first_x),
+            y(first_z)
         ),
         trailer: format!(
             "<template class=\"pathpoints\">{}</template>",

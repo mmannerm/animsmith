@@ -21,6 +21,11 @@
    warning = warning findings and the left-foot trail,
    pass = root trajectory, note = note findings and structural evidence. */
 :root {
+  /* The one type scale every chart label is drawn at, in the user units of
+     a chart's own viewBox. Both stylesheets and the Rust chart renderer
+     size their labels from this, so a panel and a chart beside it read at
+     the same size whatever width their viewBox is scaled to. */
+  --chart-type: 8px;
   --ground: #17171f;
   --surface: #1e1e2a;
   --raised: #232331;
@@ -118,7 +123,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
    on top of one foot curve, and a solid line there would simply disappear. */
 .series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
-.axis, .legend { fill: var(--muted); font-size: 8px; }
+.axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
 </style>
