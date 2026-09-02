@@ -534,79 +534,139 @@ fn documented_command_fences_and_bevy_config_execute_exactly_as_rendered() {
     );
 }
 
+/// Ownership and closing evidence live on the symptom page that opens
+/// with the symptom, not in a separate matrix a reader has to correlate
+/// with it. Each page's "Who fixes it" paragraph must still name the
+/// owner it routes to and the evidence that closes its gate.
 #[test]
-fn troubleshooting_pins_each_symptom_to_inspection_owner_and_closing_evidence() {
-    let tables = tables(&markdown("docs/animation-troubleshooting.md"));
-    let table = tables.first().expect("troubleshooting table");
+fn every_symptom_page_names_its_owner_and_the_evidence_that_closes_its_gate() {
+    for (page, owner, closing_evidence) in [
+        (
+            "docs/symptoms/pose-flickers.md",
+            "the DCC owns the data",
+            "re-lints clean",
+        ),
+        (
+            "docs/symptoms/wrong-length.md",
+            "the pipeline",
+            "the engine plays the whole range",
+        ),
+        (
+            "docs/symptoms/loop-pops.md",
+            "DCC work",
+            "target engine's graph",
+        ),
+        (
+            "docs/symptoms/character-glides.md",
+            "gameplay decides ownership",
+            "an engine trial proves exactly one",
+        ),
+        (
+            "docs/symptoms/blend-skate.md",
+            "project work",
+            "a playback capture covers the transitions",
+        ),
+        (
+            "docs/symptoms/feet-slide.md",
+            "DCC and runtime work",
+            "the actual blend",
+        ),
+        (
+            "docs/symptoms/limb-frozen.md",
+            "the artist repairs the source rig",
+            "required bones visibly move on the target character",
+        ),
+        (
+            "docs/symptoms/identity-mismatch.md",
+            "the pack owner and the pipeline that ingests it",
+            "recorded source-to-target mapping",
+        ),
+        (
+            "docs/symptoms/file-bloat.md",
+            "the artist or the exporter settings",
+            "the target engine's own scale, attachment and visual observation",
+        ),
+    ] {
+        let prose = rendered_text(&markdown(page));
+        let (_, ownership) = prose
+            .split_once("Who fixes it:")
+            .unwrap_or_else(|| panic!("{page} must carry a `Who fixes it` paragraph"));
+        assert!(
+            ownership.contains(owner),
+            "{page} must route ownership to {owner:?}: {ownership}"
+        );
+        assert!(
+            ownership.contains(closing_evidence),
+            "{page} must state the evidence that closes its gate ({closing_evidence:?}): \
+             {ownership}"
+        );
+    }
+}
+
+/// The troubleshooting page is a router: every symptom it lists reaches
+/// the page that owns it, and the two runtime problems with no symptom
+/// page keep their own inspection, owner and closing evidence here.
+#[test]
+fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
+    let page = markdown("docs/animation-troubleshooting.md");
+    let tables = tables(&page);
+    let table = tables.first().expect("troubleshooting routing table");
     assert_eq!(
         table.first(),
-        Some(&vec![
-            "Symptom".to_owned(),
-            "Inspect and current diagnostic example".to_owned(),
-            "Safe remediation vs owner".to_owned(),
-            "Gate-closing evidence".to_owned(),
-        ])
+        Some(&vec!["What you see".to_owned(), "Where to go".to_owned()])
     );
+
+    let destinations: BTreeSet<String> = rendered_links(&page)
+        .into_iter()
+        .map(|(_, destination)| destination)
+        .collect();
+    for symptom in [
+        "symptoms/pose-flickers.md",
+        "symptoms/wrong-length.md",
+        "symptoms/loop-pops.md",
+        "symptoms/character-glides.md",
+        "symptoms/blend-skate.md",
+        "symptoms/feet-slide.md",
+        "symptoms/limb-frozen.md",
+        "symptoms/identity-mismatch.md",
+        "symptoms/file-bloat.md",
+    ] {
+        assert!(
+            destinations.contains(symptom),
+            "troubleshooting must route to {symptom}: {destinations:?}"
+        );
+    }
+    let rows: Vec<&Vec<String>> = table.iter().skip(1).collect();
+    assert_eq!(rows.len(), 9, "one routing row per symptom page: {table:?}");
+    for row in rows {
+        assert!(
+            row.len() == 2 && !row[0].is_empty() && !row[1].is_empty(),
+            "every routing row names what the reader sees and where to go: {row:?}"
+        );
+    }
+
+    let prose = rendered_text(&page);
     for (symptom, inspection, ownership, closure) in [
         (
-            "Loader error or an AnimSmith refusal",
+            "A loader error or an AnimSmith refusal",
             "engine-addressability",
-            "engine project",
-            "engine-observed load",
-        ),
-        (
-            "Unexpected scale or rest/bind behavior",
-            "rest-world-scale",
-            "DCC/export",
-            "target-engine scale",
-        ),
-        (
-            "A loop pops",
-            "loop-closure",
-            "DCC",
-            "observed loop playback",
-        ),
-        ("Feet slide", "foot-slide", "DCC/runtime", "actual blend"),
-        (
-            "Double or missing root motion",
-            "movement_owner_",
-            "importer/controller",
-            "engine trial",
-        ),
-        (
-            "Missing or frozen bones",
-            "frozen-bone",
-            "DCC",
-            "plays with the required moving bones",
-        ),
-        (
-            "Skeleton or retarget mismatch",
-            "rig-role resolution",
-            "DCC/engine",
-            "source-to-target mapping",
-        ),
-        (
-            "Mask or contact breaks",
-            "sync-group",
-            "project work",
-            "project playback capture",
+            "belong to the engine project",
+            "engine-observed load evidence",
         ),
         (
             "A clip exists but cannot be addressed in-engine",
             "generate addressability",
-            "engine code",
+            "are engine code",
             "resolved runtime asset",
         ),
     ] {
-        let row = table
-            .iter()
-            .skip(1)
-            .find(|row| row.first().is_some_and(|cell| cell == symptom))
-            .unwrap_or_else(|| panic!("missing troubleshooting symptom: {symptom}"));
-        assert_eq!(row.len(), 4, "troubleshooting row shape for {symptom}");
-        assert!(row[1].contains(inspection), "{symptom} inspection contract");
-        assert!(row[2].contains(ownership), "{symptom} ownership route");
-        assert!(row[3].contains(closure), "{symptom} closing evidence");
+        assert!(prose.contains(symptom), "{symptom} keeps its own answer");
+        for required in [inspection, ownership, closure] {
+            assert!(
+                prose.contains(required),
+                "{symptom} must keep {required:?}: {prose}"
+            );
+        }
     }
 }
 
