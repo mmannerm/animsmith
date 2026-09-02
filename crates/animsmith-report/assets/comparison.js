@@ -64,6 +64,18 @@ const poseBounds = (side) => {
   return x && y ? { x, y } : null;
 };
 const sidePoseBounds = { before: poseBounds(data.before), after: poseBounds(data.after) };
+// One camera across both pose panes. Fitting each side to its own extent
+// draws two skeletons the repair left identical at two different sizes, and
+// a reader comparing them sees a change the clips do not contain. A side
+// whose own samples are all non-finite still says so on its own.
+const sharedPoseBounds = [sidePoseBounds.before, sidePoseBounds.after].reduce((merged, bounds) => {
+  if (!bounds) return merged;
+  if (!merged) return bounds;
+  return {
+    x: [Math.min(merged.x[0], bounds.x[0]), Math.max(merged.x[1], bounds.x[1])],
+    y: [Math.min(merged.y[0], bounds.y[0]), Math.max(merged.y[1], bounds.y[1])],
+  };
+}, null);
 const frameFinite = (side, frame) => {
   if (!Number.isInteger(frame) || frame < 0 || frame >= side.clip.frames) return false;
   for (let bone = 0; bone < data.bones.length; bone++) if (!finitePoint(posePoint(side, frame, bone))) return false;
@@ -84,6 +96,24 @@ function svgElement(tag, attrs, label) {
 function svgMessage(svg, palette, message) {
   svg.replaceChildren();
   svg.append(svgElement("text", { x: 8, y: 20, fill: palette.muted }, message));
+}
+// A panel caption is one sentence plus whatever the run has to disclose, so
+// its length is not known here. SVG does not wrap text, and an over-long
+// <text> is simply cut at the panel edge — which is how the stance and
+// scale disclosures came to end mid-word. Break on spaces instead and stack
+// the lines upwards from the caption's baseline.
+const CAPTION_CHARS = 70;
+function svgCaption(svg, palette, x, baseline, message) {
+  const lines = [];
+  for (const word of String(message).split(" ")) {
+    const last = lines.length - 1;
+    if (last >= 0 && lines[last].length + 1 + word.length <= CAPTION_CHARS) lines[last] += ` ${word}`;
+    else lines.push(word);
+  }
+  lines.forEach((line, index) => {
+    const y = baseline - (lines.length - 1 - index) * 10;
+    svg.append(svgElement("text", { x, y, fill: palette.muted }, line));
+  });
 }
 function topDownMap(bounds, width, height, pad) {
   const spanX = Math.max(.001, bounds.x[1] - bounds.x[0]);
@@ -120,7 +150,7 @@ function drawSide(name, palette, phase, highlighted) {
     q(`${name}-pose-context`).textContent = structural ? `${structural.label} · ${unavailable}` : unavailable;
     return frame;
   }
-  const [minX, maxX] = bounds.x, [minY, maxY] = bounds.y;
+  const [minX, maxX] = sharedPoseBounds.x, [minY, maxY] = sharedPoseBounds.y;
   const scale = Math.min(canvas.clientWidth / Math.max(.1, maxX - minX), canvas.clientHeight / Math.max(.1, maxY - minY)) * .72;
   const project = (point) => [canvas.clientWidth / 2 + (point[0] - (minX + maxX) / 2) * scale, canvas.clientHeight / 2 - (point[1] - (minY + maxY) / 2) * scale];
   const drawFrame = (poseFrame, stroke, fill, subject) => {
@@ -163,16 +193,28 @@ function drawRootComparison(palette, phase) {
   if (!svg) return;
   svg.replaceChildren();
   if (!sharedRootBounds) { svgMessage(svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
-  const map = topDownMap(sharedRootBounds, 720, 220, 28);
-  const styles = { before: palette.accent, after: palette.warning };
+  // The drawing is mapped into the upper 180 of the 220-tall panel so the
+  // caption below it has room for its own lines.
+  const map = topDownMap(sharedRootBounds, 720, 180, 28);
+  // A repair that leaves the root alone draws the two trajectories on top of
+  // each other, and a solid `after` over a solid `before` hides the before
+  // entirely — the panel then reads as one input rather than as two that
+  // agree. The after path is dashed and its dot smaller, so a coincident
+  // pair still reads as two.
+  const styles = {
+    before: { color: palette.accent, dash: null, radius: 6 },
+    after: { color: palette.warning, dash: "7 5", radius: 3.5 },
+  };
   for (const name of ["before", "after"]) {
     const side = data[name], root = side.clip.trails.root;
     if (root == null) continue;
-    const points = trailPoints(side, root), color = styles[name];
-    svg.append(svgElement("path", { d: pathData(points, map), fill: "none", stroke: color, "stroke-width": 3 }));
+    const points = trailPoints(side, root), style = styles[name];
+    const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": 3, "data-root-side": name };
+    if (style.dash) path["stroke-dasharray"] = style.dash;
+    svg.append(svgElement("path", path));
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
-    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 5, fill: color }));
+    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
   }
   const rootState = (side) => {
     const root = side.clip.trails.root;
@@ -183,10 +225,20 @@ function drawRootComparison(palette, phase) {
   const beforeState = rootState(data.before), afterState = rootState(data.after);
   const beforeLabel = `before root ${beforeState}`;
   const afterLabel = `after root ${afterState}`;
-  svg.append(svgElement("text", { x: 18, y: 20, fill: beforeState === "unavailable" ? palette.muted : palette.accent }, beforeLabel));
-  svg.append(svgElement("text", { x: 170, y: 20, fill: afterState === "unavailable" ? palette.muted : palette.warning }, afterLabel));
-  svg.append(svgElement("text", { x: 330, y: 20, fill: palette.muted }, "top-down · one shared uniform metres scale"));
-  svg.append(svgElement("text", { x: 18, y: 212, fill: palette.muted }, `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m · Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`));
+  // Entries are laid out from their own widths rather than from fixed
+  // stops. At the chart type scale the old stops left the legend strung
+  // across the panel with a hole in the middle.
+  let legendX = 18;
+  for (const [label, state, token] of [[beforeLabel, beforeState, "accent"], [afterLabel, afterState, "warning"]]) {
+    svg.append(svgElement("text", { x: legendX, y: 20, fill: state === "unavailable" ? palette.muted : palette[token] }, label));
+    legendX += label.length * 4.6 + 16;
+  }
+  svgCaption(svg, palette, 18, 212,
+    `the root's top-down path over the whole clip · the dot marks the shared phase · `
+    + `after dashed, before solid · `
+    + `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m `
+    + `· Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m `
+    + `on one shared uniform metres scale`);
 }
 
 const TRAIL_TOKENS = {
@@ -217,7 +269,7 @@ function drawTrails(name, palette, phase) {
   }
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
   const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
-  svg.append(svgElement("text", { x: 8, y: 174, fill: palette.muted }, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`));
+  svgCaption(svg, palette, 8, 174, `top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
 }
 
 function drawGait(name, palette, phase) {
@@ -237,9 +289,15 @@ function drawGait(name, palette, phase) {
   const span = Math.max(.001, yrange[1] - yrange[0]);
   const x = (frame) => 20 + frame * 320 / Math.max(1, side.clip.frames - 1);
   const y = (value) => 150 - (value - yrange[0]) * 120 / span;
+  // Left shading takes the upper half of the plot and right the lower. A
+  // clean walk plants one foot while the other swings, but a defective clip
+  // — or a repair that moved both feet the same way — can put the two
+  // windows at the same frames, and two 16%-opacity bands drawn over each
+  // other cancel into one grey block that belongs to neither side.
   for (const stance of side.contexts.stances) for (const run of stance.runs) {
     const selected = selectedContext && selectedContext.name === name && selectedContext.kind === "stance" && selectedContext.value.bone === stance.bone;
-    svg.append(svgElement("rect", { x: x(run.start_frame), y: 24, width: Math.max(2, x(run.end_frame) - x(run.start_frame)), height: 130, fill: stance.side === "left" ? palette.accent : palette.warning, opacity: selected ? .32 : .16, "data-stance-side": stance.side }));
+    const left = stance.side === "left";
+    svg.append(svgElement("rect", { x: x(run.start_frame), y: left ? 24 : 89, width: Math.max(2, x(run.end_frame) - x(run.start_frame)), height: 65, fill: left ? palette.accent : palette.warning, opacity: selected ? .32 : .16, "data-stance-side": stance.side }));
   }
   for (const [label, color] of [["left", palette.accent], ["right", palette.warning]]) {
     const points = series[label].map((value, frame) => [x(frame), y(value)]);
@@ -250,9 +308,9 @@ function drawGait(name, palette, phase) {
   const roleLabel = (role) => role.replace("_", " ");
   svg.append(svgElement("text", { x: 8, y: 14, fill: palette.accent }, `${roleLabel(gait.left_role)} height rel hips`));
   svg.append(svgElement("text", { x: 170, y: 14, fill: palette.warning }, `${roleLabel(gait.right_role)} height rel hips`));
-  svg.append(svgElement("text", { x: 8, y: 174, fill: palette.muted }, gaitFinite
-    ? "exact sampled height in metres · shaded runs are sampled foot-slide stance evidence"
-    : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed"));
+  svgCaption(svg, palette, 8, 174, gaitFinite
+    ? "exact sampled height in metres · shaded runs are sampled foot-slide stance evidence · left in the upper band, right in the lower"
+    : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed");
 }
 
 let highlight = { before: null, after: null };

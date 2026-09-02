@@ -201,6 +201,75 @@ if(!nodes["comparison-root-path"].children.some(child=>child.textContent==="befo
 if(!nodes["before-path"].children.some(child=>child.attrs["data-role"]==="left_foot") || !nodes["before-path"].children.some(child=>child.attrs["data-role"]==="right_foot")) throw new Error("role trail chart omits foot trajectories");
 if(!nodes["before-gait"].children.some(child=>child.attrs["data-stance-side"]==="left")) throw new Error("gait chart omits typed stance interval");
 assertNoBareSvgText(nodes, comparisonSvgs, "drawn comparison");
+
+// Every panel says what it is. These captions are the only thing telling a
+// reader that the trajectory panel covers the whole clip while the dot and
+// the pose panes show one shared phase, and which shaded band belongs to
+// which foot, so they are part of the document's contract rather than
+// decoration.
+const panelText = (id) => nodes[id].children.map((child) => child.textContent).join(" ");
+for (const [id, phrase] of [
+  ["comparison-root-path", "the root's top-down path over the whole clip"],
+  ["comparison-root-path", "the dot marks the shared phase"],
+  ["comparison-root-path", "one shared uniform metres scale"],
+  ["before-path", "shared scale across both inputs"],
+  ["before-gait", "shaded runs are sampled foot-slide stance evidence"],
+  ["before-gait", "left in the upper band, right in the lower"],
+]) {
+  if (!panelText(id).includes(phrase)) throw new Error(`${id} lost its caption: ${JSON.stringify(phrase)}`);
+}
+// SVG does not wrap, so a caption longer than its panel is cut at the edge
+// rather than reflowed. Every drawn label has to fit the box it sits in.
+const CAPTION_LIMIT = 74;
+for (const id of comparisonSvgs) {
+  for (const child of nodes[id].children) {
+    if (child.tag !== "text" || !child.textContent) continue;
+    if (child.textContent.length > CAPTION_LIMIT) throw new Error(`${id} draws a ${child.textContent.length}-character label that its panel cuts off: ${JSON.stringify(child.textContent)}`);
+  }
+}
+for (const side of ["Before", "After"]) {
+  if (!html.includes("<h3>Judged pose at the shared phase</h3>")) throw new Error(`the ${side} pose pane is unlabelled`);
+}
+if ((html.match(/<h3>Judged pose at the shared phase<\/h3>/g) || []).length !== 2) throw new Error("both pose panes carry the caption");
+
+// Two root trajectories that coincide stay two visible paths. Both sides
+// here carry the same pose grid, so a solid `after` drawn over a solid
+// `before` would leave the panel showing one input while its legend named
+// two — which is what a repair that does not touch the root produces.
+const rootPaths = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-side"]);
+if (rootPaths.length !== 2) throw new Error("the shared root chart plots both sides");
+if (rootPaths.filter((path) => path.attrs["stroke-dasharray"]).length !== 1) throw new Error("two coincident root paths are drawn identically, so one hides the other");
+const rootDots = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]);
+if (new Set(rootDots.map((dot) => dot.attrs.r)).size !== 2) throw new Error("two coincident shared-phase dots are drawn identically");
+if (!panelText("comparison-root-path").includes("after dashed, before solid")) throw new Error("the shared root chart does not say which path is which");
+
+// Two stance windows at the same frames stay two visible bands. The left
+// and right shading are semi-transparent, so drawing them over each other
+// cancels them into one grey block belonging to neither side — which is
+// exactly what a repaired clip whose feet plant together produced.
+const coincident = JSON.parse(JSON.stringify(data));
+if (coincident.before.contexts.stances.length !== 2) throw new Error("the fixture needs a left and a right stance to coincide");
+for (const row of coincident.before.contexts.stances) row.runs = [{start_frame: 200, end_frame: 900, start_s: 0.2, end_s: 0.9}];
+const coincidentRun = run(generated, "comparison-report-data", html, coincident);
+const bands = coincidentRun.nodes["before-gait"].children.filter((child) => child.attrs["data-stance-side"]);
+if (new Set(bands.map((band) => band.attrs["data-stance-side"])).size !== 2) throw new Error("both stance sides must be shaded");
+if (new Set(bands.map((band) => `${band.attrs.y}+${band.attrs.height}`)).size !== 2) throw new Error("two coincident stance windows drew one band on top of the other");
+
+// One camera across both pose panes: a skeleton half the size renders half
+// the size. Fitting each side to its own extent draws two skeletons the
+// repair left identical at the same size whatever their real extents are.
+const scaledSides = JSON.parse(JSON.stringify(data));
+const halved = Buffer.from(data.after.clip.positions, "base64");
+for (let offset = 0; offset < halved.length; offset += 4) halved.writeFloatLE(halved.readFloatLE(offset) * 0.5, offset);
+scaledSides.after.clip.positions = halved.toString("base64");
+const oneCamera = run(generated, "comparison-report-data", html, scaledSides);
+const drawnSpread = (side) => {
+  const arcs = oneCamera.nodes[`${side}-gl`].context.arcs.map((arc) => arc.args);
+  if (!arcs.length) throw new Error(`the ${side} pose pane drew nothing`);
+  const extent = (index) => Math.max(...arcs.map((arc) => arc[index])) - Math.min(...arcs.map((arc) => arc[index]));
+  return Math.max(extent(0), extent(1));
+};
+if (!(drawnSpread("after") < drawnSpread("before") * 0.75)) throw new Error(`the pose panes do not share one camera: a half-size skeleton drew at ${drawnSpread("after")} against ${drawnSpread("before")}`);
 const seamIndex = data.before.findings.indexOf(seamFinding), structuralIndex = data.before.findings.indexOf(structuralFinding), afterIndex = data.after.findings.indexOf(afterFinding);
 nodes["before-findings"].children[seamIndex].listeners.click();
 if(nodes.scrub.value != 1501 || !nodes["before-pose-context"].textContent.includes("first 0.000s") || !nodes["before-pose-context"].textContent.includes(`affected ${seam.subject_bone_name}`)) throw new Error("seam finding did not select exact frame and endpoint/subject context");

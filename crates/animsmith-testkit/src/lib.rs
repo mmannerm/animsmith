@@ -493,11 +493,27 @@ const COMPARISON_ROOT_SWAY: [Vec3; 5] = [
 
 fn comparison_document(after: bool) -> Document {
     let root = COMPARISON_ROOT_SWAY;
+    // The repaired feet alternate, the way a walk does: the left is
+    // planted across the loop seam while the right swings through it, and
+    // the right is planted through the middle of the cycle while the left
+    // swings. Two feet that plant and lift together — which is what the
+    // repaired side used to do — give the report's gait panel two stance
+    // windows at the same frames, and two 16%-opacity bands stacked at the
+    // same place read as one grey block rather than as a left one and a
+    // right one.
+    //
+    // Every value here is fixed by three things at once, so none of them
+    // is free: a planted foot travels 0.25 m per 0.25 s key interval,
+    // because `speed_mps` declares 1 m/s against a gameplay-owned root;
+    // the last key repeats the first, because the clip declares `loop`;
+    // and the three keys around the seam are collinear in every axis,
+    // because `loop-seam-vel` compares the incoming and outgoing
+    // model-space velocity within 0.1 m/s.
     let left = if after {
         [
             Vec3::ZERO,
             Vec3::new(-0.25, 0.0, 0.0),
-            Vec3::new(-0.5, 0.2, 0.0),
+            Vec3::new(0.0, 0.2, 0.0),
             Vec3::new(0.25, 0.0, 0.0),
             Vec3::ZERO,
         ]
@@ -512,11 +528,11 @@ fn comparison_document(after: bool) -> Document {
     };
     let right = if after {
         [
-            Vec3::ZERO,
-            Vec3::new(-0.25, 0.0, 0.0),
-            Vec3::new(0.5, 0.3, 0.0),
+            Vec3::new(0.1, 0.1, 0.0),
+            Vec3::new(0.18, 0.2, 0.0),
             Vec3::new(0.25, 0.0, 0.0),
-            Vec3::ZERO,
+            Vec3::new(0.02, 0.0, 0.0),
+            Vec3::new(0.1, 0.1, 0.0),
         ]
     } else {
         [
