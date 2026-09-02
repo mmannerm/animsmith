@@ -1,8 +1,15 @@
-# Game-developer intake workflow
+# For game developers: from pack to engine gate
 
-Use this workflow when a pack or collection must become a defensible trial in
-one game. It begins with source evidence and ends with an observed engine gate;
-AnimSmith predictions are useful prerequisites, not engine execution.
+A pack has landed, and somebody has to say whether it can ship in your game.
+This page is the order to find out in: inventory what the delivery really
+contains, pin the engine you are judging it against, settle who moves the
+character, gather the source evidence, and then close the question in the
+project itself.
+
+It begins with source evidence and ends with an observed engine gate;
+AnimSmith predictions are useful prerequisites, not engine execution. When one
+clip already misbehaves, the [symptoms](symptoms/README.md) pages route it
+faster than a full intake pass.
 
 ## Intake path
 

@@ -262,9 +262,12 @@ fn has_version_history_account(markdown: &str) -> bool {
 fn workflows_are_obvious_navigation_entry_points_with_canonical_routes() {
     let index_links = rendered_links(&markdown("docs/README.md"));
     for required in [
-        ("Animation-author workflow", "animation-author-workflow.md"),
         (
-            "Game-developer intake workflow",
+            "For artists: from export to handoff",
+            "animation-author-workflow.md",
+        ),
+        (
+            "For game developers: from pack to engine gate",
             "game-developer-intake-workflow.md",
         ),
         ("Animation troubleshooting", "animation-troubleshooting.md"),

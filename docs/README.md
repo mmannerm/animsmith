@@ -10,11 +10,11 @@ $ animsmith lint walk.glb
 
 - **Artists and animators** — catch a bad export while the DCC is still open.
   [Install](install.md), then [first lint in 60 seconds](first-lint.md), then
-  the [animation-author workflow](animation-author-workflow.md).
+  [from export to handoff](animation-author-workflow.md).
 - **Game developers** — know what a pack really contains and gate every
   re-export. [Install](install.md), then
-  [your first report](first-report.md), then the
-  [game-developer intake workflow](game-developer-intake-workflow.md).
+  [your first report](first-report.md), then
+  [from pack to engine gate](game-developer-intake-workflow.md).
 
 Something specific already looks wrong in the engine? Start from the
 [symptoms](symptoms/README.md).
@@ -44,15 +44,15 @@ this table and the site sidebar carry the same structure in the same order.
 | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) | Decide what is redundant exported data and what is authored scale, then remove only the part a transform can prove. | Symptoms |
 | [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder), who owns each level, and the complete check-to-symptom table behind the pages above. | Symptoms |
 | [Animation troubleshooting](animation-troubleshooting.md) | Route a visible runtime symptom to the page that owns it, and answer the two that are not about a clip: a loader refusal and an unaddressable clip. | Symptoms |
-| [Animation-author workflow](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
-| [Game-developer intake workflow](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |
+| [For artists: from export to handoff](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
+| [For game developers: from pack to engine gate](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |
 | [Pipeline scenario guide](pipeline-scenarios.md) | Plan a raw-to-game-ready asset process — marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and artifact storage. | Workflows |
-| [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. | Workflows |
 | [Unity 6000.3 profile guide](engine-profile-unity.md) | Configure the exact Unity Generic/Humanoid profiles, importer advice, root-motion choices, and scale boundary. | Workflows › Engine profiles |
 | [Unreal Engine 5.8 profile guide](engine-profile-unreal.md) | Map FBX animation, Skeleton, frame, unit, root-motion, and scale concerns to AnimSmith evidence without inventing importer settings. | Workflows › Engine profiles |
 | [Godot 4.7 profile guide](engine-profile-godot.md) | Plan scene import, retargeting, animation slicing, root scale, and the current profile's explicit prediction boundary. | Workflows › Engine profiles |
 | [Bevy 0.19.0 profile guide](engine-profile-bevy.md) | Generate exact `Animation{i}` selector evidence and keep runtime loading, graph, target, and scale responsibilities explicit. | Workflows › Engine profiles |
 | [glTF and generic runtime guide](engine-profile-gltf-runtime.md) | Use the engine-neutral contract for custom runtimes, glTF units, source identity, scale repair, and downstream validation. | Workflows › Engine profiles |
+| [Examples cookbook](../examples/README.md) | Do the work, copy-paste style — gate exports in CI, repair a broken export, trim or re-anchor a clip, encode a project contract config, migrate FBX/Mixamo exports, embed the checks in Rust. | Workflows |
 | [Static asset workflow guide](static-asset-workflows.md) | Diagnose bounds and transform domains, preserve normal maps, bake supported static placement, attach explicit textures, and understand what still needs engine validation. | Workflows › Advanced workflows |
 | [Scaling glTF safely](scale.md) | Choose whole-document unit conversion or rest/bind reparameterization, understand the exact-source rewrite/proof transaction, and interpret its support boundary. | Workflows › Advanced workflows |
 | [Material texture recipes](material-texture-recipes.md) | Attach explicit BaseColor, normal, metallic-roughness, and occlusion images during conversion with deterministic resizing and provenance evidence. | Workflows › Advanced workflows |
