@@ -673,14 +673,16 @@ fn prove_contact_boundaries(
     detected: &ContactFragmentV1,
     max_error: f64,
 ) -> Result<f64, FootCycleProofError> {
-    let expected = contact_boundaries(expected)?;
-    let detected = contact_boundaries(detected)?;
+    let mut expected = contact_boundaries(expected)?;
+    let mut detected = contact_boundaries(detected)?;
     if expected.len() != detected.len() {
         return Err(FootCycleProofError::new(
             FootCycleProofKind::ContactTopology,
         ));
     }
-    if expected
+    if expected.iter().zip(&detected).any(|(expected, detected)| {
+        expected.side != detected.side || expected.edge != detected.edge
+    }) || expected
         .iter()
         .zip(expected.iter().cycle().skip(1))
         .zip(detected.iter().zip(detected.iter().cycle().skip(1)))
@@ -693,6 +695,8 @@ fn prove_contact_boundaries(
             FootCycleProofKind::ContactTopology,
         ));
     }
+    rotate_contact_boundaries(&mut expected)?;
+    rotate_contact_boundaries(&mut detected)?;
     let mut observed = 0.0f64;
     for (expected, detected) in expected.iter().zip(&detected) {
         if expected.side != detected.side || expected.edge != detected.edge {
@@ -709,6 +713,19 @@ fn prove_contact_boundaries(
         }
     }
     Ok(observed)
+}
+
+fn rotate_contact_boundaries(
+    boundaries: &mut [ContactBoundary],
+) -> Result<(), FootCycleProofError> {
+    let origin = boundaries
+        .iter()
+        .position(|boundary| {
+            boundary.side == ContactSide::Left && boundary.edge == ContactEdge::Onset
+        })
+        .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::ContactTopology))?;
+    boundaries.rotate_left(origin);
+    Ok(())
 }
 
 fn prove_clip_map(
@@ -1082,13 +1099,6 @@ fn contact_boundaries(
                 .cmp(&contact_boundary_key(right.side, right.edge))
         })
     });
-    let origin = boundaries
-        .iter()
-        .position(|boundary| {
-            boundary.side == ContactSide::Left && boundary.edge == ContactEdge::Onset
-        })
-        .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::ContactTopology))?;
-    boundaries.rotate_left(origin);
     Ok(boundaries)
 }
 
@@ -1516,8 +1526,16 @@ mod tests {
             prove_contact_boundaries(&expected, &within, 0.0078125).unwrap(),
             0.0078125
         );
+        let phase_warped = contact_fragment(&[
+            (ContactRoleV1::LeftFoot, 0.25, 0.375),
+            (ContactRoleV1::RightFoot, 0.75, 0.875),
+        ]);
+        assert_eq!(
+            prove_contact_boundaries(&expected, &phase_warped, 0.5).unwrap(),
+            0.125
+        );
         let wrong_side = contact_fragment(&[
-            (ContactRoleV1::LeftFoot, 0.125, 0.25),
+            (ContactRoleV1::RightFoot, 0.125, 0.25),
             (ContactRoleV1::LeftFoot, 0.625, 0.75),
         ]);
         assert_eq!(

@@ -211,6 +211,12 @@ its authored normalized phase and a member that would require moving phase
 zero, including incompatible wrap/non-wrap correspondence, refuses as
 non-monotone.
 
+Independent output proof first requires the expected and freshly detected
+`(side, edge)` sequence in absolute phase-zero chronological order to match.
+It may then use the cyclic left-onset order for circular numeric error, but a
+complete left/right role swap is a topology failure even at the maximum
+allowed boundary-error tolerance.
+
 For matching signatures, corresponding source onsets/releases map to the
 reference phases. Simultaneous source boundaries are admitted only when all
 corresponding reference boundaries are simultaneous at one phase, and vice

@@ -4145,7 +4145,11 @@ phase spread, and separate source/output/combined work totals for the later
 evidence and publication transaction. Its contact proof independently repeats
 the per-side marker/disjointness validation, seam coalescing, logical-count and
 cyclic-onset checks, and deterministic true-boundary ordering rather than
-calling planner internals. It defines no public evidence schema,
+calling planner internals. Before its cyclic error comparison, proof also
+requires the expected and independently detected `(side, edge)` signature in
+absolute phase-zero chronological order to match, so a complete left/right
+role swap remains a topology failure at every numeric error tolerance. It
+defines no public evidence schema,
 filesystem layout, publication, or CLI behavior.
 
 ### F.10G Foot-cycle generation producer V1 (#18)
