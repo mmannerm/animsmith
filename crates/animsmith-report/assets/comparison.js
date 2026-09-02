@@ -194,8 +194,9 @@ const TRAIL_TOKENS = {
   left_foot: ["accent", "left foot"], right_foot: ["warning", "right foot"],
 };
 function drawTrails(name, palette, phase) {
-  const side = data[name], svg = q(`${name}-path`); svg.replaceChildren();
-  if (posesOmitted) return;
+  const side = data[name], svg = q(`${name}-path`);
+  if (!svg) return;
+  svg.replaceChildren();
   if (!sharedTrailBounds) { svgMessage(svg, palette, "role trajectories unavailable"); return; }
   const map = topDownMap(sharedTrailBounds, 360, 180, 24);
   let legendX = 8, unavailable = [], incomplete = [];
@@ -220,8 +221,9 @@ function drawTrails(name, palette, phase) {
 }
 
 function drawGait(name, palette, phase) {
-  const side = data[name], svg = q(`${name}-gait`), gait = side.contexts.gait; svg.replaceChildren();
-  if (posesOmitted) return;
+  const side = data[name], svg = q(`${name}-gait`), gait = side.contexts.gait;
+  if (!svg) return;
+  svg.replaceChildren();
   if (!gait) { svgMessage(svg, palette, "gait unavailable: hips and bilateral foot/toe roles did not all resolve"); return; }
   const series = { left: [], right: [] };
   for (let frame = 0; frame < side.clip.frames; frame++) {
@@ -327,11 +329,15 @@ function selectHash() {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   documentPalette = animsmithPalette();
-  if (options.frame == null) return;
+  if (options.frame === undefined) return;
+  // A frame past the end of the shared phase clamps to its last frame; one
+  // the parser could not read restores frame 0. Either way the previous
+  // selection does not stand.
   selectedFrames = null; selectedContext = null;
-  q("scrub").value = Math.min(options.frame, sharedFrameMax);
+  q("scrub").value = options.frame == null ? 0 : Math.min(options.frame, sharedFrameMax);
 }
 q("scrub").addEventListener("input", () => { selectedFrames = null; selectedContext = null; update(); });
 window.addEventListener("resize", update);
+animsmithOnSchemeChange(() => { documentPalette = animsmithPalette(); update(); });
 window.addEventListener("hashchange", () => { applyFragment(); selectHash(); update(); });
 applyFragment(); selectHash(); update();

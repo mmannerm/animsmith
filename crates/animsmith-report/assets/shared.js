@@ -3,13 +3,11 @@
 // drift apart on theming or on how a URL fragment is read.
 "use strict";
 
-// The design tokens of tokens.css. These dark values are also the fallback
-// whenever a token cannot be resolved.
-const ANIMSMITH_DEFAULT_PALETTE = {
-  ground: "#17171f", surface: "#1e1e2a", raised: "#232331", ink: "#d5d9e5",
-  muted: "#9099b2", line: "#3a3a4e", accent: "#7aa2f7", error: "#f7768e",
-  warning: "#e0af68", pass: "#9ece6a", note: "#bb9af7",
-};
+// The fallback palette used whenever a token cannot be resolved from the
+// document. The report crate substitutes the dark values of tokens.css for
+// this placeholder as it emits the runtime, so a token value is written in
+// exactly one place; this asset is a template rather than standalone JS.
+const ANIMSMITH_DEFAULT_PALETTE = "__ANIMSMITH_DARK_TOKENS__";
 
 // Live token values from the root element, so the WebGL and canvas pose views
 // paint with the same palette as the CSS. Anything that is not an exact
@@ -41,8 +39,11 @@ function animsmithRgb(hex) {
 //
 // Each option has three states, because a fragment is navigated as well as
 // loaded: `undefined` when the key never appeared (leave that state alone),
-// `null`/`false` when the key appeared with a value this report will not
-// honour (return that state to its default), and the value otherwise.
+// `null`/`false` when the value cannot be read at all (return that state to
+// its default), and the value otherwise. A value that reads but overshoots is
+// the caller's to place: a frame past the end of a clip is clamped to its last
+// frame, not discarded, because a reader who asks for a position wants the
+// nearest one the document can show.
 // Unknown keys, pairs without a key, and malformed percent escapes are
 // ignored rather than thrown, and the fragment is read but never written, so
 // no fragment can raise an exception or drive a loop. The work is bounded by
@@ -81,6 +82,15 @@ function animsmithDecoded(value) {
 // count, so no separate length rule is needed here.
 function animsmithIndex(value) {
   return /^[0-9]+$/.test(value) ? Number(value) : null;
+}
+
+// Repaint hook for a reader who switches their system theme with the report
+// open: the CSS follows on its own, the canvas views need the new palette.
+function animsmithOnSchemeChange(repaint) {
+  if (typeof matchMedia !== "function") return;
+  const scheme = matchMedia("(prefers-color-scheme: light)");
+  if (!scheme || typeof scheme.addEventListener !== "function") return;
+  scheme.addEventListener("change", repaint);
 }
 
 // The two document-wide switches, applied to the root element so every visual

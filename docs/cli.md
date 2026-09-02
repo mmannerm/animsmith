@@ -159,31 +159,47 @@ retargeting acceptance verdict.
 `--evidence-only` omits the sampled pose grid from either report form and
 sets `"evidence_only": true` in the embedded data. The grid is the motion —
 every bone's model-space position on every judged frame — so a full report of a
-licensed clip carries that clip. The evidence-only document keeps the findings,
-coverage gaps, engine predictions, metric charts, and input identities, shows a
-notice where the pose view would be, and disables playback, so it can be
-attached to an issue, published, or sent to a vendor where the source asset
-itself may not go (see the
+licensed clip carries that clip. Both forms keep their findings, coverage gaps,
+engine predictions, and input identities, show a notice where each pose view
+would be, and disable playback, so the document can be attached to an issue,
+published, or sent to a vendor where the source asset itself may not go (see the
 [licensed-asset policy](../DEVELOPMENT.md#golden-tests)). Nothing else about the
 run changes: the same checks evaluate the same frames.
+
+What is left to look at differs by form, because only one of them draws its
+charts on the Rust side. The single-clip report keeps its charts, and they
+retain exactly the root's X/Z path and the two foot-height series relative to
+the hips plus their difference — nothing per bone. Every comparison panel is a
+viewer drawing made from the pose grid — both role-trajectory panels, both gait
+panels, and the shared root chart — so an evidence-only comparison replaces all
+of them with the same notice and retains only its findings, coverage gaps,
+prediction provenance, and identities. Rendering those panels on the Rust side
+is tracked as follow-up work and would restore them.
 
 Both report forms follow the reader's `prefers-color-scheme` and read a URL
 fragment of `&`-separated `key=value` options, so one generated file can be
 deep-linked or embedded without regenerating it. Both honour `theme=light` and
-`theme=dark`, which pin the palette; `embed=1`, which drops the running title
-and the interaction hint so the document fits an `<iframe>` while every
-finding, chart, identity, and evidence disclosure stays; and `frame=N`, which
-scrubs to a judged frame. `clip=NAME` and `finding=INDEX` are single-clip
-options — they select exactly what clicking that clip or finding would — while
-the comparison addresses a finding through the `#finding-<side>-<anchor>` link
-its own panels carry, because its clip correspondence is declared by the two
-inputs rather than chosen in the viewer.
+`theme=dark`, which pin the palette; `embed=1`, whose rules hide the running
+title and the interaction hint and nothing else, so the document fits an
+`<iframe>` with its findings, charts, identities, and evidence disclosures in
+place; and `frame=N`, which scrubs to a judged frame. `clip=NAME` and
+`finding=INDEX` are single-clip options — they land where clicking that clip
+or finding lands, on the same selected row, frame, chart playhead, and 3D view
+— while the comparison addresses a finding through the
+`#finding-<side>-<anchor>` link its own panels carry, because its clip
+correspondence is declared by the two inputs rather than chosen in the viewer.
 
 A key that is absent leaves that state as it is, so following one of those
-anchors inside an embedded, theme-pinned report does not un-pin it; a key
-present with a value the report cannot honour returns that state to its
-default. Unknown keys, malformed pairs, and out-of-range values are ignored,
-and no option changes what the report measured.
+anchors inside an embedded, theme-pinned report does not un-pin it. A key that
+is present is applied as far as the document allows: a syntactically valid
+`frame` beyond the clip is clamped to its last frame, and a `clip` the document
+does not contain selects the first one, because a reader who asks for a
+position wants the nearest one the report can show. A value the parser cannot
+read at all restores that state's default instead — an unparsable `frame`
+restores frame 0, an unparsable `clip` the first clip, and a `finding` index
+the document cannot address clears the selection. Unknown keys and malformed
+pairs are ignored, no option changes the findings, coverage, or charts the
+document carries, and no viewer writes the fragment back.
 
 The checked-in [synthetic comparison walkthrough](../examples/README.md#5-converting-exports-and-generating-reports-default-features-only)
 demonstrates seam endpoints, sampled stance and foot trajectories, shared-scale

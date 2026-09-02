@@ -160,7 +160,7 @@ enum Cmd {
     },
     /// Render a self-contained offline HTML report.
     #[command(
-        long_about = "Render a self-contained offline HTML report: WebGL skeleton playback of the exact frames the checks judged, metric charts, and the findings list. --evidence-only omits the sampled poses, leaving a report that can be shared where the source motion cannot."
+        long_about = "Render a self-contained offline HTML report: WebGL skeleton playback of the exact frames the checks judged, metric charts, and the findings list. --evidence-only omits the sampled poses, leaving a report that can be shared where the source motion cannot: a single-clip report keeps its Rust-rendered charts, while a comparison's panels are drawn from those poses and become notices."
     )]
     #[cfg(feature = "report")]
     Report {
@@ -181,8 +181,9 @@ enum Cmd {
         /// Exact after clip in comparison mode; no correspondence is inferred.
         #[arg(long, value_name = "CLIP")]
         after_clip: Option<String>,
-        /// Omit the sampled pose grid: findings, coverage, predictions,
-        /// charts, and identities remain, but the motion does not.
+        /// Omit the sampled pose grid: findings, coverage, predictions, and
+        /// identities remain, as do a single-clip report's charts, while a
+        /// comparison's pose-derived panels become notices.
         #[arg(long)]
         evidence_only: bool,
     },

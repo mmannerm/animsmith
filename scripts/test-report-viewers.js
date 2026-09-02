@@ -4,14 +4,15 @@
 // full and evidence-only shape. The DOM and WebGL stubs are deliberately
 // thin — everything asserted here is something a reader would see.
 const fs = require("fs"), vm = require("vm");
-if (process.argv.length !== 6) {
-  throw new Error("usage: test-report-viewers.js COMPARISON.html COMPARISON-EVIDENCE.html REPORT.html REPORT-EVIDENCE.html");
+if (process.argv.length !== 7) {
+  throw new Error("usage: test-report-viewers.js COMPARISON.html COMPARISON-EVIDENCE.html REPORT.html REPORT-EVIDENCE.html REPORT-MULTI-CLIP.html");
 }
-const [, , comparisonPath, comparisonEvidencePath, singlePath, singleEvidencePath] = process.argv;
+const [, , comparisonPath, comparisonEvidencePath, singlePath, singleEvidencePath, multiPath] = process.argv;
 const html = fs.readFileSync(comparisonPath, "utf8");
 const comparisonEvidenceHtml = fs.readFileSync(comparisonEvidencePath, "utf8");
 const singleHtml = fs.readFileSync(singlePath, "utf8");
 const singleEvidenceHtml = fs.readFileSync(singleEvidencePath, "utf8");
+const multiHtml = fs.readFileSync(multiPath, "utf8");
 
 function generatedReportParts(source) {
   const match = source.match(/<script>([\s\S]*?)<\/script><script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script><script>([\s\S]*?)<\/script><\/body><\/html>\s*$/);
@@ -55,7 +56,7 @@ class Node {
   get classList(){const c=this.classes;return {add:x=>c.add(x),remove:x=>c.delete(x),contains:x=>c.has(x)}}
   getContext(kind){
     if (kind === "webgl2") { if (!this.gl) this.gl=webgl(); return this.gl; }
-    if (!this.context) this.context={arcs:[],fillStyle:null,setTransform(){},clearRect(){this.arcs=[]},beginPath(){},moveTo(){},lineTo(){},stroke(){},arc(...args){this.arcs.push({args,fillStyle:this.fillStyle})},fill(){}};
+    if (!this.context) this.context={arcs:[],strokes:[],fillStyle:null,strokeStyle:null,setTransform(){},clearRect(){this.arcs=[];this.strokes=[]},beginPath(){},moveTo(){},lineTo(){},stroke(){this.strokes.push(this.strokeStyle)},arc(...args){this.arcs.push({args,fillStyle:this.fillStyle})},fill(){}};
     return this.context;
   }
   scrollIntoView(){this.scrolled=true}
@@ -75,36 +76,83 @@ function webgl() {
   return gl;
 }
 
+// Every id the emitted markup carries. The synthetic DOM is built from this
+// rather than from a list the harness keeps, so a document that stops
+// rendering a surface cannot be executed against a manufactured node.
+function documentIds(html) {
+  return new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]));
+}
+
+// The charts the single-clip viewer syncs, built from the document's own
+// <figure> blocks: real data-* hooks, and the child elements the playhead and
+// path dot are moved through.
+function documentCharts(html) {
+  return [...html.matchAll(/<figure class="chart"[\s\S]*?<\/figure>/g)].map(([figure]) => {
+    const node = new Node("chart");
+    for (const [, name, value] of figure.matchAll(/data-([a-z]+)="([^"]*)"/g)) node.dataset[name] = value;
+    for (const name of ["playhead", "pathdot", "pathpoints"]) {
+      if (!figure.includes(`class="${name}"`)) continue;
+      const child = new Node(name);
+      if (name === "pathpoints") child.innerHTML = figure.split(`class="pathpoints">`)[1].split("<")[0];
+      node.query[`.${name}`] = child;
+    }
+    return node;
+  });
+}
+
 // One runner for every viewer execution: a fresh document whose elements are
-// exactly the ids the generated markup carries, so an absent pose surface is
-// absent here too.
-function run(parts, dataId, ids, payload, options) {
+// exactly the ones the generated markup carries, so an absent pose surface is
+// absent here too. A query for an id this document deliberately omits — named
+// by `omitted`, which is how an evidence-only document drops its pose
+// surfaces — returns null, the way a browser does. Any other absent id fails
+// the run, so a document that stops rendering a surface cannot be executed
+// against a node the harness manufactured for it.
+function run(parts, dataId, html, payload, options) {
   const settings = options || {};
-  const nodes = Object.fromEntries(ids.map(id => [id, new Node(id)]));
-  nodes[dataId] = new Node(dataId);
+  const present = documentIds(html);
+  const omitted = new Set(settings.omitted || []);
+  const nodes = {};
+  for (const id of present) nodes[id] = new Node(id);
+  if (!nodes[dataId]) throw new Error(`the generated document carries no #${dataId} payload`);
   nodes[dataId].textContent = JSON.stringify(payload);
   const listeners = {};
+  const media = {};
   const root = new Node("documentElement");
-  const charts = settings.charts || [];
+  const charts = documentCharts(html);
+  // The fragment is read, never written: every assignment to location.hash
+  // is counted so a viewer that rewrites the URL cannot pass unnoticed.
+  const hash = { value: settings.hash || "", writes: 0 };
+  const location = {
+    get hash() { return hash.value; },
+    set hash(next) { hash.writes++; hash.value = next; },
+  };
   const context = {
     document: {
       documentElement: root,
-      getElementById: id => nodes[id] || null,
+      getElementById: (id) => {
+        if (nodes[id]) return nodes[id];
+        if (omitted.has(id)) return null;
+        throw new Error(`the viewer queried #${id}, which this generated document does not define`);
+      },
       createElement: () => new Node(),
       createTextNode: text => { const node = new Node(); node.textContent = text; return node; },
       createElementNS: (_ns, tag) => { const node = new Node(); node.tag = tag; return node; },
-      querySelectorAll: () => charts,
+      querySelectorAll: (selector) => {
+        if (selector !== ".chart") throw new Error(`the viewer queried an unexpected selector ${selector}`);
+        return charts;
+      },
     },
     window: { addEventListener(kind, handler) { listeners[kind] = handler; }, devicePixelRatio: 1 },
-    location: { hash: settings.hash || "" },
+    location,
     getComputedStyle: () => settings.styles || noStyles,
+    matchMedia: () => ({ matches: false, addEventListener(kind, handler) { media[kind] = handler; }, removeEventListener() {} }),
     performance: { now: () => 0 }, requestAnimationFrame: () => 0,
     atob: value => Buffer.from(value, "base64").toString("binary"),
     Uint8Array, Float32Array, Buffer, Math, Map, Set, Array, Number, Object, Infinity, JSON, console,
   };
   vm.createContext(context);
   vm.runInContext(`${parts.shared}\n${parts.viewer}`, context);
-  return { nodes, root, listeners, context, charts };
+  return { nodes, root, listeners, context, charts, hash, media, settings };
 }
 
 // SVG shows no text unless an element carries it, so no panel may explain
@@ -116,7 +164,6 @@ function assertNoBareSvgText(nodes, svgIds, why) {
   }
 }
 
-const comparisonIds = ["mapping","scrub","times","comparison-root-path","clip-before","clip-after","before-gl","after-gl","before-pose-context","after-pose-context","before-path","after-path","before-gait","after-gait","before-contexts","after-contexts","before-identity","after-identity","before-findings","after-findings","before-gaps","after-gaps","before-predictions","after-predictions"];
 const comparisonSvgs = ["comparison-root-path","before-path","after-path","before-gait","after-gait"];
 
 for (const side of [data.before, data.after]) {
@@ -144,7 +191,7 @@ if (!afterFinding) {
 }
 afterFinding.time = 1.234;
 
-const main = run(generated, "comparison-report-data", comparisonIds, data);
+const main = run(generated, "comparison-report-data", html, data);
 const nodes = main.nodes, windowListeners = main.listeners, documentElement = main.root, context = main.context;
 const palette = context.animsmithPalette();
 if(nodes.scrub.max !== 2001 || !nodes["before-findings"].children.some(child=>child.textContent.includes("<img>"))) throw new Error("viewer did not retain exact frames or safe finding text");
@@ -161,28 +208,120 @@ if(!nodes["before-gl"].context.arcs.some(row=>row.args[2]===6 && row.fillStyle==
 nodes["before-findings"].children[structuralIndex].listeners.click();
 if(!nodes["before-pose-context"].textContent.includes("structural evidence") || !nodes["before-contexts"].children.some(child=>child.className.includes("structural"))) throw new Error("structural finding was not distinguished from visible pose evidence");
 nodes["after-findings"].children[afterIndex].listeners.click(); if(nodes.scrub.value != 1234) throw new Error("after finding did not select exact frame");
-context.location.hash=`#time-before-${seamFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
+main.hash.value=`#time-before-${seamFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
 if(nodes.scrub.value != 1501) throw new Error("semantic time anchor did not select its finding");
-context.location.hash=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
+main.hash.value=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
 if(nodes.scrub.value != 1234) throw new Error("cross-side semantic finding anchor did not select its finding");
 
 // Fragment options an embedded comparison honours, their persistence across
 // the document's own anchor links, and their removal.
-context.location.hash="#embed=1&theme=light&frame=1200&clip=ignored&finding=3"; windowListeners.hashchange();
+main.hash.value="#embed=1&theme=light&frame=1200&clip=ignored&finding=3"; windowListeners.hashchange();
 if(documentElement.attrs["data-embed"] !== "1" || documentElement.attrs["data-theme"] !== "light" || nodes.scrub.value != 1200) throw new Error("comparison viewer ignored embed/theme/frame fragment options");
-context.location.hash=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
+main.hash.value=`#finding-after-${afterFinding.anchor.replace(/^finding-/, "")}`; windowListeners.hashchange();
 if(documentElement.attrs["data-embed"] !== "1" || documentElement.attrs["data-theme"] !== "light") throw new Error("following the document's own finding anchor un-pinned the embedded theme");
 if(nodes.scrub.value != 1234) throw new Error("the anchor link stopped selecting its finding once a theme was pinned");
-context.location.hash="#frame=999999999"; windowListeners.hashchange();
+main.hash.value="#frame=999999999"; windowListeners.hashchange();
 if(nodes.scrub.value != 2001) throw new Error("an out-of-range frame was not clamped to the shared phase");
 if(documentElement.attrs["data-theme"] !== "light") throw new Error("a fragment that never mentions the theme must leave it pinned");
-context.location.hash="#theme=neon&embed=0"; windowListeners.hashchange();
+main.hash.value="#theme=neon&embed=0"; windowListeners.hashchange();
 if("data-embed" in documentElement.attrs || "data-theme" in documentElement.attrs) throw new Error("an explicitly unusable value must restore the document default");
+// The same three states for the shared phase: honoured, unusable (default
+// restored), absent (left alone).
+main.hash.value="#frame=800"; windowListeners.hashchange();
+if(nodes.scrub.value != 800) throw new Error("a valid frame did not move the shared phase");
+main.hash.value="#frame=-1"; windowListeners.hashchange();
+if(nodes.scrub.value != 0) throw new Error("an unusable frame did not restore the default shared phase");
+main.hash.value="#frame=800"; windowListeners.hashchange();
+main.hash.value="#theme=dark"; windowListeners.hashchange();
+if(nodes.scrub.value != 800) throw new Error("a fragment without a frame moved the shared phase");
+assertNoHashWrites(main, "the comparison viewer");
+
+// The comparison's panels are canvas drawings, so nothing but this callback
+// repaints them when the reader's system theme changes: the palette has to be
+// re-resolved and the panels redrawn with it.
+const comparisonTokens = (ink, muted) => tokenStyles({
+  ground: "#101010", surface: "#1e1e2a", raised: "#232331", ink, muted,
+  line: "#3a3a4e", accent: "#0a0b0c", error: "#202122", warning: "#101112",
+  pass: "#010203", note: "#6b7390",
+});
+const canvasFills = (state, side) => {
+  const canvas = state.nodes[`${side}-gl`];
+  if (!canvas || !canvas.context) throw new Error(`the ${side} canvas was never drawn`);
+  return canvas.context.arcs.map((arc) => arc.fillStyle);
+};
+const svgPaint = (state, id) => state.nodes[id].children.flatMap((child) => [child.attrs.fill, child.attrs.stroke]).filter(Boolean);
+const schemeComparison = run(generated, "comparison-report-data", html, data, {styles: comparisonTokens("#123456", "#445566")});
+for (const side of ["before", "after"]) {
+  if (!canvasFills(schemeComparison, side).includes("#123456")) throw new Error(`the ${side} canvas did not paint its joints with the ink token`);
+}
+for (const panel of ["before-path", "after-path"]) {
+  if (!svgPaint(schemeComparison, panel).includes("#445566")) throw new Error(`${panel} did not paint with the muted token`);
+}
+if (typeof schemeComparison.media.change !== "function") throw new Error("the comparison viewer does not listen for a system theme change");
+schemeComparison.settings.styles = comparisonTokens("#654321", "#778899");
+schemeComparison.media.change();
+for (const side of ["before", "after"]) {
+  const fills = canvasFills(schemeComparison, side);
+  if (!fills.includes("#654321") || fills.includes("#123456")) throw new Error(`a system theme change did not repaint the ${side} canvas with the new tokens`);
+}
+for (const panel of ["before-path", "after-path"]) {
+  const repainted = svgPaint(schemeComparison, panel);
+  if (!repainted.includes("#778899") || repainted.includes("#445566")) throw new Error(`a system theme change did not repaint ${panel} with the new tokens`);
+}
+assertNoHashWrites(schemeComparison, "a comparison theme change");
+
+// Every colour any comparison surface paints must come from the document's
+// tokens: driving eleven distinct values and requiring each surface's paint
+// to be a subset of them rejects a literal hard-coded anywhere in the viewer.
+const distinctTokens = {
+  ground: "#010101", surface: "#020202", raised: "#030303", ink: "#040404",
+  muted: "#050505", line: "#060606", accent: "#070707", error: "#080808",
+  warning: "#090909", pass: "#0a0a0a", note: "#0b0b0b",
+};
+const tokenValues = new Set(Object.values(distinctTokens));
+const sourcing = run(generated, "comparison-report-data", html, data, {styles: tokenStyles(distinctTokens)});
+// A selected finding brings the subject highlight and the stance shading into
+// the drawing as well.
+sourcing.nodes["before-findings"].children[seamIndex].listeners.click();
+for (const surface of ["before-gl", "after-gl"]) {
+  const context = sourcing.nodes[surface].context;
+  if (!context) throw new Error(`${surface} was never drawn`);
+  const painted = [...context.arcs.map((arc) => arc.fillStyle), ...context.strokes].filter(Boolean);
+  if (!painted.length) throw new Error(`${surface} painted nothing to check`);
+  for (const colour of painted) {
+    if (!tokenValues.has(colour)) throw new Error(`${surface} painted ${colour}, which is not one of the document's tokens`);
+  }
+}
+for (const surface of ["comparison-root-path", "before-path", "after-path", "before-gait", "after-gait"]) {
+  const painted = svgPaint(sourcing, surface).filter((colour) => colour !== "none");
+  if (!painted.length) throw new Error(`${surface} painted nothing to check`);
+  for (const colour of painted) {
+    if (!tokenValues.has(colour)) throw new Error(`${surface} painted ${colour}, which is not one of the document's tokens`);
+  }
+}
+if (!sourcing.nodes["before-gl"].context.arcs.some((arc) => arc.args[2] === 6 && arc.fillStyle === distinctTokens.error)) {
+  throw new Error("the selected finding's subject highlight is not painted from the error token");
+}
+assertNoHashWrites(sourcing, "painting every comparison surface");
+
+// A comparison finding is reachable two ways, and both must leave the same
+// drawing behind — the same frame and the same highlighted subject bone.
+const clickedFinding = run(generated, "comparison-report-data", html, data);
+clickedFinding.nodes["before-findings"].children[seamIndex].listeners.click();
+const clickedArcs = JSON.stringify(clickedFinding.nodes["before-gl"].context.arcs);
+const followedAnchor = run(generated, "comparison-report-data", html, data);
+followedAnchor.hash.value = `#finding-before-${seamFinding.anchor.replace(/^finding-/, "")}`;
+followedAnchor.listeners.hashchange();
+if (followedAnchor.nodes.scrub.value !== clickedFinding.nodes.scrub.value) throw new Error("the anchor link and the click disagree on the selected frame");
+if (JSON.stringify(followedAnchor.nodes["before-gl"].context.arcs) !== clickedArcs) throw new Error("the anchor link and the click disagree on the drawn pose, subject-bone highlight included");
+if (!clickedFinding.nodes["before-gl"].context.arcs.some((arc) => arc.args[2] === 6)) throw new Error("clicking a finding must highlight its subject bone for the comparison to mean anything");
+assertNoHashWrites(clickedFinding, "clicking a comparison finding");
+assertNoHashWrites(followedAnchor, "following a comparison anchor");
 
 // A non-finite sampled range must degrade the drawing, not abort navigation
 // or hide the already-rendered findings and coverage lists.
 const cleanBefore = data.before.clip.positions, cleanAfter = data.after.clip.positions;
-const execute = payload => run(generated, "comparison-report-data", comparisonIds, payload).nodes;
+const execute = payload => run(generated, "comparison-report-data", html, payload).nodes;
 const svgText = (node) => node.children.map(child => child.textContent).join(" ");
 const invalid = Buffer.from(data.before.clip.positions, "base64");
 for (let offset = 0; offset < invalid.length; offset += 4) invalid.writeFloatLE(Number.NaN, offset);
@@ -224,28 +363,31 @@ const comparisonEvidence = generatedReportParts(comparisonEvidenceHtml);
 const evidencePayload = JSON.parse(comparisonEvidence.payload);
 if (evidencePayload.evidence_only !== true) throw new Error("the evidence-only comparison is not marked as one");
 if (comparisonEvidenceHtml.includes('"positions"')) throw new Error("the evidence-only comparison still embeds a pose grid");
-for (const surface of ["before-gl", "after-gl", "comparison-root-path"]) {
+const poseSurfaces = ["before-gl", "after-gl", "comparison-root-path", "before-path", "after-path", "before-gait", "after-gait"];
+// Every comparison panel is drawn client-side from the pose grid, so an
+// evidence-only comparison replaces all of them with the notice rather than
+// leaving blank boxes behind. This is exactly what the documented contract
+// now says, and what the follow-up Rust chart producer would change.
+for (const surface of poseSurfaces) {
   if (comparisonEvidenceHtml.includes(`id="${surface}"`)) throw new Error(`${surface} is still rendered in an evidence-only comparison`);
   if (!comparisonEvidenceHtml.includes(`id="${surface}-notice"`)) throw new Error(`${surface} lost its omission notice`);
 }
-const evidenceIds = comparisonIds.filter(id => !["before-gl", "after-gl", "comparison-root-path"].includes(id));
-const evidenceRun = run(comparisonEvidence, "comparison-report-data", evidenceIds, evidencePayload);
+if (/<svg\s+id=/.test(comparisonEvidenceHtml)) throw new Error("an evidence-only comparison still carries a chart surface it cannot draw");
+if (!/<figure class="chart"/.test(singleEvidenceHtml)) throw new Error("an evidence-only single-clip report lost its Rust-rendered charts");
+if (!/<path class="root-path"/.test(singleEvidenceHtml)) throw new Error("an evidence-only single-clip report lost its plotted root path");
+// The seven surfaces this form drops when it carries no poses, and nothing
+// else, may be missing from the document the viewer runs against.
+const evidenceRun = run(comparisonEvidence, "comparison-report-data", comparisonEvidenceHtml, evidencePayload, {omitted: poseSurfaces});
 const evidenceNodes = evidenceRun.nodes;
 if (!evidenceNodes.scrub.disabled) throw new Error("the shared phase stayed scrubbable with no pose grid behind it");
 if (evidenceNodes["before-findings"].children.length !== evidencePayload.before.findings.length || !evidenceNodes["before-identity"].textContent.includes(evidencePayload.before.dependency_closure_identity.sha256)) throw new Error("an evidence-only comparison dropped findings or identities");
 if (!evidenceNodes.times.textContent.includes("not a time warp") || !evidenceNodes.mapping.textContent) throw new Error("an evidence-only comparison dropped its phase disclosures");
-for (const id of ["before-path","after-path","before-gait","after-gait"]) {
-  if (evidenceNodes[id].children.length) throw new Error(`${id} drew from a pose grid the document does not carry`);
-}
-assertNoBareSvgText(evidenceNodes, ["before-path","after-path","before-gait","after-gait"], "evidence-only comparison");
+
 // Navigating an evidence-only comparison stays inert: the theme still
 // applies, and no panel starts drawing from a grid the document lacks.
-evidenceRun.context.location.hash = "#frame=5&theme=light";
+evidenceRun.hash.value = "#frame=5&theme=light";
 evidenceRun.listeners.hashchange();
 if (evidenceRun.root.attrs["data-theme"] !== "light") throw new Error("an evidence-only comparison stopped honouring the theme option");
-for (const id of ["before-path","after-path","before-gait","after-gait"]) {
-  if (evidenceNodes[id].children.length) throw new Error(`${id} drew after a navigation without a pose grid`);
-}
 
 // ---- fragment parser ---------------------------------------------------
 // One parser serves both documents, so it is exercised once, directly, with
@@ -283,6 +425,9 @@ if (parse("#frame=" + "9".repeat(400)).frame !== Infinity) throw new Error("an u
 for (const wrongType of [null, undefined, 0, {}, [], () => {}]) expectOptions(wrongType, {}, "a non-string fragment");
 // Every pair inside the length bound is read, however many there are.
 expectOptions("#" + "pad=1&".repeat(400) + "theme=dark", {theme:"dark"}, "a fragment with hundreds of pairs");
+const manyPairs = "#" + "p=&".repeat(1300) + "theme=dark";
+if (manyPairs.length > 4096) throw new Error("the many-pair fragment must stay inside the length bound");
+expectOptions(manyPairs, {theme:"dark"}, "a fragment with more than a thousand pairs");
 // The length bound itself: the last accepted character and the first
 // rejected one.
 const tail = "&theme=light";
@@ -309,22 +454,24 @@ const singleClip = singlePayload.clips[0], lastFrame = singleClip.frames - 1;
 singlePayload.findings.push({check:"harness-check", severity:"warning", clip:singleClip.name, bone:"hips", node:null, time:singleClip.duration/2, message:"<img src=x>"});
 const findingIndex = singlePayload.findings.length - 1;
 
-// The chart the viewer syncs is described by the document itself, so the
-// harness reads its hooks rather than restating them.
-const figure = singleHtml.match(/<figure class="chart"[^>]*data-kind="gait"[^>]*>/);
-if (!figure) throw new Error("the single-clip document carries no gait chart to sync");
-const chartAttrs = Object.fromEntries([...figure[0].matchAll(/([a-z-]+)="([^"]*)"/g)].map(m => [m[1], m[2]]));
-const chartPad = Number(chartAttrs["data-pad"]), chartPlotW = Number(chartAttrs["data-plotw"]);
-if (!(chartPad > 0) || !(chartPlotW > 0)) throw new Error("the gait chart does not publish its plot rectangle");
-const singleIds = ["file","clip-select","play","scrub","time","gl","findings","gaps","predictions"];
-function runSingle(parts, payload, ids, settings) {
-  const chart = new Node("chart");
-  chart.dataset = {clip: payload.clips[0].name, kind: "gait", pad: String(chartPad), plotw: String(chartPlotW)};
-  chart.query[".playhead"] = new Node("playhead");
-  return run(parts, "report-data", ids, payload, Object.assign({charts: [chart]}, settings || {}));
+function runSingle(parts, html, payload, settings) {
+  return run(parts, "report-data", html, payload, settings);
 }
+// The chart the viewer syncs comes from the document, so its plot rectangle
+// is read off the figure the report actually rendered — and every assertion
+// observes that same figure, selected by kind rather than by position.
+const gaitOf = (state) => {
+  const chart = state.charts.find((figure) => figure.dataset.kind === "gait");
+  if (!chart) throw new Error("the run has no gait chart to observe");
+  return chart;
+};
+const playheadOf = (state) => Number(gaitOf(state).query[".playhead"].attrs.x1);
+const gaitChart = documentCharts(singleHtml).find((chart) => chart.dataset.kind === "gait");
+if (!gaitChart) throw new Error("the single-clip document carries no gait chart to sync");
+const chartPad = Number(gaitChart.dataset.pad), chartPlotW = Number(gaitChart.dataset.plotw);
+if (!(chartPad > 0) || !(chartPlotW > 0)) throw new Error("the gait chart does not publish its plot rectangle");
 
-const plain = runSingle(single, singlePayload, singleIds);
+const plain = runSingle(single, singleHtml, singlePayload);
 if (!plain.nodes.file.textContent.includes(singlePayload.file || "")) throw new Error("the viewer did not disclose its source file");
 if (plain.nodes.findings.children.length !== singlePayload.findings.length) throw new Error("the findings panel dropped rows");
 if (!plain.nodes.findings.children.map(row => row.children.map(part => part.textContent).join("|")).some(text => text.includes("<img src=x>"))) throw new Error("untrusted finding text was not carried as text");
@@ -335,7 +482,7 @@ if ("data-theme" in plain.root.attrs || "data-embed" in plain.root.attrs) throw 
 // clear colour all come from the palette the document resolves.
 const themedTokens = {ground:"#F4F5F9", muted:"#112233", ink:"#445566", pass:"#010203", accent:"#0A0B0C", warning:"#101112", error:"#202122", raised:"#eef0f6", surface:"#ffffff", line:"#d9deea", note:"#6b7390"};
 const rgb = hex => [1,3,5].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
-const themed = runSingle(single, singlePayload, singleIds, {hash:"#theme=light", styles: tokenStyles(themedTokens)});
+const themed = runSingle(single, singleHtml, singlePayload, {hash:"#theme=light", styles: tokenStyles(themedTokens)});
 if (themed.root.attrs["data-theme"] !== "light") throw new Error("the pinned theme never reached the root element");
 const cleared = themed.nodes.gl.gl.clears[0], groundRgb = rgb(themedTokens.ground);
 if (cleared.slice(0, 3).some((channel, index) => Math.abs(channel - groundRgb[index]) > 1e-6)) throw new Error("the WebGL view did not clear with the themed ground token");
@@ -351,31 +498,64 @@ for (const required of ["muted", "ink"]) {
   if (![...uploadedColours].some(colour => tokenColours.get(colour) === required)) throw new Error(`bone and joint colours must come from the tokens; --${required} was never uploaded`);
 }
 
-// A deep link selects exactly what the equivalent click selects.
-const deep = runSingle(single, singlePayload, singleIds, {hash:`#finding=${findingIndex}`});
-const clicked = runSingle(single, singlePayload, singleIds);
-clicked.nodes.findings.children[findingIndex].listeners.click();
-const observable = run => ({
-  frame: String(run.nodes.scrub.value),
-  time: run.nodes.time.textContent,
-  selected: run.nodes.findings.children[findingIndex].classes.has("selected"),
-  playhead: run.charts[0].query[".playhead"].attrs.x1,
-});
-const viaFragment = observable(deep), viaClick = observable(clicked);
-for (const key of Object.keys(viaFragment)) {
-  if (viaFragment[key] !== viaClick[key]) throw new Error(`#finding=${findingIndex} and clicking row ${findingIndex} disagree on ${key}: ${viaFragment[key]} vs ${viaClick[key]}`);
+// A deep link selects exactly what the equivalent click selects — for a
+// finding in the middle of the list as well as the last one, so the
+// equivalence cannot be an artefact of the index the harness appended.
+function observableSelection(state, index) {
+  const rows = state.nodes.findings.children;
+  return {
+    frame: String(state.nodes.scrub.value),
+    time: state.nodes.time.textContent,
+    selected: rows[index].classes.has("selected"),
+    onlyOneSelected: rows.filter((row) => row.classes.has("selected")).length,
+    playhead: gaitOf(state).query[".playhead"].attrs.x1,
+    // What the 3D view actually drew, so the two paths agree on the pose and
+    // its trail colours as well as on the panel state.
+    drawn: JSON.stringify(state.nodes.gl.gl.buffers[state.nodes.gl.gl.buffers.length - 1] || []),
+  };
 }
-if (!viaClick.selected) throw new Error("selecting a finding does not mark its row");
+function selectionsAgree(index, why) {
+  const deep = runSingle(single, singleHtml, singlePayload, {hash: `#finding=${index}`});
+  const clicked = runSingle(single, singleHtml, singlePayload);
+  clicked.nodes.findings.children[index].listeners.click();
+  const viaFragment = observableSelection(deep, index), viaClick = observableSelection(clicked, index);
+  for (const key of Object.keys(viaFragment)) {
+    if (viaFragment[key] !== viaClick[key]) throw new Error(`${why}: #finding=${index} and clicking row ${index} disagree on ${key}: ${viaFragment[key]} vs ${viaClick[key]}`);
+  }
+  if (!viaClick.selected || viaClick.onlyOneSelected !== 1) throw new Error(`${why}: selecting a finding must mark its row and only its row`);
+  assertNoHashWrites(clicked, `clicking ${why}`);
+  assertNoHashWrites(deep, `deep-linking ${why}`);
+  return viaFragment;
+}
+if (singlePayload.findings.length < 3) throw new Error("the equivalence needs a list with a middle to address");
+const middleIndex = 1;
+const middleSelection = selectionsAgree(middleIndex, "a finding in the middle of the list");
+const lastSelection = selectionsAgree(findingIndex, "the last finding");
+if (middleSelection.frame === lastSelection.frame && middleSelection.playhead === lastSelection.playhead) {
+  throw new Error("the two findings must land somewhere different for the comparison to mean anything");
+}
+if (middleSelection.drawn === lastSelection.drawn) {
+  throw new Error("two findings on different frames must upload different vertices, or the equality proves nothing");
+}
 
 // The playhead spans exactly the rectangle the chart publishes.
-const atStart = runSingle(single, singlePayload, singleIds, {hash:"#frame=0"});
-if (Number(atStart.charts[0].query[".playhead"].attrs.x1) !== chartPad) throw new Error("frame 0 does not place the playhead at the plot origin");
-const atEnd = runSingle(single, singlePayload, singleIds, {hash:`#frame=${lastFrame}`});
-if (Math.abs(Number(atEnd.charts[0].query[".playhead"].attrs.x1) - (chartPad + chartPlotW)) > 1e-6) throw new Error("the last judged frame does not place the playhead at the plot's right edge");
+const atStart = runSingle(single, singleHtml, singlePayload, {hash:"#frame=0"});
+if (playheadOf(atStart) !== chartPad) throw new Error("frame 0 does not place the playhead at the plot origin");
+const atEnd = runSingle(single, singleHtml, singlePayload, {hash:`#frame=${lastFrame}`});
+if (Math.abs(playheadOf(atEnd) - (chartPad + chartPlotW)) > 1e-6) throw new Error("the last judged frame does not place the playhead at the plot's right edge");
+
+// The three ways a frame arrives: honoured, past the end (clamped to the last
+// judged frame, because a reader asking for a position wants the nearest one
+// the document can show), and unreadable (frame 0).
+if (Number(runSingle(single, singleHtml, singlePayload, {hash:`#frame=${Math.min(2, lastFrame)}`}).nodes.scrub.value) !== Math.min(2, lastFrame)) throw new Error("a frame inside the clip was not honoured");
+const clampedFrame = runSingle(single, singleHtml, singlePayload, {hash:"#frame=999999999"});
+if (Number(clampedFrame.nodes.scrub.value) !== lastFrame) throw new Error("a frame past the end of the clip was not clamped to its last judged frame");
+if (Math.abs(playheadOf(clampedFrame) - (chartPad + chartPlotW)) > 1e-6) throw new Error("a clamped frame did not move the chart playhead to the plot's right edge");
+if (Number(runSingle(single, singleHtml, singlePayload, {hash:"#frame=1.5"}).nodes.scrub.value) !== 0) throw new Error("an unreadable frame did not restore frame 0");
 
 // Embed and theme reach the document; an unknown clip, an out-of-range
 // frame, and a hostile fragment leave a usable report behind.
-const embedded = runSingle(single, singlePayload, singleIds, {hash:`#embed=1&theme=light&clip=${encodeURIComponent(singleClip.name)}&frame=${Math.min(2, lastFrame)}`});
+const embedded = runSingle(single, singleHtml, singlePayload, {hash:`#embed=1&theme=light&clip=${encodeURIComponent(singleClip.name)}&frame=${Math.min(2, lastFrame)}`});
 if (embedded.root.attrs["data-theme"] !== "light" || embedded.root.attrs["data-embed"] !== "1") throw new Error("the single-clip viewer ignored embed/theme");
 if (Number(embedded.nodes.scrub.value) !== Math.min(2, lastFrame)) throw new Error("a deep-linked frame did not scrub the viewer");
 if (embedded.nodes["clip-select"].value !== singleClip.name) throw new Error("a deep-linked clip was not selected");
@@ -385,7 +565,7 @@ for (const hostile of [
   "#finding-before-abcdef0123456789", "#" + "k=v&".repeat(3000),
 ]) {
   let hostileRun;
-  try { hostileRun = runSingle(single, singlePayload, singleIds, {hash: hostile}); }
+  try { hostileRun = runSingle(single, singleHtml, singlePayload, {hash: hostile}); }
   catch (error) { throw new Error(`fragment ${JSON.stringify(hostile.slice(0,24))} threw in the viewer: ${error}`); }
   const frame = Number(hostileRun.nodes.scrub.value);
   if (!Number.isInteger(frame) || frame < 0 || frame > lastFrame) throw new Error(`fragment ${JSON.stringify(hostile.slice(0,24))} left frame ${frame} outside the judged grid`);
@@ -401,17 +581,109 @@ if (singleEvidenceHtml.includes('id="gl"')) throw new Error("the evidence-only r
 if (!/<button id="play"[^>]*\sdisabled/.test(singleEvidenceHtml)) throw new Error("the evidence-only report leaves playback enabled");
 if (!singleEvidenceHtml.includes('id="gl-notice"')) throw new Error("the evidence-only report drops its omission notice");
 evidenceSinglePayload.findings.push({check:"harness-check", severity:"warning", clip:evidenceSinglePayload.clips[0].name, bone:"hips", node:null, time:evidenceSinglePayload.clips[0].duration/2, message:"<img src=x>"});
-const evidenceSingleIds = singleIds.filter(id => id !== "gl");
-const evidenceSingle = runSingle(singleEvidence, evidenceSinglePayload, evidenceSingleIds);
+const evidenceSingle = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl"]});
 if (evidenceSingle.nodes.findings.children.length !== evidenceSinglePayload.findings.length) throw new Error("an evidence-only report dropped findings");
 // The charts survive, so the scrub still moves their playhead.
 const evidenceLast = evidenceSinglePayload.clips[0].frames - 1;
 evidenceSingle.nodes.scrub.value = String(evidenceLast);
 evidenceSingle.nodes.scrub.listeners.input();
-const evidencePlayhead = Number(evidenceSingle.charts[0].query[".playhead"].attrs.x1);
+const evidencePlayhead = playheadOf(evidenceSingle);
 if (Math.abs(evidencePlayhead - (chartPad + chartPlotW)) > 1e-6) throw new Error("scrubbing an evidence-only report does not move the chart playhead");
 if (!evidenceSingle.nodes.time.textContent.includes("frame")) throw new Error("an evidence-only report stopped reporting the selected frame");
-const evidenceDeep = runSingle(singleEvidence, evidenceSinglePayload, evidenceSingleIds, {hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});
+const evidenceDeep = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl"], hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});
 if (evidenceDeep.root.attrs["data-theme"] !== "light" || !evidenceDeep.nodes.findings.children[evidenceSinglePayload.findings.length - 1].classes.has("selected")) throw new Error("an evidence-only report stopped honouring deep links");
+
+// ---- navigating the single-clip viewer ---------------------------------
+// Each option has the same three states on a hash transition as it has on
+// load: honoured, present but unusable (default restored), absent (left
+// alone).
+// Navigation writes the fragment the way a browser does — outside the
+// document — so the viewer's own write counter stays meaningful.
+function navigate(state, next) { state.hash.value = next; state.listeners.hashchange(); }
+function assertNoHashWrites(state, why) {
+  if (state.hash.writes !== 0) throw new Error(`${why}: the viewer wrote location.hash ${state.hash.writes} time(s)`);
+}
+const selectionNav = runSingle(single, singleHtml, singlePayload);
+navigate(selectionNav, `#finding=${findingIndex}`);
+if (!selectionNav.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("navigating to a finding did not select it");
+navigate(selectionNav, "#finding=999999999");
+if (selectionNav.nodes.findings.children.some(row => row.classes.has("selected"))) throw new Error("an unusable finding index left a selection standing");
+navigate(selectionNav, `#finding=${findingIndex}`);
+navigate(selectionNav, "#theme=dark");
+if (!selectionNav.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("a fragment without a finding cleared the selection");
+navigate(selectionNav, "#frame=2");
+if (Number(selectionNav.nodes.scrub.value) !== 2) throw new Error("navigating to a frame did not scrub");
+navigate(selectionNav, "#frame=999999999");
+if (Number(selectionNav.nodes.scrub.value) !== lastFrame) throw new Error("navigating past the end of the clip did not clamp to its last judged frame");
+navigate(selectionNav, "#frame=1.5");
+if (Number(selectionNav.nodes.scrub.value) !== 0) throw new Error("an unreadable frame did not restore frame 0");
+navigate(selectionNav, "#frame=2");
+navigate(selectionNav, "#embed=1");
+if (Number(selectionNav.nodes.scrub.value) !== 2) throw new Error("a fragment without a frame moved the playhead");
+
+// ---- multi-clip report -------------------------------------------------
+// Clip selection needs a document with more than one clip to mean anything.
+const multi = singleReportParts(multiHtml);
+const multiPayload = JSON.parse(multi.payload);
+if (multiPayload.clips.length < 2) throw new Error("the multi-clip fixture must embed at least two clips");
+const [firstClip, secondClip] = multiPayload.clips;
+if (firstClip.name === secondClip.name) throw new Error("the multi-clip fixture must embed two distinguishable clips");
+const runMulti = (hash) => runSingle(multi, multiHtml, multiPayload, hash === undefined ? undefined : {hash});
+if (runMulti().nodes["clip-select"].value !== firstClip.name) throw new Error("a report opens on its first clip");
+if (runMulti(`#clip=${encodeURIComponent(secondClip.name)}`).nodes["clip-select"].value !== secondClip.name) throw new Error("clip= did not select the named clip");
+if (runMulti("#clip=no-such-clip").nodes["clip-select"].value !== firstClip.name) throw new Error("an unknown clip did not restore the first clip");
+if (runMulti("#clip=%E0%A4%A").nodes["clip-select"].value !== firstClip.name) throw new Error("a malformed clip did not restore the first clip");
+const clipNav = runMulti();
+navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
+if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("navigating to a clip did not select it");
+navigate(clipNav, "#clip=no-such-clip");
+if (clipNav.nodes["clip-select"].value !== firstClip.name) throw new Error("an unusable clip did not restore the first clip on navigation");
+navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
+navigate(clipNav, "#theme=light");
+if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("a fragment without a clip changed the selected clip");
+
+assertNoHashWrites(selectionNav, "navigating the single-clip viewer");
+assertNoHashWrites(clipNav, "navigating clips");
+assertNoHashWrites(evidenceSingle, "scrubbing an evidence-only report");
+assertNoHashWrites(evidenceRun, "an evidence-only comparison");
+
+// ---- system theme changes ----------------------------------------------
+// The CSS follows prefers-color-scheme on its own; the canvas views have to
+// be repainted, so the viewers listen for the change and re-resolve.
+const schemeRun = runSingle(single, singleHtml, singlePayload, {styles: tokenStyles(Object.assign({}, themedTokens, {ground: "#101010"}))});
+const firstClear = schemeRun.nodes.gl.gl.clears[schemeRun.nodes.gl.gl.clears.length - 1];
+if (Math.abs(firstClear[0] - 0x10 / 255) > 1e-6) throw new Error("the viewer did not paint the first scheme's ground token");
+if (typeof schemeRun.media.change !== "function") throw new Error("the viewer does not listen for a system theme change");
+// The document's own resolved styles change first; the repaint follows.
+schemeRun.settings.styles = tokenStyles(Object.assign({}, themedTokens, {ground: "#fdfdfd"}));
+schemeRun.media.change();
+const repainted = schemeRun.nodes.gl.gl.clears[schemeRun.nodes.gl.gl.clears.length - 1];
+if (Math.abs(repainted[0] - 0xfd / 255) > 1e-6) throw new Error("a system theme change did not repaint the 3D view with the new ground token");
+assertNoHashWrites(schemeRun, "a system theme change");
+
+// Selecting a clip and using the transport are viewer actions as much as a
+// click on a finding is: none of them may write the fragment either.
+const actions = runMulti();
+actions.nodes["clip-select"].value = secondClip.name;
+actions.nodes["clip-select"].listeners.change();
+if (actions.nodes["clip-select"].value !== secondClip.name) throw new Error("changing the clip select did not select that clip");
+if (Number(actions.nodes.scrub.value) !== 0) throw new Error("selecting another clip did not return to its first frame");
+actions.nodes.play.listeners.click();
+if (actions.nodes.play.textContent !== "⏸") throw new Error("the play button did not start playback");
+actions.nodes.play.listeners.click();
+if (actions.nodes.play.textContent !== "▶") throw new Error("the play button did not pause");
+actions.nodes.scrub.value = "1";
+actions.nodes.scrub.listeners.input();
+if (Number(actions.nodes.scrub.value) !== 1) throw new Error("scrubbing did not move the viewer");
+assertNoHashWrites(actions, "selecting a clip, playing, pausing and scrubbing");
+
+// The counters above cover the actions this harness drives; this covers the
+// rest, including orbit and zoom: neither viewer nor the shared runtime
+// contains an assignment to the fragment at all.
+for (const [name, source] of [
+  ["single-clip", single.viewer], ["comparison", generated.viewer], ["shared runtime", single.shared],
+]) {
+  if (/location\s*\.\s*hash\s*=[^=]/.test(source)) throw new Error(`the ${name} source assigns to location.hash`);
+}
 
 console.log("report viewer harness passed");
