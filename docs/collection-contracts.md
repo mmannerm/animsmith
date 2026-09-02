@@ -216,13 +216,14 @@ selected, validated skeleton. Fixed aggregate name-byte, track,
 authored/generated key/value, and work caps refuse before candidate allocation;
 candidate storage has a derived public upper bound from those admitted rows.
 LINEAR tracks map every authored key and insert interior map-knot
-samples; STEP tracks map only authored breakpoints. Exact duplicates collapse
-deterministically, while distinct binary64 source/output instants that collide
-after binary32 narrowing refuse. One-key CUBICSPLINE tracks are retained, and
-multi-key cubic tracks are retained only for bit-exact constant values with zero
-tangents. The value caps are the shape-derived three-values-per-cubic-key
-maxima, so malformed N+1 storage refuses at shape or key bounds before it can
-become a separate valid value-only case.
+samples; STEP tracks map only authored breakpoints. A map knot that narrows to
+an authored binary32 track time collapses deterministically when its mapped
+output agrees. Distinct generated source instants and distinct output instants
+that collide after binary32 narrowing refuse. One-key CUBICSPLINE tracks are
+retained, and multi-key cubic tracks are retained only for bit-exact constant
+values with zero tangents. The value caps are the shape-derived
+three-values-per-cubic-key maxima, so malformed N+1 storage refuses at shape or
+key bounds before it can become a separate valid value-only case.
 
 Neither pure seam transforms contact fragments, derives root measurements,
 binds the selected asset to the plan, serializes output artifacts, proves

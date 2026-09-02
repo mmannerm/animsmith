@@ -179,7 +179,7 @@ pub enum FootCycleClipWarpError {
         /// Track index in source order.
         track_index: usize,
     },
-    /// Two distinct binary64 source instants narrowed to one binary32 time.
+    /// Two distinct generated source instants narrowed to one binary32 time.
     #[error("track {track_index} generated a binary32 source-time collision")]
     SourceTimeCollision {
         /// Track index in source order.
@@ -656,10 +656,10 @@ fn visit_warp_track_keys(
 }
 
 /// Return a mapped control-point knot that is not already represented by an
-/// authored key.  An exact coincidence still validates that recomputing the
-/// map through the binary32 authored time yields the same binary32 output;
-/// otherwise construction would have two incompatible representations of one
-/// instant.
+/// authored binary32 key. A coincidence in the track's binary32 time domain
+/// still validates that recomputing the map through the authored time yields
+/// the same binary32 output; otherwise construction would have two
+/// incompatible representations of one instant.
 fn linear_extra_knot(
     track: &Track,
     track_index: usize,
@@ -681,10 +681,7 @@ fn linear_extra_knot(
             .partial_cmp(&source_time)
             .expect("validated track times are finite")
     }) {
-        Ok(authored_index) => {
-            if f64::from(track.times[authored_index]) != source_exact {
-                return Err(FootCycleClipWarpError::SourceTimeCollision { track_index });
-            }
+        Ok(_) => {
             let mapped_output = map_time(source_time, duration, points);
             if mapped_output != output_time {
                 return Err(FootCycleClipWarpError::TimeCollision { track_index });
@@ -1328,6 +1325,186 @@ mod tests {
         assert_eq!(preflight.candidate_values(), first.tracks[0].values.len());
         assert_eq!(first.tracks[0].times, second.tracks[0].times);
         assert_eq!(vec_values(&first.tracks[0]), vec_values(&second.tracks[0]));
+    }
+
+    #[test]
+    fn linear_knot_that_narrows_to_authored_key_is_deduplicated() {
+        let duration = f64::from(17.0_f32 / 30.0);
+        let authored_time = 0.1_f32;
+        let control_phase = 3.0 / 17.0;
+        let reconstructed_time = control_phase * duration;
+        assert_ne!(reconstructed_time, f64::from(authored_time));
+        assert_eq!(reconstructed_time as f32, authored_time);
+
+        let source = clip(
+            duration,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, authored_time, duration as f32],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+        let plan = plan(
+            duration,
+            &[
+                (0.0, 0.0),
+                (control_phase, control_phase),
+                (0.5, 0.4),
+                (1.0, 1.0),
+            ],
+        );
+
+        let preflight = preflight_time_warp_clip_v1(&source, &plan).unwrap();
+        let candidate = time_warp_clip_v1(&source, &plan).unwrap();
+
+        assert_eq!(preflight.candidate_keys(), 4);
+        assert_eq!(candidate.tracks[0].times.len(), preflight.candidate_keys());
+        assert_eq!(
+            candidate.tracks[0].values.len(),
+            preflight.candidate_values()
+        );
+        assert_eq!(candidate.tracks[0].times[1], authored_time);
+        assert_eq!(vec_values(&candidate.tracks[0])[1], Vec3::ONE);
+        assert_eq!(
+            candidate.tracks[0]
+                .times
+                .iter()
+                .filter(|&&time| time == authored_time)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn adjacent_binary32_time_is_not_deduplicated() {
+        let authored_time = 0.5_f32;
+        let adjacent_time = f32::from_bits(authored_time.to_bits() + 1);
+        assert_ne!(authored_time, adjacent_time);
+
+        let source = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, authored_time, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+        let plan = plan(
+            1.0,
+            &[(0.0, 0.0), (f64::from(adjacent_time), 0.75), (1.0, 1.0)],
+        );
+
+        let preflight = preflight_time_warp_clip_v1(&source, &plan).unwrap();
+        let candidate = time_warp_clip_v1(&source, &plan).unwrap();
+
+        assert_eq!(preflight.candidate_keys(), 4);
+        assert_eq!(candidate.tracks[0].times.len(), preflight.candidate_keys());
+        assert_eq!(
+            candidate.tracks[0].values.len(),
+            preflight.candidate_values()
+        );
+        assert_eq!(candidate.tracks[0].times[2], 0.75);
+        assert_eq!(
+            TrackSample::Vec3(vec_values(&candidate.tracks[0])[2]),
+            sample_track(&source.tracks[0], adjacent_time)
+        );
+        assert_eq!(vec_values(&candidate.tracks[0]).len(), 4);
+    }
+
+    #[test]
+    fn linear_knot_that_rounds_down_to_authored_key_is_deduplicated() {
+        let authored_time = 0.5_f32;
+        let next_time = f32::from_bits(authored_time.to_bits() + 1);
+        let control_time =
+            f64::from(authored_time) + (f64::from(next_time) - f64::from(authored_time)) * 0.25;
+        assert!(control_time > f64::from(authored_time));
+        assert_eq!(control_time as f32, authored_time);
+
+        let source = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, authored_time, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+        let plan = plan(
+            1.0,
+            &[
+                (0.0, 0.0),
+                (control_time, control_time),
+                (0.75, 0.7),
+                (1.0, 1.0),
+            ],
+        );
+
+        let preflight = preflight_time_warp_clip_v1(&source, &plan).unwrap();
+        let candidate = time_warp_clip_v1(&source, &plan).unwrap();
+
+        assert_eq!(candidate.tracks[0].times.len(), preflight.candidate_keys());
+        assert_eq!(
+            candidate.tracks[0].values.len(),
+            preflight.candidate_values()
+        );
+        assert_eq!(candidate.tracks[0].times[1], authored_time);
+        assert_eq!(vec_values(&candidate.tracks[0])[1], Vec3::ONE);
+    }
+
+    #[test]
+    fn narrowed_authored_key_with_distinct_mapped_output_refuses() {
+        let duration = f64::from(17.0_f32 / 30.0);
+        let authored_time = 0.1_f32;
+        let control_phase = 3.0 / 17.0;
+        assert_ne!(control_phase * duration, f64::from(authored_time));
+        assert_eq!((control_phase * duration) as f32, authored_time);
+        let source = clip(
+            duration,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, authored_time, duration as f32],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+        let plan = plan(
+            duration,
+            &[(0.0, 0.0), (control_phase, 4.0 / 17.0), (1.0, 1.0)],
+        );
+
+        let expected = FootCycleClipWarpError::TimeCollision { track_index: 0 };
+        assert_eq!(
+            preflight_time_warp_clip_v1(&source, &plan),
+            Err(expected.clone())
+        );
+        assert_error(time_warp_clip_v1(&source, &plan), expected);
+    }
+
+    #[test]
+    fn authored_key_rounding_from_above_with_later_mapped_output_refuses() {
+        let authored_time = 0.5_f32;
+        let next_time = f32::from_bits(authored_time.to_bits() + 1);
+        let control_time =
+            f64::from(authored_time) + (f64::from(next_time) - f64::from(authored_time)) * 0.49;
+        assert!(control_time > f64::from(authored_time));
+        assert_eq!(control_time as f32, authored_time);
+
+        let source = clip(
+            1.0,
+            vec![vec_track(
+                Interpolation::Linear,
+                vec![0.0, authored_time, 1.0],
+                vec![Vec3::ZERO, Vec3::ONE, Vec3::splat(2.0)],
+            )],
+        );
+        let plan = plan(1.0, &[(0.0, 0.0), (control_time, 0.75), (1.0, 1.0)]);
+        let points = plan.operation().control_points().unwrap();
+        assert!(map_time(authored_time, 1.0, points) < 0.75);
+
+        let expected = FootCycleClipWarpError::TimeCollision { track_index: 0 };
+        assert_eq!(
+            preflight_time_warp_clip_v1(&source, &plan),
+            Err(expected.clone())
+        );
+        assert_error(time_warp_clip_v1(&source, &plan), expected);
     }
 
     #[test]
