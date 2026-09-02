@@ -5,8 +5,7 @@ What animsmith is, why it exists, and what it is worth to your team.
 This page is for someone deciding whether to adopt animsmith — a lead
 evaluating tools, a producer weighing pipeline changes, an engineer
 asked "should we use this?". If you already use animsmith and want
-reference material, start at the [documentation index](README.md)
-instead.
+reference material, start from [all pages](README.md) instead.
 
 ## What animsmith is
 
@@ -67,7 +66,7 @@ to shipped acceptance. What animsmith contributes splits three ways:
   for it — no standalone tool can certify behavior inside a runtime
   it has never seen.
 
-The [game-ready clips guide](game-ready-clips.md) covers the
+[What game-ready means](game-ready-clips.md) covers the
 measurable ground symptom by symptom: the runtime failure you see
 when a declared contract is violated, the mechanics behind it, and
 the check, repair, and config that address it.
@@ -117,7 +116,7 @@ earlier and more repeatably than the engine can.
 ## Where to go next
 
 Convinced, or curious? The
-[game-ready clips guide](game-ready-clips.md) covers each failure mode
+[what game-ready means](game-ready-clips.md) covers each failure mode
 in depth — mechanics, check, repair, config — and everything else,
 from install to runnable workflows, is routed from the
-[documentation index](README.md).
+[all pages](README.md).

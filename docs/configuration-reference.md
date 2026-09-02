@@ -9,8 +9,10 @@ built-in defaults. Collection commands have their own control-file rules (see
 finite numeric domains; embedded callers should also call
 [`Config::validate`](https://docs.rs/animsmith-core/latest/animsmith_core/config/struct.Config.html#method.validate).
 
-This page is the user-facing authority. Exact Rust types are in the
-[`animsmith-core::config` API](https://docs.rs/animsmith-core/latest/animsmith_core/config/).
+This page is the user-facing authority for what every key means. For who
+owns each surface and where its value comes from, start from
+[declaring the contract](declaring-the-contract.md). Exact Rust types are in
+the [`animsmith-core::config` API](https://docs.rs/animsmith-core/latest/animsmith_core/config/).
 The check rationale and coverage vocabulary are in
 [`game-ready-clips.md`](game-ready-clips.md).
 

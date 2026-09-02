@@ -150,18 +150,6 @@ fn linked_tables(markdown: &str) -> Vec<Vec<Vec<Cell>>> {
     tables
 }
 
-fn tables(markdown: &str) -> Vec<Vec<Vec<String>>> {
-    linked_tables(markdown)
-        .into_iter()
-        .map(|table| {
-            table
-                .into_iter()
-                .map(|row| row.into_iter().map(|cell| cell.text).collect())
-                .collect()
-        })
-        .collect()
-}
-
 /// The one table in `markdown` whose first heading cell is `column`.
 fn table_headed_by(markdown: &str, column: &str) -> Vec<Vec<Cell>> {
     let mut matching = linked_tables(markdown).into_iter().filter(|table| {
@@ -371,7 +359,7 @@ fn workflows_are_obvious_navigation_entry_points_with_canonical_routes() {
             "For game developers: from pack to engine gate",
             "game-developer-intake-workflow.md",
         ),
-        ("Animation troubleshooting", "animation-troubleshooting.md"),
+        ("Symptom index", "symptoms/README.md"),
         (
             "Commercial-pack evaluation guide",
             "commercial-pack-evaluations.md",
@@ -385,18 +373,17 @@ fn workflows_are_obvious_navigation_entry_points_with_canonical_routes() {
         );
     }
 
-    let troubleshooting = rendered_links(&markdown("docs/animation-troubleshooting.md"));
+    let symptoms = rendered_links(&markdown("docs/symptoms/README.md"));
     for target in [
-        "configuration-reference.md",
-        "built-in-checks.md",
-        // The complete check-to-symptom table lives in the symptom index.
-        "symptoms/README.md",
+        "../configuration-reference.md",
+        "../built-in-checks.md",
+        "../game-ready-clips.md#the-readiness-ladder",
     ] {
         assert!(
-            troubleshooting
+            symptoms
                 .iter()
                 .any(|(_, destination)| destination == target),
-            "troubleshooting must route to canonical {target}: {troubleshooting:?}"
+            "the symptom index must route to canonical {target}: {symptoms:?}"
         );
     }
 
@@ -670,7 +657,7 @@ fn documented_command_fences_and_bevy_config_execute_exactly_as_rendered() {
     for page in [
         "docs/animation-author-workflow.md",
         "docs/game-developer-intake-workflow.md",
-        "docs/animation-troubleshooting.md",
+        "docs/symptoms/README.md",
     ] {
         for (expected, command) in documented_commands(page) {
             let output = Command::new("sh")
@@ -700,11 +687,7 @@ fn documented_command_fences_and_bevy_config_execute_exactly_as_rendered() {
     }
     assert!(temp.path().join("candidate.glb").is_file());
     assert!(temp.path().join("author-comparison.html").is_file());
-    assert!(
-        temp.path()
-            .join("troubleshooting-comparison.html")
-            .is_file()
-    );
+    assert!(temp.path().join("symptom-comparison.html").is_file());
 }
 
 /// Every symptom page, read from the directory rather than from a list a
@@ -835,42 +818,50 @@ fn every_symptom_page_names_its_owner_and_the_evidence_that_closes_its_gate() {
     }
 }
 
-/// The troubleshooting page is a router: every symptom page has a row
-/// that reaches it, and the runtime problems with no symptom page — the
-/// two that are not findings about a clip, and Bevy's silent loader drop
-/// — are answered on the page itself.
+/// The symptom index is the router: every page in its directory has a row
+/// that reaches it, every row reaches a page in that directory, and the
+/// runtime problems with no page of their own — the two that are not
+/// findings about a clip, and Bevy's silent loader drop — are answered on
+/// the index itself.
 #[test]
-fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
-    let page = markdown("docs/animation-troubleshooting.md");
-    let tables = tables(&page);
-    let table = tables.first().expect("troubleshooting routing table");
+fn the_symptom_index_routes_every_page_and_answers_what_is_not_a_clip() {
+    let page = markdown("docs/symptoms/README.md");
+    let table = table_headed_by(&page, "Symptom");
     assert_eq!(
-        table.first(),
-        Some(&vec!["What you see".to_owned(), "Where to go".to_owned()])
+        table
+            .first()
+            .map(|row| row.iter().map(|cell| cell.text.clone()).collect::<Vec<_>>()),
+        Some(vec![
+            "Symptom".to_owned(),
+            "Check(s)".to_owned(),
+            "Repair / transform".to_owned(),
+            "Config surface".to_owned(),
+            "Who fixes it".to_owned(),
+            "Page".to_owned(),
+        ])
     );
 
-    let destinations: BTreeSet<String> = rendered_links(&page)
-        .into_iter()
-        .map(|(_, destination)| destination)
-        .collect();
     let pages = symptom_pages();
-    for symptom in &pages {
-        let route = format!("symptoms/{symptom}");
-        assert!(
-            destinations.contains(&route),
-            "troubleshooting must route to {route}: {destinations:?}"
-        );
-    }
-    let rows: Vec<&Vec<String>> = table.iter().skip(1).collect();
+    let routed: BTreeSet<String> = table
+        .iter()
+        .skip(1)
+        .flat_map(|row| row.last().expect("every row names a page").links.clone())
+        .map(|destination| {
+            destination
+                .split('#')
+                .next()
+                .expect("a destination has a path")
+                .to_owned()
+        })
+        .collect();
     assert_eq!(
-        rows.len(),
-        pages.len() + 1,
-        "one routing row per symptom page, plus the Bevy loader gate answered in place: {table:?}"
+        routed, pages,
+        "the index routes exactly the pages of its own directory"
     );
-    for row in rows {
+    for row in table.iter().skip(1) {
         assert!(
-            row.len() == 2 && !row[0].is_empty() && !row[1].is_empty(),
-            "every routing row names what the reader sees and where to go: {row:?}"
+            row.len() == 6 && row.iter().all(|cell| !cell.text.is_empty()),
+            "every row states the symptom, checks, repair, config, owner and page: {row:?}"
         );
     }
 
@@ -890,7 +881,7 @@ fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
         ),
         (
             "Animations vanish in Bevy with no lint error",
-            "no content finding exists",
+            "No content finding exists",
             "load_animations",
             "revision-3 gate",
         ),
@@ -902,6 +893,84 @@ fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
                 "{symptom} must keep {required:?}: {prose}"
             );
         }
+    }
+}
+
+/// The pages that carry the shared "where you are" strip, and the stage each
+/// one is.
+const STRIP_PAGES: [(&str, &str); 4] = [
+    ("docs/animation-author-workflow.md", "Artist export"),
+    ("docs/declaring-the-contract.md", "Contract"),
+    ("docs/game-developer-intake-workflow.md", "Developer intake"),
+    ("docs/pipeline-scenarios.md", "CI gate"),
+];
+
+/// The strip as `(label, destination, is the reader's own stage)`, read from
+/// the one paragraph that opens with `Where you are:`.
+fn stage_strip(markdown: &str) -> Vec<(String, String, bool)> {
+    let (mut in_strip, mut strong, mut link) = (false, false, None);
+    let mut stages = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::End(TagEnd::Paragraph) => in_strip = false,
+            Event::Text(text) if text.starts_with("Where you are:") => in_strip = true,
+            Event::Start(Tag::Strong) if in_strip => strong = true,
+            Event::End(TagEnd::Strong) if in_strip => strong = false,
+            Event::Start(Tag::Link { dest_url, .. }) if in_strip => {
+                link = Some((String::new(), dest_url.into_string(), strong));
+            }
+            Event::Text(text) => {
+                if let Some((label, _, _)) = link.as_mut() {
+                    label.push_str(&text);
+                }
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some(stage) = link.take() {
+                    stages.push(stage);
+                }
+            }
+            _ => {}
+        }
+    }
+    stages
+}
+
+/// The strip is four hand-written copies of one line, so nothing but a gate
+/// keeps them the same line. A stage pointing at a different page, a dropped
+/// stage, or a reordering is the drift that would leave a reader on the wrong
+/// map; only which stage is bold may differ, and it must be the page's own.
+#[test]
+fn the_where_you_are_strip_is_the_same_five_stages_on_every_page_that_carries_it() {
+    let canonical: Vec<(String, String)> = stage_strip(&markdown(STRIP_PAGES[0].0))
+        .into_iter()
+        .map(|(label, destination, _)| (label, destination))
+        .collect();
+    assert_eq!(
+        canonical.len(),
+        5,
+        "the strip names the five pipeline stages: {canonical:?}"
+    );
+
+    for (page, stage) in STRIP_PAGES {
+        let strip = stage_strip(&markdown(page));
+        assert_eq!(
+            strip
+                .iter()
+                .map(|(label, destination, _)| (label.clone(), destination.clone()))
+                .collect::<Vec<_>>(),
+            canonical,
+            "{page} must carry the same stages, in order, at the same targets"
+        );
+        let bold: Vec<&String> = strip
+            .iter()
+            .filter(|(_, _, current)| *current)
+            .map(|(label, _, _)| label)
+            .collect();
+        assert_eq!(
+            bold,
+            vec![&stage.to_owned()],
+            "{page} must mark exactly its own stage as the reader's place"
+        );
     }
 }
 
@@ -948,7 +1017,7 @@ fn workflow_pages_are_current_state_routing_not_ticket_chronology_or_internal_no
     for workflow_path in [
         "docs/animation-author-workflow.md",
         "docs/game-developer-intake-workflow.md",
-        "docs/animation-troubleshooting.md",
+        "docs/symptoms/README.md",
         "docs/commercial-pack-evaluations.md",
     ] {
         let page = markdown(workflow_path);

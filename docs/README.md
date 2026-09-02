@@ -1,34 +1,17 @@
-# Documentation
+# All pages
 
-## Start here
+Every page AnimSmith publishes, one row each — each page owns one job.
+The site's front door, which routes the two reader journeys and the
+ten-minute path, is at <https://mmannerm.github.io/animsmith/>.
 
-Two doors into AnimSmith, and one command behind both:
-
-```console
-$ animsmith lint walk.glb
-```
-
-- **Artists and animators** — catch a bad export while the DCC is still open.
-  [Install](install.md), [first lint in 60 seconds](first-lint.md),
-  [your first report](first-report.md), then
-  [from export to handoff](animation-author-workflow.md).
-- **Game developers** — know what a pack really contains and gate every
-  re-export. [Install](install.md), [first lint in 60 seconds](first-lint.md),
-  [your first report](first-report.md), then
-  [from pack to engine gate](game-developer-intake-workflow.md).
-
-Something specific already looks wrong in the engine? Start from the
-[symptoms](symptoms/README.md).
-
-## Every page
-
-Find what you need by task — each page below owns one job. The Category
-column names the documentation site's part and optional `Part › Group`, so
-this table and the site sidebar carry the same structure in the same order.
+The Category column names the documentation site's part and optional
+`Part › Group`, so this table and the site sidebar carry the same
+structure in the same order.
 
 | Document | Use it to… | Category |
 |---|---|---|
 | [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. | Start |
+| [What game-ready means](game-ready-clips.md) | Read the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder) — what "game-ready" is evidence *for* at each level, who owns that level, and what one lint run does and does not settle. | Start |
 | [Install](install.md) | Get the binary — prebuilt archive, `cargo install`, or the pure-Rust glTF-only build — and confirm it runs. | Start |
 | [First lint in 60 seconds](first-lint.md) | See a finding, repair what is mechanically safe, and watch a declared contract catch a popped loop, on two committed sample clips. | Start |
 | [Your first report](first-report.md) | Turn findings into skeleton playback, charts and one shareable HTML file, including the before/after comparison and the evidence-only form. | Start |
@@ -43,10 +26,9 @@ this table and the site sidebar carry the same structure in the same order.
 | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) | Separate a bone that is absent from one that is keyed but frozen, and both from a clip authored against another bind. | Symptoms |
 | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) | Keep the exact `(file, clip)` identity of a pack instead of trusting a repeated display name, and decide what a retarget still owes you. | Symptoms |
 | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) | Decide what is redundant exported data and what is authored scale, then remove only the part a transform can prove. | Symptoms |
-| [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder), who owns each level, and the table that routes every runtime symptom to the page above that walks it. | Symptoms |
-| [Animation troubleshooting](animation-troubleshooting.md) | Route a visible runtime symptom to the page that owns it, and answer the two that are not about a clip: a loader refusal and an unaddressable clip. | Symptoms |
 | [For artists: from export to handoff](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
 | [For game developers: from pack to engine gate](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |
+| [Declaring the contract: who writes what](declaring-the-contract.md) | Settle who owns each `animsmith.toml` surface — which parts an animator declares alone, which are the game's call, and where each value comes from — with one complete minimal config. | Workflows |
 | [Pipeline scenario guide](pipeline-scenarios.md) | Plan a raw-to-game-ready asset process — marketplace intake, mocap cleanup, outsourced acceptance, CI gating, and artifact storage. | Workflows |
 | [Unity 6000.3 profile guide](engine-profile-unity.md) | Configure the exact Unity Generic/Humanoid profiles, importer advice, root-motion choices, and scale boundary. | Workflows › Engine profiles |
 | [Unreal Engine 5.8 profile guide](engine-profile-unreal.md) | Map FBX animation, Skeleton, frame, unit, root-motion, and scale concerns to AnimSmith evidence without inventing importer settings. | Workflows › Engine profiles |
@@ -75,3 +57,4 @@ this table and the site sidebar carry the same structure in the same order.
 | [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. | More › Project and contributing |
 | [Scale proof calibration](scale-calibration.md) | Review the implementation-owned calibration sweep, provenance magnitudes, historical policy measurements, and reproducible command behind `appendix-d-v6`. | More › Project and contributing |
 | [research/](research/game-ready-animation-clips.md) | Read the dated research notes that inform the roadmap. | More › Project and contributing |
+| [All pages](README.md) | Find any page by the job it owns — this table, which is also where the site's navigation comes from. | More |

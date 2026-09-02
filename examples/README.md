@@ -2,8 +2,8 @@
 
 A cookbook of runnable workflows. Each section is a self-contained task
 you can copy into your own project — several double as CI/acceptance
-gates. Each workflow addresses a runtime failure described in the
-[game-ready clips guide](../docs/game-ready-clips.md), which explains
+gates. Each workflow addresses a runtime failure described in
+[what game-ready means](../docs/game-ready-clips.md), which explains
 *why* the checks behind these commands exist. For the larger process
 that turns raw source assets into engine-facing outputs, see the
 [pipeline scenario guide](../docs/pipeline-scenarios.md).

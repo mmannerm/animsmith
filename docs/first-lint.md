@@ -85,7 +85,9 @@ The clip was cut a quarter-cycle short, so the right foot is 16 cm from where
 the loop needs it to be. The [config file](../examples/walk.animsmith.toml)
 is short and commented; most of the loop caps it sets are the defaults, and it
 says where it departs from them — a stricter `0.5` degree per-clip rotation cap
-(default `1.0`) and a `1.6` loop-seam ratio (default `1.5`).
+(default `1.0`) and a `1.6` loop-seam ratio (default `1.5`). Which parts of
+such a contract you can declare on your own, and which need the game
+developer, is [who writes what](declaring-the-contract.md).
 
 ## 4. Read the exit code
 

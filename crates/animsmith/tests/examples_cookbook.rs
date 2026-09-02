@@ -11,12 +11,21 @@
 //!    transcripts are pinned verbatim because they include the complete
 //!    written-artifact summary.
 
+use animsmith_testkit::docs_markdown::fenced_blocks;
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 fn animsmith() -> Command {
     Command::new(env!("CARGO_BIN_EXE_animsmith"))
+}
+
+fn repo_path(relative: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(relative)
 }
 
 /// A committed cookbook asset under `examples/assets/`.
@@ -402,14 +411,233 @@ fn cookbook_config_steering() {
     );
 }
 
+/// The contract page shows one complete `animsmith.toml`, and a reader is
+/// meant to copy it. It is therefore not retyped prose but the committed
+/// contract this suite already runs against both walk fixtures, quoted line
+/// for line: a page that drifts from the file would hand that reader a config
+/// no gate has ever executed.
+///
+/// Line for line rather than byte for byte, because the two sides arrive by
+/// different routes. The fence comes out of the Markdown parser, which
+/// normalises every line ending to `\n`; the config is read raw and carries
+/// whatever the checkout wrote, which under Windows `autocrlf` is CRLF.
+/// Nothing embeds this file's bytes, so it earns no `text eol=lf` attribute
+/// the way the report assets and drawings do — the promise here is the content
+/// of each line, which is exactly what `str::lines` compares.
+#[test]
+fn contract_page_quotes_the_committed_walk_config_exactly() {
+    let page = std::fs::read_to_string(repo_path("docs/declaring-the-contract.md"))
+        .expect("reads the contract page");
+    let quoted = fenced_blocks(&page, "toml");
+    assert_eq!(
+        quoted.len(),
+        1,
+        "the page shows exactly one complete contract"
+    );
+    let committed = std::fs::read_to_string(repo_path("examples/walk.animsmith.toml"))
+        .expect("reads the committed walk contract");
+    let shown = lines_of(&quoted[0]);
+    let tracked = lines_of(&committed);
+    // Named rather than dumped: two forty-line vectors side by side hide the
+    // one line that actually moved.
+    if let Some((number, (shown, tracked))) = shown
+        .iter()
+        .zip(&tracked)
+        .enumerate()
+        .find(|(_, (shown, tracked))| shown != tracked)
+    {
+        panic!(
+            "the quoted contract must be examples/walk.animsmith.toml line for line; \
+             line {} is {shown:?} on the page and {tracked:?} in the file",
+            number + 1
+        );
+    }
+    assert_eq!(
+        shown.len(),
+        tracked.len(),
+        "the page must quote every line of examples/walk.animsmith.toml and no more"
+    );
+}
+
+/// The lines of `text` with only `\r\n` folded to `\n`. Nothing else is
+/// touched: trailing whitespace and a missing final newline stay differences,
+/// because splitting on the newline alone keeps the empty last element a
+/// newline-terminated file produces.
+fn lines_of(text: &str) -> Vec<String> {
+    text.replace("\r\n", "\n")
+        .split('\n')
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The code spans of one column of the table whose leading header cell is
+/// `header`, one `Vec` per body row, read with the parser rather than by
+/// splitting on `|` so a decoy table or a pipe in prose cannot feed the gate.
+fn table_column_codes(markdown: &str, header: &str, column: usize) -> Vec<Vec<String>> {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    let (mut in_head, mut is_wanted, mut cell) = (false, false, 0usize);
+    let (mut first_header, mut codes, mut rows) = (None, Vec::new(), Vec::new());
+    for event in Parser::new_ext(markdown, options) {
+        match event {
+            Event::Start(Tag::Table(_)) => first_header = None,
+            Event::Start(Tag::TableHead) => in_head = true,
+            Event::End(TagEnd::TableHead) => {
+                in_head = false;
+                is_wanted = first_header.as_deref() == Some(header);
+            }
+            Event::Start(Tag::TableRow) => cell = 0,
+            Event::Start(Tag::TableCell) => cell += 1,
+            Event::End(TagEnd::TableCell) if is_wanted && !in_head && cell == column => {
+                rows.push(std::mem::take(&mut codes));
+            }
+            Event::Code(code) if is_wanted && !in_head && cell == column => {
+                codes.push(code.into_string());
+            }
+            Event::Text(text) if in_head && cell == 1 => {
+                first_header.get_or_insert_with(String::new).push_str(&text);
+            }
+            _ => {}
+        }
+    }
+    rows
+}
+
+/// The Surface column names config keys in prose, outside the fenced block
+/// and outside the runnable examples, so nothing else would catch a typo in
+/// one: `movement_owner_zx` reads exactly like the real key and no gate would
+/// see it. Each backticked `[table]` or key there must therefore appear in the
+/// reference that owns the vocabulary.
+#[test]
+fn every_config_key_the_contract_table_names_exists_in_the_reference() {
+    let page = std::fs::read_to_string(repo_path("docs/declaring-the-contract.md"))
+        .expect("reads the contract page");
+    let reference = std::fs::read_to_string(repo_path("docs/configuration-reference.md"))
+        .expect("reads the configuration reference");
+    let named = table_column_codes(&page, "Surface", 1);
+    assert!(
+        named.len() >= 10,
+        "the surface table must name the config surface of every row: {named:?}"
+    );
+
+    let known = identifiers(&reference);
+    let mut checked = 0usize;
+    for (row, codes) in named.iter().enumerate() {
+        for code in codes {
+            for token in identifiers(code) {
+                assert!(
+                    known.contains(&token),
+                    "row {} names {code:?}, whose {token:?} is not an identifier \
+                     docs/configuration-reference.md spells",
+                    row + 1
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked >= 20,
+        "every identifier the surface column spells is looked up, found {checked}"
+    );
+}
+
+/// Every complete identifier `text` spells: a run of ASCII letters, digits and
+/// underscores, with a bare number dropped.
+///
+/// The same rule runs over both sides, which is the whole point. Asking
+/// whether the reference *contains* a key matched any prefix of one, so
+/// `movement_owner_x` — a key no config would take — passed on the strength
+/// of the real `movement_owner_xz`, and the page could have shipped it.
+fn identifiers(text: &str) -> BTreeSet<String> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty() && !token.chars().all(|c| c.is_ascii_digit()))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The boundary rule is what makes that lookup mean anything, so it is proved
+/// on a fixture rather than trusted: a prefix of a real key is a different
+/// identifier, and both sides tokenise alike.
+#[test]
+fn an_identifier_that_merely_prefixes_a_real_key_is_not_found() {
+    let reference = "| `clips.<selector>.movement_owner_xz` | optional enum; omitted |\n";
+    let known = identifiers(reference);
+    assert!(
+        known.contains("movement_owner_xz"),
+        "the real key is found: {known:?}"
+    );
+    for truncated in ["movement_owner_x", "movement_owner", "movement"] {
+        assert!(
+            !known.contains(truncated),
+            "{truncated:?} is a prefix, not the key: {known:?}"
+        );
+    }
+    assert_eq!(
+        identifiers("[clips.\"<name>\"] movement_owner_xz"),
+        ["clips", "name", "movement_owner_xz"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>(),
+        "the page side spells the same identifiers the reference side does"
+    );
+}
+
+/// Every "Minimal example" in the contract page is offered to a reader as a
+/// config to copy, so each one has to be a config the binary accepts. A cell
+/// that omits a required key — a gait group without its phase tolerance, an
+/// `[engine]` table without its full tuple — is refused with exit `2` and no
+/// asset is linted, which is the failure this runs for. Findings are fine:
+/// only a config refusal fails the gate.
+///
+/// Each snippet is linted on its own rather than appended to the walk
+/// contract, because several declare a table that contract already opens
+/// (`[rig]`, `[clips.walk]`) and TOML refuses the duplicate — a failure the
+/// test would have manufactured itself.
+#[test]
+fn every_documented_contract_surface_is_a_config_the_binary_accepts() {
+    let page = std::fs::read_to_string(repo_path("docs/declaring-the-contract.md"))
+        .expect("reads the contract page");
+    let examples = table_column_codes(&page, "Surface", 5);
+    assert!(
+        examples.len() >= 10,
+        "the surface table must document an example per row: {examples:?}"
+    );
+    let walk = asset("walk.glb");
+    let temp = unique_temp_dir("contract-surfaces");
+    let mut linted = 0usize;
+    for (row, snippet) in examples.iter().enumerate() {
+        if snippet.is_empty() {
+            // A row whose example is a link to another page's contract.
+            continue;
+        }
+        let config = temp.path().join(format!("surface-{row}.animsmith.toml"));
+        std::fs::write(&config, snippet.join("\n") + "\n").expect("writes the documented config");
+        let output = animsmith()
+            .args(["lint", "--config"])
+            .arg(&config)
+            .arg(&walk)
+            .output()
+            .expect("runs animsmith lint");
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "row {} documents a config the binary refuses ({:?}):\n{}\nstderr:\n{}",
+            row + 1,
+            output.status.code(),
+            snippet.join("\n"),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        linted += 1;
+    }
+    assert!(linted >= 10, "every documented surface example is linted");
+}
+
 #[test]
 fn cookbook_semantic_contract() {
     let walk = asset("walk.glb");
     let walk = walk.to_str().unwrap();
     let dirty = asset("walk-dirty.glb");
     let dirty = dirty.to_str().unwrap();
-    let config =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/walk.animsmith.toml");
+    let config = repo_path("examples/walk.animsmith.toml");
     let config = config.to_str().unwrap();
 
     // The rig's bone names resolve a built-in profile with no config.

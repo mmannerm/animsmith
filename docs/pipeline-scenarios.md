@@ -1,15 +1,30 @@
 # Raw asset to game-ready pipeline
 
+Where you are: [Artist export](animation-author-workflow.md) → [Contract](declaring-the-contract.md) → [Developer intake](game-developer-intake-workflow.md) → **[CI gate](pipeline-scenarios.md#scenario-ci-gating-on-animation-changes)** → [Engine check](game-developer-intake-workflow.md#other-engine-routes)
+
 Where animsmith fits in an animation asset pipeline.
 
-This guide is the process-level companion to the
-[game-ready clips guide](game-ready-clips.md) and the
-[examples cookbook](../examples/README.md). The game-ready guide defines
+This guide is the process-level companion to
+[what game-ready means](game-ready-clips.md) and the
+[examples cookbook](../examples/README.md). That page defines
 the [readiness ladder](game-ready-clips.md#the-readiness-ladder) and
 explains why a check fires; the cookbook gives runnable command
 transcripts. This page shows how teams place those commands in the
 larger path from raw source animation to engine-facing, reviewable,
 CI-gated assets.
+
+## Which scenario belongs to which handoff
+
+Every handoff the two reader workflows name lands in one of the scenarios
+below. Start from the row that matches the artifact currently moving:
+
+| Handoff | What moves | Scenario |
+|---|---|---|
+| A vendor or marketplace pack arrives | The untouched delivery, with its licence and vendor metadata | [Marketplace-pack intake](#scenario-marketplace-pack-intake) |
+| A finding goes back to the DCC and a new export comes out | The candidate GLB/FBX, beside the immutable source it came from | [Mocap cleanup gate](#scenario-mocap-cleanup-gate) |
+| An animator hands a candidate to the game developer | The candidate plus its lint JSON, diff and report | [Outsourced-asset acceptance](#scenario-outsourced-asset-acceptance) |
+| An accepted asset enters the repository | The committed asset and the committed `animsmith.toml` | [CI gating on animation changes](#scenario-ci-gating-on-animation-changes) |
+| Anything above is stored | Raw source, work in progress, generated output, config and reports | [Raw vs transformed artifact storage](#scenario-raw-vs-transformed-artifact-storage) |
 
 The common shape:
 
@@ -264,9 +279,9 @@ pipeline through `measure`, `lint`, and `diff`.
 
 ## Where to go next
 
-The [game-ready clips guide](game-ready-clips.md) explains the runtime
+[What game-ready means](game-ready-clips.md) explains the runtime
 symptoms behind each check, and the
 [examples cookbook](../examples/README.md) turns the stages above into
 runnable commands. Everything else — embedding, the JSON envelope, the
 dated source research behind this process model — is routed from the
-[documentation index](README.md).
+[all pages](README.md).
