@@ -198,7 +198,7 @@ the default development branch.
 
 - [Symptoms](https://mmannerm.github.io/animsmith/docs/symptoms/) — start from
   what you see in the engine.
-- [Game-ready clips guide](https://mmannerm.github.io/animsmith/docs/game-ready-clips.html)
+- [What game-ready means](https://mmannerm.github.io/animsmith/docs/game-ready-clips.html)
   — the readiness ladder, and who owns each level.
 - [For artists](https://mmannerm.github.io/animsmith/docs/animation-author-workflow.html)
   and [for game developers](https://mmannerm.github.io/animsmith/docs/game-developer-intake-workflow.html)

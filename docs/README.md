@@ -11,6 +11,7 @@ structure in the same order.
 | Document | Use it to… | Category |
 |---|---|---|
 | [Why animsmith](why-animsmith.md) | Decide whether animsmith fits your team — what it is, why it exists, and what it is worth by role. The canonical home of the positioning case. | Start |
+| [What game-ready means](game-ready-clips.md) | Read the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder) — what "game-ready" is evidence *for* at each level, who owns that level, and what one lint run does and does not settle. | Start |
 | [Install](install.md) | Get the binary — prebuilt archive, `cargo install`, or the pure-Rust glTF-only build — and confirm it runs. | Start |
 | [First lint in 60 seconds](first-lint.md) | See a finding, repair what is mechanically safe, and watch a declared contract catch a popped loop, on two committed sample clips. | Start |
 | [Your first report](first-report.md) | Turn findings into skeleton playback, charts and one shareable HTML file, including the before/after comparison and the evidence-only form. | Start |
@@ -25,7 +26,6 @@ structure in the same order.
 | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) | Separate a bone that is absent from one that is keyed but frozen, and both from a clip authored against another bind. | Symptoms |
 | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) | Keep the exact `(file, clip)` identity of a pack instead of trusting a repeated display name, and decide what a retarget still owes you. | Symptoms |
 | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) | Decide what is redundant exported data and what is authored scale, then remove only the part a transform can prove. | Symptoms |
-| [Game-ready clips guide](game-ready-clips.md) | Understand what "game-ready" means — the staged [readiness ladder](game-ready-clips.md#the-readiness-ladder), who owns each level, and the table that routes every runtime symptom to the page above that walks it. | Symptoms |
 | [Animation troubleshooting](animation-troubleshooting.md) | Route a visible runtime symptom to the page that owns it, and answer the two that are not about a clip: a loader refusal and an unaddressable clip. | Symptoms |
 | [For artists: from export to handoff](animation-author-workflow.md) | Take an authored export from immutable source through evidence-backed candidate handoff, without treating a safe mechanical edit as artistic approval. | Workflows |
 | [For game developers: from pack to engine gate](game-developer-intake-workflow.md) | Take a pack or collection from inventory through an exact engine profile and an engine-observed gate; includes the complete Bevy 0.19.0 path. | Workflows |

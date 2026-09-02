@@ -8,8 +8,8 @@ This is the bring-your-own-asset counterpart to the
 [examples cookbook](../examples/README.md): the cookbook runs against
 small assets committed to this repo, while this tutorial runs against
 a real marketplace rig you download yourself. Each step links to the
-guide that owns its *why* rather than re-explaining — the
-[game-ready clips guide](game-ready-clips.md) for everything the
+page that owns its *why* rather than re-explaining —
+[what game-ready means](game-ready-clips.md) for everything the
 checks judge, and the
 [pipeline scenario guide](pipeline-scenarios.md) for acquiring and
 handling the raw asset.
@@ -154,8 +154,7 @@ Two things to read off this output:
   built-in rig profile: it binds the semantic roles from Mixamo's
   `mixamorig:*` bone names, which is what arms the role-based checks
   in step 6. Without a resolved rig, those checks skip rather than
-  guess (see
-  [from symptom to command](game-ready-clips.md#from-symptom-to-command)).
+  guess (see the [symptom index](symptoms/README.md)).
 - **The clip is named `mixamo.com`.** Mixamo names every export's
   animation take `mixamo.com`, and animsmith uses the take name as the
   clip name. Your contract config must address the clip by this name.
@@ -465,7 +464,6 @@ every bare `animsmith lint` — local or
 
 ## Where to go next
 
-The [game-ready clips guide](game-ready-clips.md) explains every
+[What game-ready means](game-ready-clips.md) explains every
 failure mode these checks catch; everything else — the cookbook, the
-CLI reference, embedding — is routed from the
-[documentation index](README.md).
+CLI reference, embedding — is routed from [all pages](README.md).

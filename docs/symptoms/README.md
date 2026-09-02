@@ -31,8 +31,7 @@ finding about a clip: a loader error or an AnimSmith refusal, and a clip that
 exists but cannot be addressed in the engine. Both are routed from
 [animation troubleshooting](../animation-troubleshooting.md).
 
-The table above carries every registered check id. The
+The table above carries every registered check id, including the narrower
+presentations of a symptom that no page of its own owns. The
 [readiness ladder](../game-ready-clips.md#the-readiness-ladder) stages what a
-clean run on any of these pages is evidence *for*, and the guide's
-[symptom table](../game-ready-clips.md#from-symptom-to-command) also routes the
-narrower presentations of a symptom that no page of its own owns.
+clean run on any of these pages is evidence *for*.

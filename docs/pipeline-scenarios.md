@@ -2,9 +2,9 @@
 
 Where animsmith fits in an animation asset pipeline.
 
-This guide is the process-level companion to the
-[game-ready clips guide](game-ready-clips.md) and the
-[examples cookbook](../examples/README.md). The game-ready guide defines
+This guide is the process-level companion to
+[what game-ready means](game-ready-clips.md) and the
+[examples cookbook](../examples/README.md). That page defines
 the [readiness ladder](game-ready-clips.md#the-readiness-ladder) and
 explains why a check fires; the cookbook gives runnable command
 transcripts. This page shows how teams place those commands in the
@@ -264,9 +264,9 @@ pipeline through `measure`, `lint`, and `diff`.
 
 ## Where to go next
 
-The [game-ready clips guide](game-ready-clips.md) explains the runtime
+[What game-ready means](game-ready-clips.md) explains the runtime
 symptoms behind each check, and the
 [examples cookbook](../examples/README.md) turns the stages above into
 runnable commands. Everything else — embedding, the JSON envelope, the
 dated source research behind this process model — is routed from the
-[documentation index](README.md).
+[all pages](README.md).
