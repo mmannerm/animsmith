@@ -365,6 +365,24 @@ body {
     }
 }
 
+/* The site script turns the title into a link home.  It inherits the
+   heading's colour so the plain-text fallback still reads as a title, and
+   when the logo is drawn the text sits outside the visible box -- so the
+   link reclaims that box with an overlay.  The logo pseudo-elements paint
+   above it and take no pointer events, so the whole mark stays clickable. */
+.menu-title a.as-home {
+    color: inherit;
+    text-decoration: none;
+}
+
+@supports (mask-image: url("")) or (-webkit-mask-image: url("")) {
+    .menu-title a.as-home::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+    }
+}
+
 .right-buttons a,
 .right-buttons .icon-button {
     color: var(--icons);
@@ -377,12 +395,33 @@ body {
     border-inline-end: 1px solid var(--as-line, var(--sidebar-spacer));
 }
 
+/* The block-start padding lives on the pinned Home row below instead, so
+   that row's own background covers the whole band above it once it sticks. */
 .sidebar .sidebar-scrollbox {
-    padding: 14px 14px 32px;
+    padding: 0 14px 32px;
 }
 
 .chapter {
     line-height: 1.5;
+}
+
+/* Home is written above every part, so it carries the separation a part
+   title would otherwise give it.  It also stays put: the sidebar restores
+   its scroll position and scrolls the active chapter into view, which on a
+   page far down the list would otherwise carry the one way back off the
+   top.  The scrollbox is the scroller and is transparent, so the pinned
+   row paints the sidebar's own ground over what slides beneath it. */
+.chapter li.as-home-item {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin-block-end: 0.6em;
+    /* The scrollbox's own block-start padding, so the row is both the list's
+       top spacing at rest and an opaque lid once it sticks. */
+    padding-block: 14px 0.4em;
+    border-block-end: 1px solid var(--as-line, var(--sidebar-spacer));
+    background-color: var(--sidebar-bg);
+    font-weight: 600;
 }
 
 .chapter li.part-title {

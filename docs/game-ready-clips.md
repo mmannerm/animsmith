@@ -1,4 +1,4 @@
-# Game-ready animation clips
+# What game-ready means
 
 What animsmith checks for, and why exported clips fail at runtime.
 
@@ -9,14 +9,13 @@ errors — the file is spec-conformant — they are *content* problems that
 only surface after the slowest step of the pipeline: engine import, a
 bake, a playtest.
 
-This document defines what "game-ready" means here. The
+This page defines what "game-ready" means here. The
 [readiness ladder](#the-readiness-ladder) below stages the evidence
 from file-ready data to shipped acceptance and says who owns each
-level, and the [symptom table](#from-symptom-to-command) at the end
-routes every runtime symptom — and the narrower presentations of one —
-to the page that walks it. The checks, repairs and config surfaces
-themselves live in the [symptom index](symptoms/README.md), which
-carries every registered check id in one table.
+level. The checks, repairs and config surfaces themselves live in the
+[symptom index](symptoms/README.md), which routes every runtime symptom
+— and the narrower presentations of one — to the page that walks it,
+and carries every registered check id in one table.
 
 Each symptom has its own page under [symptoms](symptoms/README.md):
 what you see in the engine, what AnimSmith measured, the finding, the
@@ -176,122 +175,10 @@ and records completed work scopes. This is evidence about animsmith's checks,
 not runtime certification; stricter completeness policy belongs to the
 consuming pipeline.
 
----
-
-## The pose flickers, spins, or explodes
-
-This symptom now has its own page:
-[the pose flickers, spins, or explodes](symptoms/pose-flickers.md) opens with
-what a reader sees in the engine, shows the two repairable quaternion defects
-on a synthetic clip, and keeps the precise contract — non-finite values,
-unit quaternions, hemisphere flips and key times — one click down.
-
-## The clip is the wrong length or freezes at the end
-
-This symptom now has its own page:
-[the clip is the wrong length or freezes at the end](symptoms/wrong-length.md)
-opens with the limb that stops before the rest of the body, shows the measured
-channel-end spread, and keeps the precise contract — declared durations, the
-frame grid, and the slice/hold transforms — one click down.
-
-## The loop pops
-
-This symptom now has its own page: [the loop pops](symptoms/loop-pops.md)
-opens with what a reader sees in the engine, shows the measured before/after
-on a synthetic walk cycle, and keeps the precise contract — the four seam
-checks, model space, endpoint modes, root-motion loops and the diagnostic
-split — one click down.
-
-## The character glides or runs in place
-
-This symptom now has its own page:
-[the character glides or runs in place](symptoms/character-glides.md) opens
-with the slide a reader sees, shows the measured root path of a travelling
-cycle against an in-place one, and keeps the precise contract — per-component
-movement ownership, the declared speed pin, and the root-role fallback — one
-click down.
-
-## Feet skate when clips blend
-
-This symptom now has its own page:
-[feet skate when clips blend](symptoms/blend-skate.md) opens with the blend
-that skates, shows the stride anchors of a four-member ring, and keeps the
-precise contract — the gait-group spread, gait anchoring's refusals,
-time-complementary pairs, and per-direction travel speed — one click down.
-
-## Feet slide within one clip
-
-This symptom now has its own page:
-[feet slide within a clip](symptoms/feet-slide.md) opens with what a reader
-sees in the engine, shows the measured stance intervals on a synthetic gait,
-and keeps the precise contract — stance detection, the declared speed, and
-why this check is a warning — one click down.
-
-## A limb is T-posed, or a bone never moves
-
-This symptom now has its own page:
-[a limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) opens with
-the arm that never moves, shows a declared bone that is absent and one that is
-keyed but frozen, and keeps the precise contract — the four rig-integrity
-failures and what each refuses to guess — one click down.
-
-## Files disagree about skeleton or clip identity
-
-This symptom now has its own page:
-[files disagree about skeleton or clip identity](symptoms/identity-mismatch.md)
-opens with the pack whose clips all claim the same name, shows what
-`animsmith inspect` and a collection manifest retain, and keeps the precise
-contract — skeleton identity, file-scoped clip identity, and what stays per
-file — one click down.
-
-## The file is bloated, or the retargeter chokes
-
-This symptom now has its own page:
-[the file is bloated, or the retargeter chokes](symptoms/file-bloat.md) opens
-with the clip that costs more than the motion in it, shows the constant channel
-a transform can remove beside the authored scale it must not, and keeps the
-precise contract — inherited rest-world scale, the five separated scale facts,
-and the pruning boundary — one click down.
-
----
-
-## From symptom to command
-
-| Symptom | Page |
-|---|---|
-| The pose flickers, spins, or explodes | [The pose flickers, spins, or explodes](symptoms/pose-flickers.md) |
-| The clip is the wrong length or freezes at the end | [The clip is the wrong length or freezes at the end](symptoms/wrong-length.md) |
-| The loop pops or pulses at the wrap | [The loop pops](symptoms/loop-pops.md) |
-| The character glides or runs in place | [The character glides or runs in place](symptoms/character-glides.md) |
-| Feet skate when clips blend | [Feet skate when clips blend](symptoms/blend-skate.md) |
-| Directional travel speed or foot slide changes by direction | [Directional blend speeds](symptoms/blend-skate.md#directional-blend-members-travel-at-different-speeds) |
-| Same-time blend members drift or pop | [Feet skate when clips blend](symptoms/blend-skate.md) |
-| Same-time pair looks mirrored or swaps footfall timing | [A blend pair is time-complementary](symptoms/blend-skate.md#a-blend-pair-is-time-complementary) |
-| Feet slide within a clip | [Feet slide within a clip](symptoms/feet-slide.md) |
-| Missing runtime socket or IK target | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
-| Attachment, socket, or helper imports at the wrong size | [Attachment nodes and inherited rest-world scale](symptoms/file-bloat.md#attachment-nodes-and-inherited-rest-world-scale) |
-| A limb is T-posed, or a bone never moves | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
-| Files disagree about skeleton or clip identity | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) |
-| The file is bloated, or the retargeter chokes | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) |
-
-Each page names the checks, the repair and the config surface for its
-symptom; the [symptom index](symptoms/README.md) carries all of them in one
-table. Where a repair is *re-export*, that is deliberate: animsmith rewrites a
-clip only in ways whose within-clip correctness its own checks can verify.
-Runtime integration caveats, including sparse transition coverage, still
-apply. Lossless quaternion repairs and mechanical edits (slice, hold-extend,
-in-place gait-anchor, duplicate-loop-endpoint removal, constant-track pruning,
-FBX→glTF conversion) qualify; artistic transformation — retargeting, motion
-editing — is DCC work and stays out of scope.
-
-The gait and root-motion checks (`loop-seam`, `in-place`,
-`root-motion-speed`, `gait-group`, `time-complement`, `foot-slide`) additionally need a
-resolved rig profile so they know which bones are the hips, feet, and
-root. `loop-closure`, `loop-seam-vel`, and `loop-seam-rot` do not. Built-in profiles cover
-`mixamo`, `ue-mannequin`, and `humanoid`
-rigs; `[rig] profile = "auto"` scores them against your skeleton, and
-`[rig.roles]` binds bone names explicitly for everything else. See the
-[configuration reference](configuration-reference.md) for every key.
+Each clip symptom the levels above describe has a page of its own under
+[symptoms](symptoms/README.md), whose one table routes it to the checks that
+measure it, the repair, the config surface, and who owns the fix; the three
+runtime problems that are not about a clip are answered on that index itself.
 
 ## Why animsmith exists
 
@@ -301,5 +188,5 @@ role, and what it is worth to each role on a team — lives in
 
 Everything else — the symptom pages themselves, runnable workflows,
 pipeline scenarios, the CLI reference, embedding, and the dated engine
-survey behind this guide's contract — is routed from the
-[documentation index](README.md).
+survey behind this page's contract — is routed from
+[all pages](README.md).

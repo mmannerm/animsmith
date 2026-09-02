@@ -2,8 +2,8 @@
 
 This is the customer-facing reference for every registered built-in check in
 AnimSmith's current catalog. It complements the concise [README check
-catalog](../README.md), the symptom-first [game-ready clips
-guide](game-ready-clips.md), and the exact Rust API on
+catalog](../README.md), [what game-ready
+means](game-ready-clips.md), and the exact Rust API on
 [docs.rs](https://docs.rs/animsmith-core).
 
 Use this page when you need the current built-in ID, default findings,
