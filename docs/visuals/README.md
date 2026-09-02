@@ -4,6 +4,10 @@ Every picture in the customer documentation is produced by AnimSmith
 itself from a committed synthetic fixture, or drawn by hand. Nothing here
 comes from a licensed or third-party asset.
 
+This page is provenance for the directory it sits in, read where a
+contributor finds it: it is not a documentation-site chapter, and the
+site publishes only the visuals themselves.
+
 ## Generated files
 
 `crates/animsmith/examples/gen_docs_visuals.rs` runs the `report` command
