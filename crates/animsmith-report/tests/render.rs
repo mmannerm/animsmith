@@ -2334,6 +2334,22 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
         "an evidence-only report embeds no sampled motion"
     );
     assert!(!embedded_pose_bytes(&full_html, "report-data").is_empty());
+    // The single-clip form has no identity block to keep — its provenance is
+    // the source path and the resolved profile — which is what the docs claim
+    // for it; the comparison's per-side identities are asserted separately.
+    let keys: Vec<&String> = data
+        .as_object()
+        .expect("report data object")
+        .keys()
+        .collect();
+    assert!(
+        keys.iter().all(|key| !key.contains("identity")),
+        "the single-clip payload carries no identity block: {keys:?}"
+    );
+    assert!(
+        data["file"].is_string() && data["profile"].is_string(),
+        "it carries the file path and profile instead: {keys:?}"
+    );
     for clip in data["clips"].as_array().expect("clips array") {
         assert!(
             clip.get("positions").is_none(),
