@@ -145,6 +145,17 @@ non-synthetic fixture. Commercial and other redistribution-restricted assets,
 including excerpts and motion-bearing derivatives, stay outside the repository
 and CI.
 
+The same boundary governs what tooling may publish about a licensed clip.
+Published evidence is limited to summary numbers, non-recoverable digests,
+scrubbed labels, and single-series metric charts — one or two scalar series
+per clip, such as foot height or root speed. Per-bone pose data is a
+motion-bearing derivative and is never published, and that includes the HTML
+report's sampled pose grid: the grid is the model-space position of every
+bone on every judged frame, so a full report of a licensed clip carries the
+clip. The artifact form that satisfies this rule is
+`animsmith report --evidence-only`, which is what may be attached to an
+issue, published, or sent to a vendor.
+
 ## Documentation Builds
 
 Use `just doc` for rustdoc warnings-as-errors and missing-docs
