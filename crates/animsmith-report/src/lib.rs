@@ -43,9 +43,9 @@
 //! bone. [`render_comparison`]'s panels are viewer drawings made from the pose
 //! grid, so an evidence-only comparison replaces every one of them — both
 //! trajectory panels, both gait panels, and the shared root chart — with the
-//! omission notice, and retains findings, gaps, predictions, and identities
-//! alone. What neither form carries is the per-frame grid a viewer could
-//! re-export as animation.
+//! omission notice; findings, gaps, predictions, identities, clip metadata,
+//! and contexts stay as the full comparison embeds them. What neither form
+//! carries is the per-frame grid a viewer could re-export as animation.
 //!
 //! [licensed-asset policy]: https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md#golden-tests
 //!

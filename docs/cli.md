@@ -175,8 +175,9 @@ retain exactly the root's X/Z path and the two foot-height series relative to
 the hips plus their difference — nothing per bone. Every comparison panel is a
 viewer drawing made from the pose grid — both role-trajectory panels, both gait
 panels, and the shared root chart — so an evidence-only comparison replaces all
-of them with the same notice and retains only its findings, coverage gaps,
-prediction provenance, and identities. Rendering those panels on the Rust side
+of them with the same notice. Everything else the full comparison embeds stays:
+findings, coverage gaps, prediction provenance, identities, clip metadata, and
+the contexts each side was judged in. Rendering those panels on the Rust side
 is tracked as follow-up work and would restore them.
 
 Both report forms follow the reader's `prefers-color-scheme` and read a URL
