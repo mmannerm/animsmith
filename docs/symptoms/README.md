@@ -32,7 +32,8 @@ authorities.
 | [Feet slide within a clip](feet-slide.md) | `foot-slide` | re-author in the DCC | `[clips.<name>] speed_mps` | Artist; contact cleanup is DCC work |
 | [A limb is T-posed, or a bone never moves](limb-frozen.md) | `missing-bones`, `required-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig] required_bones` | Artist repairs the source rig |
 | [Files disagree about skeleton or clip identity](identity-mismatch.md) | no per-file check; `inspect` plus a collection manifest retain identity | none — retain the exact `(file, clip)` binding | collection manifest sources, clips, and runtime sets | Pack owner and the ingesting pipeline |
-| [The file is bloated, or the retargeter chokes](file-bloat.md) | `constant-track`, `scale-keys`, `non-uniform-scale`, `rest-world-scale`, opt-in `constant-nonunit-scale` | `transform --prune-constant-tracks` after reviewing transition coverage | `[checks.<id>] severity`, `[runtime_nodes] selectors`, `[clips.<name>] animates_bones` | Artist or exporter settings |
+| [Attachment, socket, or helper imports at the wrong size](file-bloat.md#attachment-nodes-and-inherited-rest-world-scale) | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[runtime_nodes] selectors`, `[checks.rest-world-scale] expected_uniform_scale` | Artist or exporter settings |
+| [The file is bloated, or the retargeter chokes](file-bloat.md) | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | `transform --prune-constant-tracks` after reviewing transition coverage | `[checks.<id>] severity`, `[clips.<name>] animates_bones` | Artist or exporter settings |
 
 Where the repair column says *re-export*, that is deliberate: AnimSmith
 rewrites a clip only in ways whose within-clip correctness its own checks can

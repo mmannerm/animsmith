@@ -6,7 +6,7 @@
 
 use animsmith_testkit::docs_markdown::fenced_blocks;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
@@ -644,6 +644,122 @@ fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
                 prose.contains(required),
                 "{symptom} must keep {required:?}: {prose}"
             );
+        }
+    }
+}
+
+/// Every registered check id, so a backticked word that is not a check —
+/// a command, a config table — cannot be mistaken for one.
+fn registered_check_ids() -> BTreeSet<String> {
+    animsmith_core::all_checks()
+        .iter()
+        .map(|check| check.id().to_owned())
+        .collect()
+}
+
+/// The `Symptom` → registered-check-ids map of a page's symptom table:
+/// the first table whose leading header cell is exactly `Symptom`, read as
+/// the symptom's own text against the code spans of its `Check(s)` cell.
+fn symptom_check_ids(markdown: &str) -> BTreeMap<String, BTreeSet<String>> {
+    let catalog = registered_check_ids();
+    let mut rows = BTreeMap::new();
+    let mut in_head = false;
+    let mut is_symptom_table = false;
+    let mut header = None::<String>;
+    let mut cell = 0usize;
+    let mut symptom = String::new();
+    let mut checks = BTreeSet::new();
+
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Table(_)) => {
+                is_symptom_table = false;
+                header = None;
+                cell = 0;
+            }
+            Event::Start(Tag::TableHead) => {
+                in_head = true;
+                cell = 0;
+            }
+            Event::End(TagEnd::TableHead) => {
+                in_head = false;
+                is_symptom_table = header.as_deref() == Some("Symptom");
+            }
+            Event::Start(Tag::TableRow) => cell = 0,
+            Event::Start(Tag::TableCell) => {
+                cell += 1;
+                if in_head && cell == 1 {
+                    header = Some(String::new());
+                }
+                if is_symptom_table && !in_head && cell == 1 {
+                    symptom.clear();
+                    checks.clear();
+                }
+            }
+            Event::Text(text) if in_head && cell == 1 => {
+                header
+                    .as_mut()
+                    .expect("header cell is open")
+                    .push_str(&text);
+            }
+            Event::Text(text) | Event::Code(text) if is_symptom_table && !in_head && cell == 1 => {
+                symptom.push_str(&text);
+            }
+            Event::Code(code) if is_symptom_table && !in_head && cell == 2 => {
+                if catalog.contains(code.as_ref()) {
+                    checks.insert(code.into_string());
+                }
+            }
+            Event::End(TagEnd::TableRow) if is_symptom_table && !in_head => {
+                rows.insert(symptom.trim().to_owned(), std::mem::take(&mut checks));
+            }
+            Event::End(TagEnd::Table) if is_symptom_table => break,
+            _ => {}
+        }
+    }
+    rows
+}
+
+/// The symptom index and the game-ready guide each carry a symptom table,
+/// and a reader who lands on either must be told the same thing. For every
+/// symptom both name, the registered check ids in the `Check(s)` column
+/// must be the same set — so neither table can quietly hand a check to a
+/// symptom the other gives it to, the way the attachment-size check and
+/// the export-bloat row could otherwise drift apart. The guide splits
+/// families further than the index does; those narrower rows name symptoms
+/// the index does not, and are not compared.
+#[test]
+fn both_symptom_tables_agree_about_which_checks_a_symptom_owns() {
+    let index = symptom_check_ids(&markdown("docs/symptoms/README.md"));
+    let guide = symptom_check_ids(&markdown("docs/game-ready-clips.md"));
+    assert!(
+        !index.is_empty() && !guide.is_empty(),
+        "both tables are read"
+    );
+
+    let shared: Vec<&String> = index
+        .keys()
+        .filter(|name| guide.contains_key(*name))
+        .collect();
+    assert!(
+        shared.len() >= 9,
+        "the two tables must keep one symptom vocabulary, shared: {shared:?}"
+    );
+    for symptom in shared {
+        assert_eq!(
+            index[symptom], guide[symptom],
+            "the symptom index and the game-ready guide disagree about {symptom:?}"
+        );
+    }
+
+    // A check the catalog registers belongs to exactly one symptom in the
+    // index, so the routing table cannot list it twice under two owners.
+    let mut owner = BTreeMap::new();
+    for (symptom, checks) in &index {
+        for check in checks {
+            if let Some(first) = owner.insert(check.clone(), symptom.clone()) {
+                panic!("{check} is claimed by both {first:?} and {symptom:?}");
+            }
         }
     }
 }
