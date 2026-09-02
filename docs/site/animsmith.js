@@ -33,16 +33,17 @@
     return null;
   }
 
-  // A report document under docs/visuals/. Staging rewrites every frame
-  // source to a site-absolute path (`/animsmith/docs/visuals/…`), which is
-  // the only spelling a published page carries; the relative spelling the
-  // repository Markdown is written in is accepted too, so the rule holds
-  // wherever the page is read. The path is tested before the fragment, so a
-  // deep-linked frame is recognised as well.
+  // A report document under docs/visuals/, in every spelling a frame source
+  // is written in: the relative one the repository Markdown carries
+  // (`../visuals/x.report.html`), the site-absolute one staging writes for
+  // the released root (`/animsmith/docs/visuals/…`), and the one it writes
+  // for the development subtree (`/animsmith/dev/docs/visuals/…`). All three
+  // have `visuals/` as a whole path segment, so one segment test covers them
+  // — a directory merely ending in `visuals` does not match — and the path is
+  // tested before the fragment, so a deep-linked frame is recognised too.
   function isReport(source) {
     var path = String(source).split("#")[0];
-    if (!/\.html$/.test(path)) return false;
-    return path.indexOf("/docs/visuals/") !== -1 || /(^|\/)visuals\//.test(path);
+    return /\.html$/.test(path) && /(^|\/)visuals\//.test(path);
   }
 
   // `path#a=1&b=2` with `theme` replaced by `value` and every other pair kept

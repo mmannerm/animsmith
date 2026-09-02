@@ -58,6 +58,18 @@ pub fn fenced_blocks(markdown: &str, language: &str) -> Vec<String> {
 /// a description cell is not a row for that page, and text that merely
 /// looks like a link never produces a link event.
 pub fn document_index_targets(markdown: &str) -> BTreeSet<String> {
+    index_targets(markdown, "Document", 1)
+}
+
+/// The same reading for an index whose rows are keyed by something other
+/// than a document link: `header` is the leading header cell that
+/// identifies the table, and `column` is the 1-based cell whose links are
+/// the rows' targets.
+///
+/// `docs/symptoms/README.md` is one table of symptoms whose last column
+/// links the page that walks each one, so its rows are found by the
+/// `Symptom` header and read from that column.
+pub fn index_targets(markdown: &str, header: &str, column: usize) -> BTreeSet<String> {
     let mut targets = BTreeSet::new();
     let mut in_head = false;
     let mut head_first_cell: Option<String> = None;
@@ -74,7 +86,7 @@ pub fn document_index_targets(markdown: &str) -> BTreeSet<String> {
             Event::Start(Tag::TableHead) => in_head = true,
             Event::End(TagEnd::TableHead) => {
                 in_head = false;
-                is_index_table = head_first_cell.as_deref() == Some("Document");
+                is_index_table = head_first_cell.as_deref() == Some(header);
             }
             Event::Start(Tag::TableCell) if in_head && head_first_cell.is_none() => {
                 collecting_first_cell = true;
@@ -91,7 +103,7 @@ pub fn document_index_targets(markdown: &str) -> BTreeSet<String> {
                 body_cell_index += 1;
             }
             Event::Start(Tag::Link { dest_url, .. })
-                if is_index_table && !in_head && body_cell_index == 1 =>
+                if is_index_table && !in_head && body_cell_index == column =>
             {
                 targets.insert(dest_url.split('#').next().unwrap_or_default().to_owned());
             }

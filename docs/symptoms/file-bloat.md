@@ -140,18 +140,10 @@ same parent-scale failure mode described by Unity's
 [Transform documentation](https://docs.unity3d.com/6000.1/Documentation/Manual/class-Transform.html#non-uniform-scaling),
 although the exact runtime consequences remain engine-specific.
 
-Declare only source nodes your runtime contract cares about. The shared policy
-also supplies future engine-unit-scale evaluation; `rest-world-scale` consumes
-the same resolved set:
-
-```toml
-[runtime_nodes]
-selectors = ["weapon_socket", "ik_*_target"]
-
-[checks.rest-world-scale]
-expected_uniform_scale = 1.0
-uniform_scale_tolerance = 0.0001
-```
+Declare only source nodes your runtime contract cares about — the
+[config above](#config) is that declaration. The shared policy also supplies
+future engine-unit-scale evaluation; `rest-world-scale` consumes the same
+resolved set.
 
 Each exact name or `*` glob must resolve to one named source node. A miss or
 multiple matches is reported as a coverage gap, not guessed. A finding carries
@@ -216,12 +208,8 @@ Examples:
   tangents move the curve between keys. Inspect the curve, not only the key
   diamonds.
 
-To opt into a unit-scale policy:
-
-```toml
-[checks.constant-nonunit-scale]
-severity = "note" # or "warn" / "error" for your project
-```
+Opting into a unit-scale policy is the `constant-nonunit-scale` severity in
+the [config above](#config).
 
 ### Fix the source, then verify the exported result
 

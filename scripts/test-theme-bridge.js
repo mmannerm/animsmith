@@ -14,10 +14,12 @@ const fs = require("fs"), path = require("path"), vm = require("vm");
 const BRIDGE = path.join(__dirname, "..", "docs", "site", "animsmith.js");
 const source = fs.readFileSync(BRIDGE, "utf8");
 
-// The four frame shapes a published page can carry: the relative spelling the
+// Every frame shape a published page can carry: the relative spelling the
 // repository Markdown is written in, the site-absolute spelling staging
-// rewrites it to (already carrying a stale theme, mid-fragment), a report with
-// no fragment at all, and mdBook's own table-of-contents frame.
+// rewrites it to for the released root (already carrying a stale theme,
+// mid-fragment), a report with no fragment at all, the spelling staging
+// writes for the `/dev/` subtree, mdBook's own table-of-contents frame, and
+// a path that would fool a substring test for `visuals/`.
 const FRAMES = [
   { name: "relative report", src: "../visuals/x.report.html#embed=1&finding=0", report: true },
   {
@@ -26,7 +28,19 @@ const FRAMES = [
     report: true,
   },
   { name: "report with no fragment", src: "../visuals/y.report.html", report: true },
+  {
+    name: "site-absolute report in the development subtree",
+    src: "/animsmith/dev/docs/visuals/x.report.html#embed=1",
+    report: true,
+  },
   { name: "the book's own sidebar frame", src: "../../toc.html", report: false },
+  // `visuals/` must be a whole path segment: a substring test would take
+  // this one for a report and rewrite a page the site does not own.
+  {
+    name: "a directory merely ending in visuals",
+    src: "../../previsuals/x.report.html",
+    report: false,
+  },
 ];
 
 // What each of mdBook's five themes must pin, and the order a reader switches
@@ -53,7 +67,20 @@ function load(code) {
     constructor(callback) { this.callback = callback; }
     observe(target, options) { observed.push({ target, options, callback: this.callback }); }
   }
+  const reached = [];
+  const forbidden = (name) => () => {
+    reached.push(name);
+    throw new Error(`the theme bridge reached ${name}`);
+  };
   const context = {
+    fetch: forbidden("fetch"),
+    XMLHttpRequest: forbidden("XMLHttpRequest"),
+    WebSocket: forbidden("WebSocket"),
+    navigator: { sendBeacon: forbidden("navigator.sendBeacon") },
+    localStorage: {
+      getItem: forbidden("localStorage.getItem"),
+      setItem: forbidden("localStorage.setItem"),
+    },
     document: {
       documentElement: root,
       readyState: "complete",
@@ -65,7 +92,7 @@ function load(code) {
   };
   vm.createContext(context);
   vm.runInContext(code, context);
-  return { root, frames, observed };
+  return { root, frames, observed, reached };
 }
 
 // Drive the bridge the way a browser does: change the class mdBook writes on
@@ -119,6 +146,12 @@ function exercise(code) {
     }
   }
 
+  // The bridge writes one attribute and reads nothing else: no network
+  // global, and no per-viewer storage, is reachable from it.
+  if (page.reached.length !== 0) {
+    throw new Error(`the theme bridge used ${page.reached.join(", ")}`);
+  }
+
   // Re-delivering the same theme must write nothing: assigning an unchanged
   // src would re-navigate every embedded report on every observed mutation.
   const before = page.frames.map((frame) => frame.writes);
@@ -140,7 +173,9 @@ const MUTATIONS = [
   // A swapped mapping pins the opposite of what the page shows.
   ['var DARK = ["navy", "coal", "ayu"];', 'var DARK = ["light", "rust"];'],
   // A selector that matches everything rewrites the book's own frames.
-  ['if (!/\\.html$/.test(path)) return false;', 'return true;'],
+  ['return /\\.html$/.test(path) && /(^|\\/)visuals\\//.test(path);', 'return true;'],
+  // A substring test would match a directory merely ending in `visuals`.
+  ['/(^|\\/)visuals\\//.test(path)', 'path.indexOf("visuals/") !== -1'],
   // Watching every attribute makes the page rewrite its frames on any change.
   ['attributeFilter: ["class"],', ''],
 ];

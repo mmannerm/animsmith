@@ -616,6 +616,31 @@ mod tests {
         );
     }
 
+    /// The selector matches attributes independently, so a renderer that
+    /// writes them in the other order still yields the same figure.
+    #[test]
+    fn a_clip_selector_does_not_depend_on_the_attribute_order() {
+        let swapped = TWO_CLIP_FIXTURE
+            .replace(
+                "data-clip=\"run_left\" data-kind=\"gait\"",
+                "data-kind=\"gait\" data-clip=\"run_left\"",
+            )
+            .replace(
+                "data-clip=\"run_forward\" data-kind=\"gait\"",
+                "data-kind=\"gait\" data-clip=\"run_forward\"",
+            );
+        assert!(
+            swapped != TWO_CLIP_FIXTURE,
+            "the fixture must really be rewritten"
+        );
+        let chart = DocsChart {
+            clip: Some("run_left"),
+            ..gait(&["series-left"])
+        };
+        let svg = standalone_chart(&swapped, &chart).expect("extracts run_left either way");
+        assert!(svg.contains("viewBox=\"0 0 3 3\""), "{svg}");
+    }
+
     #[test]
     fn a_clip_selector_picks_one_figure_out_of_a_multi_clip_report() {
         let ambiguous = standalone_chart(TWO_CLIP_FIXTURE, &gait(&["series-left"])).unwrap_err();

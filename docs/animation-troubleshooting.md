@@ -6,8 +6,8 @@ that shows what AnimSmith measured, names the owner, and states the evidence
 that closes the gate. It deliberately links to the
 [configuration reference](configuration-reference.md) and
 [built-in check reference](built-in-checks.md) rather than restating their
-contracts, and the [game-ready guide](game-ready-clips.md#from-symptom-to-command)
-carries the complete check-to-symptom matrix.
+contracts, and the [symptom index](symptoms/README.md) carries the complete
+check-to-symptom table.
 
 For every route, capture the current `lint --format json` result and, when
 motion is contested, the offline `report` or before/after `diff`. A current,
@@ -36,6 +36,7 @@ evidence, not an engine or artistic acceptance result.
 | Missing or frozen bones, a T-posed limb, or a suspect bind | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
 | A skeleton or retarget mismatch, or a pack whose clips all share one name | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) |
 | Unexpected scale or rest/bind behavior, an attachment at the wrong size, or export bloat | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) |
+| Animations vanish in Bevy with no lint error | Answered here: no content finding exists, because the loader's `bevy_animation` feature or its `load_animations` setting dropped them — the [Bevy profile's revision-3 gate](engine-profile-bevy.md#revision-3-animationchannel-gate-support) predicts exactly that negative outcome. |
 
 ## Two symptoms that are not about a clip
 

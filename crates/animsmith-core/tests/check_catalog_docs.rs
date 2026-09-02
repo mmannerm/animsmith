@@ -34,7 +34,7 @@ const REQUIRED_DETAIL_FIELDS: &[&str] = &[
 
 #[test]
 fn docs_check_ids_match_the_registered_catalog() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         // Published crates intentionally exclude repository-level docs.
@@ -46,6 +46,7 @@ fn docs_check_ids_match_the_registered_catalog() {
         &game_ready_clips,
         &pipeline_scenarios,
         &built_in_checks,
+        &symptom_index,
     );
 }
 
@@ -54,6 +55,7 @@ fn assert_catalog_docs(
     game_ready_clips: &str,
     pipeline_scenarios: &str,
     built_in_checks: &str,
+    symptom_index: &str,
 ) {
     let catalog = registered_check_ids();
     let mechanical = registered_mechanical_check_ids();
@@ -70,8 +72,8 @@ fn assert_catalog_docs(
         &contract_aware,
     );
     assert_exact_ids(
-        "docs/game-ready-clips.md symptom table",
-        &guide_symptom_table_ids(game_ready_clips),
+        "docs/symptoms/README.md symptom table",
+        &symptom_index_check_ids(symptom_index),
         &catalog,
     );
     assert_exact_ids(
@@ -132,13 +134,14 @@ fn read_workspace_doc(workspace_root: &Path, relative_path: &str) -> String {
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
 }
 
-fn read_source_catalog_docs() -> Option<(String, String, String, String)> {
+fn read_source_catalog_docs() -> Option<(String, String, String, String, String)> {
     let workspace_root = source_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))?;
     Some((
         read_workspace_doc(&workspace_root, "README.md"),
         read_workspace_doc(&workspace_root, "docs/game-ready-clips.md"),
         read_workspace_doc(&workspace_root, "docs/pipeline-scenarios.md"),
         read_workspace_doc(&workspace_root, "docs/built-in-checks.md"),
+        read_workspace_doc(&workspace_root, "docs/symptoms/README.md"),
     ))
 }
 
@@ -1014,12 +1017,20 @@ fn check_table_ids_after<'a>(markdown: &'a str, marker: &str) -> BTreeSet<&'a st
         .collect()
 }
 
-fn guide_symptom_table_ids(guide: &str) -> BTreeSet<&str> {
-    markdown_table_after(guide, "From symptom to command")
+/// The check ids the symptom index's one table names, read from its
+/// `Check(s)` column. The index is the routing table a reader lands on, so
+/// it is the surface that must name every registered check exactly once;
+/// the guide's own table routes symptoms to pages and names no check.
+fn symptom_index_check_ids(index: &str) -> BTreeSet<&str> {
+    // The marker is the header row itself, so only the delimiter below it
+    // is skipped — the first body row is a symptom, not a heading.
+    markdown_table_after(index, "| Symptom | Check(s) |")
         .into_iter()
-        .skip(2)
+        .skip(1)
         .filter_map(|row| table_cell(row, 1))
         .flat_map(inline_code_tokens)
+        .filter(|token| looks_like_check_id(token))
+        .filter(|token| !NON_CHECK_ID_LIKE_TOKENS.contains(token))
         .collect()
 }
 
@@ -1108,7 +1119,7 @@ fn panic_message(failure: Box<dyn std::any::Any + Send>) -> String {
 
 #[test]
 fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catalog() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1131,6 +1142,7 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
             &game_ready_clips,
             &pipeline_scenarios,
             &built_in_checks,
+            &symptom_index,
         );
     });
     assert!(
@@ -1151,6 +1163,7 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
                 &game_ready_clips,
                 &stale_pipeline,
                 &built_in_checks,
+                &symptom_index,
             );
         })
         .expect_err("a stale partial-doc check id must fail the docs gate");
@@ -1163,7 +1176,7 @@ fn partial_doc_scan_covers_every_matrix_row_without_requiring_the_complete_catal
 
 #[test]
 fn both_readme_partition_directions_fail_the_complete_docs_gate() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1191,6 +1204,7 @@ fn both_readme_partition_directions_fail_the_complete_docs_gate() {
                 &game_ready_clips,
                 &pipeline_scenarios,
                 &built_in_checks,
+                &symptom_index,
             );
         })
         .expect_err("putting an id in the wrong README partition must fail");
@@ -1219,6 +1233,7 @@ fn both_readme_partition_directions_fail_the_complete_docs_gate() {
             &game_ready_clips,
             &pipeline_scenarios,
             &built_in_checks,
+            &symptom_index,
         );
     })
     .expect_err("swapping ids across README partitions must fail");
@@ -1232,7 +1247,7 @@ fn both_readme_partition_directions_fail_the_complete_docs_gate() {
 
 #[test]
 fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1249,6 +1264,7 @@ fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
                 &misplaced_guide,
                 &pipeline_scenarios,
                 &built_in_checks,
+                &symptom_index,
             );
         })
         .expect_err("File-ready partition drift must fail");
@@ -1264,7 +1280,7 @@ fn file_ready_partition_mutation_fails_the_complete_docs_gate() {
 
 #[test]
 fn stale_or_missing_built_in_check_inventory_rows_fail_the_docs_gate() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1273,7 +1289,13 @@ fn stale_or_missing_built_in_check_inventory_rows_fail_the_docs_gate() {
     let stale = built_in_checks.replacen("`max_slide_mps`", "`max_slide_speed_mps`", 1);
     assert_ne!(stale, built_in_checks, "mutation must apply");
     let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &stale);
+        assert_catalog_docs(
+            &readme,
+            &game_ready_clips,
+            &pipeline_scenarios,
+            &stale,
+            &symptom_index,
+        );
     })
     .expect_err("stale inventory config keys must fail");
     let message = panic_message(failure);
@@ -1286,7 +1308,13 @@ fn stale_or_missing_built_in_check_inventory_rows_fail_the_docs_gate() {
         .join("\n");
     assert_ne!(missing, built_in_checks, "mutation must apply");
     let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &missing);
+        assert_catalog_docs(
+            &readme,
+            &game_ready_clips,
+            &pipeline_scenarios,
+            &missing,
+            &symptom_index,
+        );
     })
     .expect_err("missing inventory rows must fail");
     let message = panic_message(failure);
@@ -1299,7 +1327,7 @@ fn stale_or_missing_built_in_check_inventory_rows_fail_the_docs_gate() {
 
 #[test]
 fn numeric_default_drift_in_a_detail_section_fails_the_docs_gate() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1315,7 +1343,13 @@ fn numeric_default_drift_in_a_detail_section_fails_the_docs_gate() {
     );
 
     let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
+        assert_catalog_docs(
+            &readme,
+            &game_ready_clips,
+            &pipeline_scenarios,
+            &mutated,
+            &symptom_index,
+        );
     })
     .expect_err("a documented numeric default drift must fail the docs gate");
     let message = panic_message(failure);
@@ -1324,7 +1358,7 @@ fn numeric_default_drift_in_a_detail_section_fails_the_docs_gate() {
 
 #[test]
 fn unit_drift_in_one_detail_field_fails_even_when_a_later_unit_matches() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1348,7 +1382,13 @@ fn unit_drift_in_one_detail_field_fails_even_when_a_later_unit_matches() {
         );
 
         let failure = std::panic::catch_unwind(|| {
-            assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
+            assert_catalog_docs(
+                &readme,
+                &game_ready_clips,
+                &pipeline_scenarios,
+                &mutated,
+                &symptom_index,
+            );
         })
         .expect_err("a unit removed from one default association must fail the docs gate");
         let message = panic_message(failure);
@@ -1358,7 +1398,7 @@ fn unit_drift_in_one_detail_field_fails_even_when_a_later_unit_matches() {
 
 #[test]
 fn missing_numeric_default_cannot_borrow_a_later_decoy_association() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1391,7 +1431,13 @@ fn missing_numeric_default_cannot_borrow_a_later_decoy_association() {
     );
 
     let failure = std::panic::catch_unwind(|| {
-        assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &mutated);
+        assert_catalog_docs(
+            &readme,
+            &game_ready_clips,
+            &pipeline_scenarios,
+            &mutated,
+            &symptom_index,
+        );
     })
     .expect_err("a default must not borrow a later decoy association");
     let message = panic_message(failure);
@@ -1400,7 +1446,7 @@ fn missing_numeric_default_cannot_borrow_a_later_decoy_association() {
 
 #[test]
 fn missing_detailed_check_section_fails_even_when_inventory_is_intact() {
-    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks)) =
+    let Some((readme, game_ready_clips, pipeline_scenarios, built_in_checks, symptom_index)) =
         read_source_catalog_docs()
     else {
         return;
@@ -1425,7 +1471,13 @@ fn missing_detailed_check_section_fails_even_when_inventory_is_intact() {
         );
 
         let failure = std::panic::catch_unwind(|| {
-            assert_catalog_docs(&readme, &game_ready_clips, &pipeline_scenarios, &missing);
+            assert_catalog_docs(
+                &readme,
+                &game_ready_clips,
+                &pipeline_scenarios,
+                &missing,
+                &symptom_index,
+            );
         })
         .expect_err("a missing detailed section must fail the docs gate");
         let message = panic_message(failure);

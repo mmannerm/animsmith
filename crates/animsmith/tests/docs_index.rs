@@ -13,7 +13,9 @@
 //!
 //! A nested directory that publishes customer pages carries the same
 //! rule one level down: `docs/symptoms/` owns a sub-index, held to the
-//! same completeness by the same helper.
+//! same completeness by the same helper. Its one table is keyed by the
+//! symptom a reader sees and links the page in its last column, so it is
+//! read by that header and that column rather than by a `Document` one.
 //!
 //! Forward constraint for a generated docs site (GitHub Pages/mdBook):
 //! its navigation (e.g. SUMMARY.md) must be derived from this index
@@ -22,7 +24,7 @@
 //! (../examples/README.md, ../CONTRIBUTING.md); a site build must decide
 //! link-vs-include for those rather than assume the set is docs/*.md.
 
-use animsmith_testkit::docs_markdown::document_index_targets;
+use animsmith_testkit::docs_markdown::index_targets;
 use std::path::PathBuf;
 
 fn repo_path(rel: &str) -> PathBuf {
@@ -32,15 +34,22 @@ fn repo_path(rel: &str) -> PathBuf {
 }
 
 /// Hold one index to its directory: every `.md` page beside it, except
-/// the index itself, must have a Document-column row. Returns how many
-/// pages were checked, so a caller can prove the directory is not empty.
-fn every_page_beside_the_index_has_a_row(index_path: &str, directory: &str) -> usize {
+/// the index itself, must have a row whose linking column names it.
+/// `header` identifies the index table and `column` is the 1-based cell
+/// that links the page. Returns how many pages were checked, so a caller
+/// can prove the directory is not empty.
+fn every_page_beside_the_index_has_a_row(
+    index_path: &str,
+    directory: &str,
+    header: &str,
+    column: usize,
+) -> usize {
     let index = std::fs::read_to_string(repo_path(index_path))
         .unwrap_or_else(|error| panic!("reads {index_path}: {error}"));
-    let targets = document_index_targets(&index);
+    let targets = index_targets(&index, header, column);
     assert!(
         !targets.is_empty(),
-        "{index_path} must carry the Document index table"
+        "{index_path} must carry the {header} index table"
     );
 
     let mut pages = 0usize;
@@ -71,7 +80,7 @@ fn every_page_beside_the_index_has_a_row(index_path: &str, directory: &str) -> u
 
 #[test]
 fn every_top_level_docs_page_has_an_index_table_row() {
-    let pages = every_page_beside_the_index_has_a_row("docs/README.md", "docs");
+    let pages = every_page_beside_the_index_has_a_row("docs/README.md", "docs", "Document", 1);
     assert!(pages > 0, "docs/ must publish documentation pages");
 }
 
@@ -81,6 +90,11 @@ fn every_top_level_docs_page_has_an_index_table_row() {
 /// navigation the build derives from it.
 #[test]
 fn every_symptom_page_has_a_sub_index_row() {
-    let pages = every_page_beside_the_index_has_a_row("docs/symptoms/README.md", "docs/symptoms");
+    let pages = every_page_beside_the_index_has_a_row(
+        "docs/symptoms/README.md",
+        "docs/symptoms",
+        "Symptom",
+        6,
+    );
     assert!(pages > 0, "docs/symptoms/ must publish symptom pages");
 }

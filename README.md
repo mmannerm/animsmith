@@ -70,7 +70,9 @@ Published API documentation lives on docs.rs:
 [animsmith-gltf](https://docs.rs/animsmith-gltf),
 [animsmith-fbx](https://docs.rs/animsmith-fbx),
 [animsmith-engine](https://docs.rs/animsmith-engine), and
-[animsmith-report](https://docs.rs/animsmith-report). Use the binary for a
+[animsmith-report](https://docs.rs/animsmith-report); the bin-only
+[`animsmith` package page](https://docs.rs/animsmith) carries the CLI's
+release, source, and feature metadata. Use the binary for a
 local tool, CI gate, or artist-facing report; use the library crates when you
 already have a Rust pipeline and want the same checks inside your own gate —
 the [embedding guide](https://mmannerm.github.io/animsmith/docs/embedding.html)
@@ -93,9 +95,8 @@ prediction work, and `2` for operator errors. `--deny-warnings` promotes
 warnings to a failing run; severity and `--allow` never suppress an emitted
 required-unavailable facet.
 
-Ten more commands follow the same shape: measure, inspect, diff, fix,
-transform, report, convert, assemble, scale, collection, and generate. Every
-flag, format, and exit code is in the
+The remaining subcommands follow the same shape and are listed with every
+flag, format, and exit code in the
 [CLI reference](https://mmannerm.github.io/animsmith/docs/cli.html), and
 runnable end-to-end recipes are in the
 [examples cookbook](https://mmannerm.github.io/animsmith/examples/).
@@ -118,7 +119,7 @@ Mechanical checks need no project config and run on every file:
 | `quat-norm` | error | rotation keys must be unit |
 | `quat-flip` | warning | adjacent keys on opposite hemispheres |
 | `duration-sanity` | error/warning | degenerate duration or mismatched channels |
-| `scale-keys` | warning | scale animation present in clip |
+| `scale-keys` | warning | scale that changes over time |
 | `non-uniform-scale` | warning | axes differ somewhere on trajectory |
 | `constant-nonunit-scale` | off (opt-in) | constant scale away from one |
 | `constant-track` | note | multi-key track that never moves |

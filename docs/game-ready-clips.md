@@ -12,9 +12,11 @@ bake, a playtest.
 This document defines what "game-ready" means here. The
 [readiness ladder](#the-readiness-ladder) below stages the evidence
 from file-ready data to shipped acceptance and says who owns each
-level, and the [complete symptom table](#from-symptom-to-command) at
-the end maps every registered check to the runtime symptom it explains
-and to the page that walks it.
+level, and the [symptom table](#from-symptom-to-command) at the end
+routes every runtime symptom — and the narrower presentations of one —
+to the page that walks it. The checks, repairs and config surfaces
+themselves live in the [symptom index](symptoms/README.md), which
+carries every registered check id in one table.
 
 Each symptom has its own page under [symptoms](symptoms/README.md):
 what you see in the engine, what AnimSmith measured, the finding, the
@@ -255,30 +257,32 @@ and the pruning boundary — one click down.
 
 ## From symptom to command
 
-| Symptom | Check(s) | Repair / transform | Config surface | Page |
-|---|---|---|---|---|
-| The pose flickers, spins, or explodes | `nan`, `quat-norm`, `quat-flip`, `time-monotonic` | `fix` (quat repairs, lossless) | — | [The pose flickers, spins, or explodes](symptoms/pose-flickers.md) |
-| The clip is the wrong length or freezes at the end | `duration-sanity`, `fps` | `transform --slice`, `--hold-extend` | `[clips.<name>] duration_s`, `fps` | [The clip is the wrong length or freezes at the end](symptoms/wrong-length.md) |
-| The loop pops or pulses at the wrap | `duplicate-loop-endpoint`, `loop-closure`, `loop-seam-vel`, `loop-seam-rot`, `loop-seam` | drop a strict duplicated endpoint with `transform --drop-duplicate-loop-endpoint`; otherwise re-author endpoint pose/tangents; `transform --gait-anchor` only for locomotion phase | `[clips.<name>] loop = true`, `[checks.loop-closure]`, `[checks.loop-seam-vel]`, `[checks.loop-seam-rot]` | [The loop pops](symptoms/loop-pops.md) |
-| The character glides or runs in place | `in-place`, `root-motion-speed` | re-export; `measure` for ground truth | `[clips.<name>] movement_owner_xz`, `speed_mps` (`in_place` remains a legacy XZ alias) | [The character glides or runs in place](symptoms/character-glides.md) |
-| Feet skate when clips blend | `gait-group`, `sync-group`, `time-complement` | `transform --gait-anchor` for explicitly in-place cycles; runtime phase offsets for root motion | `[gait_groups.<name>]` | [Feet skate when clips blend](symptoms/blend-skate.md) |
-| Directional travel speed or foot slide changes by direction | per-member AnimSmith measurement and `root-motion-speed`; no cross-member check yet ([#411](https://github.com/mmannerm/animsmith/issues/411)) | preserve per-direction velocities, tune runtime/playback, or re-time in DCC | per-clip `speed_mps`; declared-set policy is future work | [Directional blend speeds](symptoms/blend-skate.md#directional-blend-members-travel-at-different-speeds) |
-| Same-time blend members drift or pop | `sync-group` | re-slice or re-time at source | `[sync_groups.<name>]` | [Feet skate when clips blend](symptoms/blend-skate.md) |
-| Same-time pair looks mirrored or swaps footfall timing | `time-complement` | `collection transform-foot-cycle` for a declared supported in-place ring; otherwise align contacts in DCC, add markers, or phase-remap in the runtime | `[sync_groups.<name>.time_complement]`; strict collection manifest and foot-cycle parameterization for the transform | [A blend pair is time-complementary](symptoms/blend-skate.md#a-blend-pair-is-time-complementary) |
-| Feet slide within a clip | `foot-slide` | re-author in DCC | `[clips.<name>] speed_mps` | [Feet slide within a clip](symptoms/feet-slide.md) |
-| Missing runtime socket or IK target | `required-bones` | repair source rig / re-export | `[rig] required_bones` | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
-| Attachment, socket, or helper imports at the wrong size | `rest-world-scale` | apply or rebake the unintended source hierarchy scale, then re-export | `[runtime_nodes] selectors`; `[checks.rest-world-scale] expected_uniform_scale`, `uniform_scale_tolerance` | [Attachment nodes and inherited rest-world scale](symptoms/file-bloat.md#attachment-nodes-and-inherited-rest-world-scale) |
-| A limb is T-posed, or a bone never moves | `missing-bones`, `required-bones`, `frozen-bone`, `bind-pose` | re-export | `[clips.<name>] animates_bones`, `[rig]` | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
-| Files disagree about skeleton or clip identity | per-file structural inspection and measurement; collection identity and member binding are documented, while retargeting remains separate | configure and test the retarget path; retain exact `(file, clip)` manifest identities | `[rig]`; collection identity is in Appendix F, while cross-file checks remain future work | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) |
-| The file is bloated, or the retargeter chokes | `constant-track`, `scale-keys`, `non-uniform-scale`, opt-in `constant-nonunit-scale` | inspect `constant-track`, then use `transform --prune-constant-tracks` only after reviewing transition coverage; otherwise clean/re-export in DCC | `[checks.<id>]` severity; `[clips.<name>] animates_bones` protects declared motion tracks | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) |
+| Symptom | Page |
+|---|---|
+| The pose flickers, spins, or explodes | [The pose flickers, spins, or explodes](symptoms/pose-flickers.md) |
+| The clip is the wrong length or freezes at the end | [The clip is the wrong length or freezes at the end](symptoms/wrong-length.md) |
+| The loop pops or pulses at the wrap | [The loop pops](symptoms/loop-pops.md) |
+| The character glides or runs in place | [The character glides or runs in place](symptoms/character-glides.md) |
+| Feet skate when clips blend | [Feet skate when clips blend](symptoms/blend-skate.md) |
+| Directional travel speed or foot slide changes by direction | [Directional blend speeds](symptoms/blend-skate.md#directional-blend-members-travel-at-different-speeds) |
+| Same-time blend members drift or pop | [Feet skate when clips blend](symptoms/blend-skate.md) |
+| Same-time pair looks mirrored or swaps footfall timing | [A blend pair is time-complementary](symptoms/blend-skate.md#a-blend-pair-is-time-complementary) |
+| Feet slide within a clip | [Feet slide within a clip](symptoms/feet-slide.md) |
+| Missing runtime socket or IK target | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
+| Attachment, socket, or helper imports at the wrong size | [Attachment nodes and inherited rest-world scale](symptoms/file-bloat.md#attachment-nodes-and-inherited-rest-world-scale) |
+| A limb is T-posed, or a bone never moves | [A limb is T-posed, or a bone never moves](symptoms/limb-frozen.md) |
+| Files disagree about skeleton or clip identity | [Files disagree about skeleton or clip identity](symptoms/identity-mismatch.md) |
+| The file is bloated, or the retargeter chokes | [The file is bloated, or the retargeter chokes](symptoms/file-bloat.md) |
 
-Where the repair column says *re-export*, that is deliberate: animsmith
-rewrites a clip only in ways whose within-clip correctness its own checks can
-verify. Runtime integration caveats, including sparse transition coverage,
-still apply. Lossless quaternion repairs and mechanical edits (slice,
-hold-extend, in-place gait-anchor, duplicate-loop-endpoint removal, constant-track pruning, FBX→glTF conversion) qualify; artistic
-transformation — retargeting, motion editing — is DCC work and stays
-out of scope.
+Each page names the checks, the repair and the config surface for its
+symptom; the [symptom index](symptoms/README.md) carries all of them in one
+table. Where a repair is *re-export*, that is deliberate: animsmith rewrites a
+clip only in ways whose within-clip correctness its own checks can verify.
+Runtime integration caveats, including sparse transition coverage, still
+apply. Lossless quaternion repairs and mechanical edits (slice, hold-extend,
+in-place gait-anchor, duplicate-loop-endpoint removal, constant-track pruning,
+FBX→glTF conversion) qualify; artistic transformation — retargeting, motion
+editing — is DCC work and stays out of scope.
 
 The gait and root-motion checks (`loop-seam`, `in-place`,
 `root-motion-speed`, `gait-group`, `time-complement`, `foot-slide`) additionally need a

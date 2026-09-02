@@ -89,11 +89,14 @@ fn headings(markdown: &str) -> Vec<String> {
     headings
 }
 
-/// One rendered table cell: its text and the destinations it links to.
+/// One rendered table cell: its text, the destinations it links to, and
+/// its code spans, which are how a cell names a check id rather than
+/// merely mentioning a word.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Cell {
     text: String,
     links: Vec<String>,
+    codes: Vec<String>,
 }
 
 fn linked_tables(markdown: &str) -> Vec<Vec<Vec<Cell>>> {
@@ -112,7 +115,13 @@ fn linked_tables(markdown: &str) -> Vec<Vec<Vec<Cell>>> {
                     cell.links.push(dest_url.into_string());
                 }
             }
-            Event::Text(text) | Event::Code(text) => {
+            Event::Code(code) => {
+                if let Some(cell) = cell.as_mut() {
+                    cell.text.push_str(&code);
+                    cell.codes.push(code.into_string());
+                }
+            }
+            Event::Text(text) => {
                 if let Some(cell) = cell.as_mut() {
                     cell.text.push_str(&text);
                 }
@@ -380,7 +389,8 @@ fn workflows_are_obvious_navigation_entry_points_with_canonical_routes() {
     for target in [
         "configuration-reference.md",
         "built-in-checks.md",
-        "game-ready-clips.md#from-symptom-to-command",
+        // The complete check-to-symptom table lives in the symptom index.
+        "symptoms/README.md",
     ] {
         assert!(
             troubleshooting
@@ -697,63 +707,122 @@ fn documented_command_fences_and_bevy_config_execute_exactly_as_rendered() {
     );
 }
 
+/// Every symptom page, read from the directory rather than from a list a
+/// gate keeps, so a tenth page is gated the moment it is committed.
+/// `start_docs.rs` reads the same directory for the same reason.
+fn symptom_pages() -> BTreeSet<String> {
+    let pages: BTreeSet<String> = std::fs::read_dir(repo("docs/symptoms"))
+        .expect("lists the symptom pages")
+        .filter_map(|entry| {
+            let name = entry.expect("directory entry").file_name();
+            let name = name.into_string().expect("utf-8 page name");
+            (name.ends_with(".md") && name != "README.md").then_some(name)
+        })
+        .collect();
+    assert!(
+        !pages.is_empty(),
+        "docs/symptoms/ must publish symptom pages"
+    );
+    pages
+}
+
+/// The rendered text of the one paragraph that opens with `Who fixes it:`.
+///
+/// Reading everything after that phrase would let a later paragraph
+/// contradict the ownership this one states and still satisfy the gate.
+fn ownership_paragraph(page: &str) -> String {
+    let markdown = markdown(page);
+    let mut found: Option<String> = None;
+    let mut current: Option<String> = None;
+    for event in Parser::new_ext(&markdown, options()) {
+        match event {
+            Event::Start(Tag::Paragraph) => current = Some(String::new()),
+            Event::Text(text) | Event::Code(text) => {
+                if let Some(paragraph) = current.as_mut() {
+                    paragraph.push_str(&text);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some(paragraph) = current.as_mut() {
+                    paragraph.push(' ');
+                }
+            }
+            Event::End(TagEnd::Paragraph) => {
+                if let Some(paragraph) = current.take()
+                    && paragraph.trim_start().starts_with("Who fixes it:")
+                {
+                    assert!(
+                        found.is_none(),
+                        "{page} must carry exactly one `Who fixes it` paragraph"
+                    );
+                    found = Some(paragraph);
+                }
+            }
+            _ => {}
+        }
+    }
+    let paragraph = found.unwrap_or_else(|| panic!("{page} must carry a `Who fixes it` paragraph"));
+    paragraph.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Ownership and closing evidence live on the symptom page that opens
 /// with the symptom, not in a separate matrix a reader has to correlate
-/// with it. Each page's "Who fixes it" paragraph must still name the
-/// owner it routes to and the evidence that closes its gate.
+/// with it. Each page's "Who fixes it" paragraph must name the owner it
+/// routes to and the evidence that closes its gate — inside that
+/// paragraph, so a later one cannot contradict it and still pass.
 #[test]
 fn every_symptom_page_names_its_owner_and_the_evidence_that_closes_its_gate() {
-    for (page, owner, closing_evidence) in [
+    let expected = [
         (
-            "docs/symptoms/pose-flickers.md",
+            "pose-flickers.md",
             "the DCC owns the data",
             "re-lints clean",
         ),
         (
-            "docs/symptoms/wrong-length.md",
+            "wrong-length.md",
             "the pipeline",
             "the engine plays the whole range",
         ),
+        ("loop-pops.md", "DCC work", "target engine's graph"),
         (
-            "docs/symptoms/loop-pops.md",
-            "DCC work",
-            "target engine's graph",
-        ),
-        (
-            "docs/symptoms/character-glides.md",
+            "character-glides.md",
             "gameplay decides ownership",
             "an engine trial proves exactly one",
         ),
         (
-            "docs/symptoms/blend-skate.md",
+            "blend-skate.md",
             "project work",
             "a playback capture covers the transitions",
         ),
+        ("feet-slide.md", "DCC and runtime work", "the actual blend"),
         (
-            "docs/symptoms/feet-slide.md",
-            "DCC and runtime work",
-            "the actual blend",
-        ),
-        (
-            "docs/symptoms/limb-frozen.md",
+            "limb-frozen.md",
             "the artist repairs the source rig",
             "required bones visibly move on the target character",
         ),
         (
-            "docs/symptoms/identity-mismatch.md",
+            "identity-mismatch.md",
             "the pack owner and the pipeline that ingests it",
             "recorded source-to-target mapping",
         ),
         (
-            "docs/symptoms/file-bloat.md",
+            "file-bloat.md",
             "the artist or the exporter settings",
             "the target engine's own scale, attachment and visual observation",
         ),
-    ] {
-        let prose = rendered_text(&markdown(page));
-        let (_, ownership) = prose
-            .split_once("Who fixes it:")
-            .unwrap_or_else(|| panic!("{page} must carry a `Who fixes it` paragraph"));
+    ];
+    assert_eq!(
+        expected
+            .iter()
+            .map(|(page, _, _)| (*page).to_owned())
+            .collect::<BTreeSet<String>>(),
+        symptom_pages(),
+        "every symptom page states its owner and closing evidence here"
+    );
+
+    for (page, owner, closing_evidence) in expected {
+        let page = format!("docs/symptoms/{page}");
+        let ownership = ownership_paragraph(&page);
         assert!(
             ownership.contains(owner),
             "{page} must route ownership to {owner:?}: {ownership}"
@@ -766,9 +835,10 @@ fn every_symptom_page_names_its_owner_and_the_evidence_that_closes_its_gate() {
     }
 }
 
-/// The troubleshooting page is a router: every symptom it lists reaches
-/// the page that owns it, and the two runtime problems with no symptom
-/// page keep their own inspection, owner and closing evidence here.
+/// The troubleshooting page is a router: every symptom page has a row
+/// that reaches it, and the runtime problems with no symptom page — the
+/// two that are not findings about a clip, and Bevy's silent loader drop
+/// — are answered on the page itself.
 #[test]
 fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
     let page = markdown("docs/animation-troubleshooting.md");
@@ -783,24 +853,20 @@ fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
         .into_iter()
         .map(|(_, destination)| destination)
         .collect();
-    for symptom in [
-        "symptoms/pose-flickers.md",
-        "symptoms/wrong-length.md",
-        "symptoms/loop-pops.md",
-        "symptoms/character-glides.md",
-        "symptoms/blend-skate.md",
-        "symptoms/feet-slide.md",
-        "symptoms/limb-frozen.md",
-        "symptoms/identity-mismatch.md",
-        "symptoms/file-bloat.md",
-    ] {
+    let pages = symptom_pages();
+    for symptom in &pages {
+        let route = format!("symptoms/{symptom}");
         assert!(
-            destinations.contains(symptom),
-            "troubleshooting must route to {symptom}: {destinations:?}"
+            destinations.contains(&route),
+            "troubleshooting must route to {route}: {destinations:?}"
         );
     }
     let rows: Vec<&Vec<String>> = table.iter().skip(1).collect();
-    assert_eq!(rows.len(), 9, "one routing row per symptom page: {table:?}");
+    assert_eq!(
+        rows.len(),
+        pages.len() + 1,
+        "one routing row per symptom page, plus the Bevy loader gate answered in place: {table:?}"
+    );
     for row in rows {
         assert!(
             row.len() == 2 && !row[0].is_empty() && !row[1].is_empty(),
@@ -822,6 +888,12 @@ fn troubleshooting_routes_every_symptom_to_its_page_or_answers_it_in_place() {
             "are engine code",
             "resolved runtime asset",
         ),
+        (
+            "Animations vanish in Bevy with no lint error",
+            "no content finding exists",
+            "load_animations",
+            "revision-3 gate",
+        ),
     ] {
         assert!(prose.contains(symptom), "{symptom} keeps its own answer");
         for required in [inspection, ownership, closure] {
@@ -842,111 +914,33 @@ fn registered_check_ids() -> BTreeSet<String> {
         .collect()
 }
 
-/// The `Symptom` → registered-check-ids map of a page's symptom table:
-/// the first table whose leading header cell is exactly `Symptom`, read as
-/// the symptom's own text against the code spans of its `Check(s)` cell.
-fn symptom_check_ids(markdown: &str) -> BTreeMap<String, BTreeSet<String>> {
-    let catalog = registered_check_ids();
-    let mut rows = BTreeMap::new();
-    let mut in_head = false;
-    let mut is_symptom_table = false;
-    let mut header = None::<String>;
-    let mut cell = 0usize;
-    let mut symptom = String::new();
-    let mut checks = BTreeSet::new();
-
-    for event in Parser::new_ext(markdown, options()) {
-        match event {
-            Event::Start(Tag::Table(_)) => {
-                is_symptom_table = false;
-                header = None;
-                cell = 0;
-            }
-            Event::Start(Tag::TableHead) => {
-                in_head = true;
-                cell = 0;
-            }
-            Event::End(TagEnd::TableHead) => {
-                in_head = false;
-                is_symptom_table = header.as_deref() == Some("Symptom");
-            }
-            Event::Start(Tag::TableRow) => cell = 0,
-            Event::Start(Tag::TableCell) => {
-                cell += 1;
-                if in_head && cell == 1 {
-                    header = Some(String::new());
-                }
-                if is_symptom_table && !in_head && cell == 1 {
-                    symptom.clear();
-                    checks.clear();
-                }
-            }
-            Event::Text(text) if in_head && cell == 1 => {
-                header
-                    .as_mut()
-                    .expect("header cell is open")
-                    .push_str(&text);
-            }
-            Event::Text(text) | Event::Code(text) if is_symptom_table && !in_head && cell == 1 => {
-                symptom.push_str(&text);
-            }
-            Event::Code(code) if is_symptom_table && !in_head && cell == 2 => {
-                if catalog.contains(code.as_ref()) {
-                    checks.insert(code.into_string());
-                }
-            }
-            Event::End(TagEnd::TableRow) if is_symptom_table && !in_head => {
-                rows.insert(symptom.trim().to_owned(), std::mem::take(&mut checks));
-            }
-            Event::End(TagEnd::Table) if is_symptom_table => break,
-            _ => {}
-        }
-    }
-    rows
-}
-
-/// The symptom index and the game-ready guide each carry a symptom table,
-/// and a reader who lands on either must be told the same thing. For every
-/// symptom both name, the registered check ids in the `Check(s)` column
-/// must be the same set — so neither table can quietly hand a check to a
-/// symptom the other gives it to, the way the attachment-size check and
-/// the export-bloat row could otherwise drift apart. The guide splits
-/// families further than the index does; those narrower rows name symptoms
-/// the index does not, and are not compared.
+/// The symptom index is one table, so a check belongs to exactly one
+/// symptom in it: two rows claiming the same check is the reader-visible
+/// contradiction the split tables used to hide. Completeness — that every
+/// registered check appears at all — is `check_catalog_docs.rs`.
 #[test]
-fn both_symptom_tables_agree_about_which_checks_a_symptom_owns() {
-    let index = symptom_check_ids(&markdown("docs/symptoms/README.md"));
-    let guide = symptom_check_ids(&markdown("docs/game-ready-clips.md"));
-    assert!(
-        !index.is_empty() && !guide.is_empty(),
-        "both tables are read"
-    );
-
-    let shared: Vec<&String> = index
-        .keys()
-        .filter(|name| guide.contains_key(*name))
-        .collect();
-    assert!(
-        shared.len() >= 9,
-        "the two tables must keep one symptom vocabulary, shared: {shared:?}"
-    );
-    for symptom in shared {
-        assert_eq!(
-            index[symptom], guide[symptom],
-            "the symptom index and the game-ready guide disagree about {symptom:?}"
-        );
-    }
-
-    // A check the catalog registers belongs to exactly one symptom in the
-    // index, so the routing table cannot list it twice under two owners.
-    let mut owner = BTreeMap::new();
-    for (symptom, checks) in &index {
-        for check in checks {
-            if let Some(first) = owner.insert(check.clone(), symptom.clone()) {
-                panic!("{check} is claimed by both {first:?} and {symptom:?}");
+fn no_check_is_claimed_by_two_symptoms_in_the_index() {
+    let catalog = registered_check_ids();
+    let table = table_headed_by(&markdown("docs/symptoms/README.md"), "Symptom");
+    let mut owner: BTreeMap<String, String> = BTreeMap::new();
+    let mut claimed = 0usize;
+    for row in table.iter().skip(1) {
+        let symptom = row[0].text.trim().to_owned();
+        for code in &row[1].codes {
+            if !catalog.contains(code) {
+                continue;
             }
+            if let Some(first) = owner.insert(code.clone(), symptom.clone()) {
+                panic!("{code} is claimed by both {first:?} and {symptom:?}");
+            }
+            claimed += 1;
         }
     }
+    assert_eq!(
+        claimed,
+        catalog.len(),
+        "every registered check is claimed exactly once: {owner:?}"
+    );
 }
 
 #[test]

@@ -1616,15 +1616,15 @@ fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
                 "{} embeds {source}, which the theme bridge would not recognise",
                 page.display()
             );
-            assert!(
-                selects_report(&format!(
-                    "/animsmith/docs/{}",
-                    path.trim_start_matches("../")
-                )),
-                "{} embeds {source}, which the bridge would lose once staging makes it \
-                 site-absolute",
-                page.display()
-            );
+            for root in ["/animsmith/docs/", "/animsmith/dev/docs/"] {
+                let staged = format!("{root}{}", path.trim_start_matches("../"));
+                assert!(
+                    selects_report(&staged),
+                    "{} embeds {source}, which the bridge would lose once staging writes \
+                     it as {staged}",
+                    page.display()
+                );
+            }
             embedded += 1;
         }
     }
