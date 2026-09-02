@@ -243,7 +243,7 @@ $ animsmith measure --format json walking.glb
 {
   "schema_version": 19,
   "schema": "urn:animsmith:schema:output:19",
-  "tool": { "name": "animsmith", "version": "0.11.0",
+  "tool": { "name": "animsmith", "version": "0.11.1",
             "source": { "revision": null, "dirty": null } },
   "command": "measure",
   "summary": { "files": 1 },
