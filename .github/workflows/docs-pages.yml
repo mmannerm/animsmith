@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Covers a release published by hand only: GitHub creates no workflow run
+  # for a release created with the repository GITHUB_TOKEN, so release-plz.yml
+  # dispatches this workflow after publishing instead (#652; see RELEASING.md,
+  # "GitHub Pages documentation").
   release:
     types: [published]
   workflow_dispatch:

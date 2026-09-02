@@ -92,7 +92,10 @@ shipping is riskier than changing.
    `-gltf`/`-fbx`/`-engine`/`-report` → `animsmith`).
    The follow-on `release_binaries` job calls `release-binaries.yml`,
    builds CLI archives from the tag, and uploads the archives plus
-   matching `.sha256` files to that GitHub Release.
+   matching `.sha256` files to that GitHub Release. The `release_pages` job
+   dispatches `docs-pages.yml` on `main` in the same run, moving the Pages
+   root to the tag just published; see
+   [GitHub Pages documentation](#github-pages-documentation).
 
 Supported CLI archive targets live in `release-targets.json`.
 `scripts/release-targets.py` renders the generated workflow matrix block in
@@ -130,7 +133,20 @@ Before closing the milestone:
 4. Check docs.rs separately. A crate appearing in the docs.rs queue means it
    was accepted, not rendered; report it as queued until the versioned pages or
    build record resolve successfully.
-5. Re-query the live bug list and release milestone. Close the milestone only
+5. Confirm the Pages deployment followed the release. The `release_pages` job
+   dispatches `docs-pages.yml`, so the composing run appears in Actions as
+   **Pages documentation** triggered by `workflow_dispatch`. Check the
+   published routing record rather than the run alone:
+
+   ```console
+   curl -fsSL https://mmannerm.github.io/animsmith/BUILD-INFO.txt
+   ```
+
+   It must report `Release root: vX.Y.Z` for the tag just published and
+   `Development subtree: main`. If it still names the previous tag, run the
+   manual recovery dispatch from
+   [GitHub Pages documentation](#github-pages-documentation) and re-check.
+6. Re-query the live bug list and release milestone. Close the milestone only
    when it has zero open issues, then update the roadmap ledger with the shipped
    date and bounded scope.
 
@@ -192,22 +208,66 @@ to unreleased work without relabeling it as released documentation.
 The workflow source is the default branch; pull requests only retain a rendered
 preview artifact and never deploy. The release root is selected from GitHub's
 latest published release, rather than from an assumed version prefix. Its
-mdBook executable is installed from that selected tag's `.mdbook-version`;
-the `/dev/` subtree separately uses the default branch pin. If no published
-release exists, do not enable Pages deployment: publish the first release
-first, then run the default-branch workflow.
+mdBook executable and its `scripts/build-docs-site.py` both come from that
+selected tag, so a new site shape on the default branch never rewrites — or
+breaks — an already released documentation tree; the `/dev/` subtree separately
+uses the default branch's own pin and build script. If no published release
+exists, do not enable Pages deployment: publish the first release first, then
+dispatch the workflow as shown below.
 
-`docs/README.md` is the canonical task index. Its category column generates
-the mdBook navigation during clean staging; do not add a hand-maintained
-`SUMMARY.md`, generated HTML, or symlink-based publication tree. `docs.rs`
-remains the Rust API reference and must remain prominent in the Pages index and
-README. Use `just docs-check` before changing the Pages source; it verifies the
-pinned mdBook build, parser-validates the staged Markdown tree, and rejects
-rendered local links without targets in the built artifact. Animation-pack
-reports are nested from the canonical table in `docs/reports/README.md`, and
-built `README.md` chapters receive compatibility routes for mdBook's
-`README.html` rewrites. Generated source-reference routes are pinned to the
-selected release tag at the release root and to `main` below `/dev/`.
+A successful release publication dispatches that workflow itself: the
+`release_pages` job in `.github/workflows/release-plz.yml` runs
+`gh workflow run docs-pages.yml --ref main --repo "${GITHUB_REPOSITORY}"` with
+the repository `GITHUB_TOKEN` as soon as release-plz reports a published
+release. That job checks nothing out, so `gh` cannot infer the repository and
+the flag is explicit; the recovery command below is the same dispatch run from
+a clone, where `--repo` is unnecessary. The dispatch is required, not
+decorative. GitHub creates no workflow run for an event produced with the
+repository `GITHUB_TOKEN`, so the workflow's own `release: published` trigger
+stays silent for an automated release — it still covers a release published by
+hand — while `workflow_dispatch` is one of the two documented exceptions to
+that recursion guard. The push that merges the release PR also runs the
+workflow, but it runs before the release exists and would leave the root on the
+previous tag; the shared `pages-<ref>` concurrency group cancels that earlier
+run when the post-publication dispatch starts.
+
+Recover a missing or stale deployment with the same dispatch from a clone of
+the repository — after a failed `release_pages` job, or a release published by
+hand:
+
+```console
+gh workflow run docs-pages.yml --ref main
+```
+
+`scripts/check-pages-release-trigger.py`, run by
+`scripts/check-github-community-files.sh`, fails the build if that dispatch,
+its `actions: write` permission, or the `workflow_dispatch` trigger it targets
+disappears, or if deployment stops being gated on an eligible published
+release.
+
+`docs/README.md` is the canonical task index and the site's only routing
+authority. Its Category column — `Part` or `Part › Group` — generates the
+mdBook parts, group chapters, and their order during clean staging; do not add
+a hand-maintained `SUMMARY.md`, generated HTML, or symlink-based publication
+tree. `docs.rs` remains the Rust API reference and must remain prominent in the
+Pages index and README. Animation-pack reports are nested from the canonical
+table in `docs/reports/README.md`, and built `README.md` chapters receive
+compatibility routes for mdBook's `README.html` rewrites. Generated
+source-reference routes are pinned to the selected release tag at the release
+root and to `main` below `/dev/`.
+
+The site's presentation is tracked rather than configured at deploy time.
+`docs/site/` holds the theme override mdBook applies — stylesheet, fonts, and
+favicons — staged outside the published source so nothing in it becomes a page,
+and the current build script refuses a checkout that does not track its
+stylesheet. Because each release root is built by its own tag's script, release
+tags predating `docs/site/` still publish with mdBook's default theme and their
+own navigation; do not patch a tag to add either. Retiring or renaming a
+published route requires its `docs/site/redirects.toml` entry in the same
+change, so an existing external link keeps resolving, and a redirect whose
+target is missing fails the build instead of shipping a dead route. Run
+`just docs-check` before changing any Pages source; DEVELOPMENT.md,
+"GitHub Pages preview", owns the local commands and what they verify.
 
 If a future release needs version-pinned README links, update the
 READMEs, this section, and `scripts/check-package-inventory.sh` in the

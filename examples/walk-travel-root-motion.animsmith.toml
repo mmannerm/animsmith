@@ -1,0 +1,26 @@
+# The root-motion reading of the same committed clip
+# `examples/assets/walk-travel.glb`: animation owns horizontal travel and
+# the character controller is pinned to 1.0 m/s. The clip actually carries
+# 1.2 m of travel over its one-second cycle, so the pin is stale and
+# playback scaled by it will slide.
+#
+#   animsmith lint --config examples/walk-travel-root-motion.animsmith.toml \
+#       examples/assets/walk-travel.glb
+
+[rig]
+profile = "auto"
+
+[clips.walk_travel]
+movement_owner_xz = "animation"
+speed_mps = { value = 1.0, tolerance = 0.1 }
+
+# `loop` stays undeclared for the reason given in
+# walk-travel-in-place.animsmith.toml.
+
+[checks.foot-slide]
+# This fixture's feet are the clean walk's: they swing under a travelling
+# pelvis instead of being authored planted, so every stance frame sweeps at
+# the root's full speed. That is how the fixture is built, not a symptom of
+# the stale speed pin, and the within-clip skate family already has its own
+# fixture (report-comparison-before.glb).
+severity = "off"

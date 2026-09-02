@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Build the released Pages root and current-development `/dev/` subtree."""
+"""Build the released Pages root and current-development `/dev/` subtree.
+
+Each snapshot is built by its own checkout's tooling: the release root uses the
+build script and mdBook pinned at the release tag, so publishing a new site
+shape never has to rewrite an already released documentation tree.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+RELATIVE_BUILDER = Path("scripts/build-docs-site.py")
 
 
 def build(
@@ -89,7 +97,8 @@ def preflight_paths(
 
 
 def compose(
-    builder: Path,
+    release_builder: Path | None,
+    development_builder: Path,
     release_source: Path,
     main_source: Path,
     release_stage: Path,
@@ -116,7 +125,7 @@ def compose(
     if not release_tag:
         raise ValueError("release tag is required")
     build(
-        builder,
+        release_builder or release_source / RELATIVE_BUILDER,
         release_source,
         release_stage,
         "/animsmith/",
@@ -124,7 +133,7 @@ def compose(
         release_mdbook,
     )
     build(
-        builder,
+        development_builder,
         main_source,
         development_stage,
         "/animsmith/dev/",
@@ -137,13 +146,16 @@ def compose(
     copy_tree(development_stage / "book", output / "dev")
     (output / "BUILD-INFO.txt").write_text(
         f"Release root: {release_tag}\nDevelopment subtree: main\n",
-        encoding="utf-8",
+        encoding="utf-8", newline="\n",
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--builder", type=Path, default=Path(__file__).with_name("build-docs-site.py"))
+    parser.add_argument("--release-builder", type=Path)
+    parser.add_argument(
+        "--development-builder", type=Path, default=Path(__file__).with_name("build-docs-site.py")
+    )
     parser.add_argument("--release-source", type=Path, required=True)
     parser.add_argument("--main-source", type=Path, required=True)
     parser.add_argument("--release-stage", type=Path, required=True)
@@ -154,7 +166,8 @@ def main() -> None:
     parser.add_argument("--development-mdbook", type=Path, required=True)
     args = parser.parse_args()
     compose(
-        args.builder,
+        args.release_builder,
+        args.development_builder,
         args.release_source,
         args.main_source,
         args.release_stage,

@@ -64,6 +64,11 @@ fn example_assets_match_generator_output() {
         "clip-dirty.glb",
         "walk.glb",
         "walk-dirty.glb",
+        "walk-short-channel.glb",
+        "walk-travel.glb",
+        "run-ring.glb",
+        "walk-frozen-arm.glb",
+        "walk-scaled.glb",
         "report-comparison-before.glb",
         "report-comparison-after.glb",
     ] {

@@ -7,14 +7,17 @@
 //! The single two-bone rotation clip built by [`two_bone_rotation_doc`]
 //! is the common shape behind `crates/animsmith-gltf/tests/fix.rs`,
 //! `crates/animsmith/tests/cli_contract.rs`, and the committed example
-//! assets.
+//! assets. The analytic walk plays the same role for the semantic
+//! checks: `walk.glb` is the clean cycle, and each symptom fixture is
+//! that cycle plus exactly one authored defect.
 
 use animsmith_core::model::*;
 use glam::{Quat, Vec3};
 use std::path::Path;
 
-/// Keyframe times every rotation fixture shares (five keys over 1 s).
-const ROTATION_TIMES: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+/// The five-key, one-second grid the rotation fixtures and the symptom
+/// fixtures' held channels share.
+const FIVE_KEY_TIMES: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
 
 /// Unit Y-rotation keys for the given angles, in radians. Pass literal
 /// angles (not a computed ramp) so callers control the exact `f32`
@@ -74,7 +77,7 @@ pub fn two_bone_rotation_doc(clip: &str, quats: Vec<Quat>, with_translation: boo
         bone: 1,
         property: Property::Rotation,
         interpolation: Interpolation::Linear,
-        times: ROTATION_TIMES.to_vec(),
+        times: FIVE_KEY_TIMES.to_vec(),
         values: TrackValues::Quats(quats),
     }];
     if with_translation {
@@ -149,6 +152,171 @@ fn example_walk_doc() -> Document {
 /// first-frame pose and the loop seam pops.
 fn example_walk_dirty_doc() -> Document {
     walk_doc(&WALK_BONES, "walk", 0.75, WALK_STRIDE, libm::sin)
+}
+
+// --- Symptom fixtures ------------------------------------------------
+//
+// One committed fixture per runtime symptom family, each the clean walk
+// above plus exactly the authored defect its checks measure. Every clip
+// carries its own name, so one contract config can arm one fixture's
+// checks while declaring nothing about the others — and so each
+// fixture's findings can be pinned from both sides: the same file with
+// no config reports none of them, and the clean walk under the same
+// config reports none either.
+
+/// Key times of [`example_walk_short_channel_doc`]'s rotation channel.
+/// The last one lands a quarter cycle before the walk's translation
+/// channels stop, which is the end-time spread `duration-sanity` reports.
+const SHORT_CHANNEL_TIMES: [f32; 4] = [0.0, 0.25, 0.5, 0.75];
+
+/// The short channel's ankle angles, in radians. Literal, like every
+/// other committed-asset angle, so the emitted bytes are pinned here.
+const SHORT_CHANNEL_ANGLES: [f32; 4] = [0.0, 0.1, 0.2, 0.3];
+
+/// `examples/assets/walk-short-channel.glb`: the clean walk plus a
+/// left-foot rotation channel that ends at 0.75 s while both translation
+/// channels run to 1.0 s. `duration-sanity` reports the 0.25 s end-time
+/// spread — the limb an engine clamp-holds while the rest keeps moving.
+fn example_walk_short_channel_doc() -> Document {
+    let mut doc = walk_doc(
+        &WALK_BONES,
+        "walk_short_channel",
+        1.0,
+        WALK_STRIDE,
+        libm::sin,
+    );
+    doc.clips[0].tracks.push(Track {
+        bone: 1, // foot_l
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: SHORT_CHANNEL_TIMES.to_vec(),
+        values: TrackValues::Quats(quats_from_angles(&SHORT_CHANNEL_ANGLES)),
+    });
+    doc
+}
+
+/// Forward hip travel authored into [`example_walk_travel_doc`], in
+/// metres over the one-second cycle — so its measured root-motion speed
+/// is 1.2 m/s.
+const WALK_TRAVEL_M: f32 = 1.2;
+
+/// `examples/assets/walk-travel.glb`: the clean walk with the hips
+/// carried [`WALK_TRAVEL_M`] forward over the cycle — a root-motion
+/// clip. A contract that declares gameplay-owned horizontal travel fails
+/// it on `in-place`; one that declares animation-owned travel at a stale
+/// 1.0 m/s fails it on `root-motion-speed`.
+fn example_walk_travel_doc() -> Document {
+    let mut doc = walk_doc(&WALK_BONES, "walk_travel", 1.0, WALK_STRIDE, libm::sin);
+    let hips_rest = doc.skeleton.bones[0].rest.translation;
+    doc.clips[0].tracks.push(Track {
+        bone: 0, // pelvis
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Vec3s(vec![
+            hips_rest,
+            hips_rest + Vec3::new(0.0, 0.0, WALK_TRAVEL_M),
+        ]),
+    });
+    doc
+}
+
+/// `libm::sin` advanced a quarter cycle: the same analytic gait, entered
+/// a quarter of the way into its cycle, so its stride anchor lands at
+/// 0.50 rather than 0.75. Expressing the shift as the sine keeps the
+/// ring's members literally one builder with one argument changed.
+fn sin_advanced_a_quarter_cycle(theta: f64) -> f64 {
+    libm::sin(theta + std::f64::consts::FRAC_PI_2)
+}
+
+/// One directional-ring member: the clip's name and the sine that places
+/// its gait in the cycle.
+type RingMember = (&'static str, fn(f64) -> f64);
+
+/// The directional ring's members. Three share the walk's sine, so their
+/// stride anchors agree at phase 0.75; `run_left` is a quarter cycle out
+/// of phase with them, which is the spread `gait-group` measures.
+const RUN_RING_MEMBERS: [RingMember; 4] = [
+    ("run_forward", libm::sin),
+    ("run_backward", libm::sin),
+    ("run_left", sin_advanced_a_quarter_cycle),
+    ("run_right", libm::sin),
+];
+
+/// `examples/assets/run-ring.glb`: one rig carrying the four
+/// [`RUN_RING_MEMBERS`] as separate clips. A `[gait_groups]` declaration
+/// over all four fails on the phase spread `run_left` introduces; the
+/// same declaration over the other three passes.
+fn example_run_ring_doc() -> Document {
+    let (first, first_sin) = RUN_RING_MEMBERS[0];
+    let mut doc = walk_doc(&WALK_BONES, first, 1.0, WALK_STRIDE, first_sin);
+    for &(name, sin) in &RUN_RING_MEMBERS[1..] {
+        let mut member = walk_doc(&WALK_BONES, name, 1.0, WALK_STRIDE, sin);
+        doc.clips.append(&mut member.clips);
+    }
+    doc
+}
+
+/// `examples/assets/walk-frozen-arm.glb`: the walk rig extended with a
+/// left arm whose rotation channel is keyed but identical at every key.
+/// A contract declaring the clip animates `arm_l` and `arm_r` fails
+/// `frozen-bone` on the keyed-but-static arm and `missing-bones` on the
+/// arm the export never wrote.
+fn example_walk_frozen_arm_doc() -> Document {
+    let mut doc = walk_doc(&WALK_BONES, "walk_frozen_arm", 1.0, WALK_STRIDE, libm::sin);
+    doc.skeleton.bones.push(Bone {
+        name: "arm_l".into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::new(0.25, 0.3, 0.0),
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    });
+    let arm = doc.skeleton.bones.len() - 1;
+    doc.clips[0].tracks.push(Track {
+        bone: arm,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: FIVE_KEY_TIMES.to_vec(),
+        values: TrackValues::Quats(vec![Quat::IDENTITY; FIVE_KEY_TIMES.len()]),
+    });
+    doc
+}
+
+/// `examples/assets/walk-scaled.glb`: the walk with a pelvis scale track
+/// that stretches Y to 1.2 and back (`scale-keys` plus
+/// `non-uniform-scale`) and a keyed-but-never-moving socket translation
+/// channel (`constant-track`, and the one track
+/// `transform --prune-constant-tracks` removes).
+fn example_walk_scaled_doc() -> Document {
+    let mut doc = walk_doc(&WALK_BONES, "walk_scaled", 1.0, WALK_STRIDE, libm::sin);
+    doc.skeleton.bones.push(Bone {
+        name: "weapon_socket".into(),
+        parent: Some(0),
+        rest: Transform {
+            translation: Vec3::new(0.2, 0.1, 0.0),
+            ..Transform::IDENTITY
+        },
+        inverse_bind: None,
+    });
+    let socket = doc.skeleton.bones.len() - 1;
+    let socket_rest = doc.skeleton.bones[socket].rest.translation;
+    doc.clips[0].tracks.push(Track {
+        bone: 0, // pelvis
+        property: Property::Scale,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(vec![Vec3::ONE, Vec3::new(1.0, 1.2, 1.0), Vec3::ONE]),
+    });
+    doc.clips[0].tracks.push(Track {
+        bone: socket,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: FIVE_KEY_TIMES.to_vec(),
+        values: TrackValues::Vec3s(vec![socket_rest; FIVE_KEY_TIMES.len()]),
+    });
+    doc
 }
 
 // --- Synchronized report acceptance matrix -------------------------------
@@ -306,12 +474,17 @@ pub fn comparison_report_after_doc() -> Document {
 
 /// The committed example assets under `examples/assets/`, as
 /// `(filename, document)` pairs — the single filename↔document wiring.
-fn example_assets() -> [(&'static str, Document); 6] {
+fn example_assets() -> [(&'static str, Document); 11] {
     [
         ("clip.glb", example_clean_doc()),
         ("clip-dirty.glb", example_dirty_doc()),
         ("walk.glb", example_walk_doc()),
         ("walk-dirty.glb", example_walk_dirty_doc()),
+        ("walk-short-channel.glb", example_walk_short_channel_doc()),
+        ("walk-travel.glb", example_walk_travel_doc()),
+        ("run-ring.glb", example_run_ring_doc()),
+        ("walk-frozen-arm.glb", example_walk_frozen_arm_doc()),
+        ("walk-scaled.glb", example_walk_scaled_doc()),
         (
             "report-comparison-before.glb",
             comparison_report_before_doc(),
