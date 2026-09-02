@@ -828,10 +828,9 @@ fn the_symptom_index_routes_every_page_and_answers_what_is_not_a_clip() {
     let page = markdown("docs/symptoms/README.md");
     let table = table_headed_by(&page, "Symptom");
     assert_eq!(
-        table.first().map(|row| row
-            .iter()
-            .map(|cell| cell.text.clone())
-            .collect::<Vec<_>>()),
+        table
+            .first()
+            .map(|row| row.iter().map(|cell| cell.text.clone()).collect::<Vec<_>>()),
         Some(vec![
             "Symptom".to_owned(),
             "Check(s)".to_owned(),
