@@ -343,3 +343,27 @@ fn evidence_only_publishes_both_report_forms_without_their_sampled_motion() {
         );
     }
 }
+
+#[test]
+fn development_guide_names_the_evidence_only_flag_the_cli_offers() {
+    let guide = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../DEVELOPMENT.md"),
+    )
+    .expect("DEVELOPMENT.md");
+    assert!(
+        guide.contains("`animsmith report --evidence-only`"),
+        "DEVELOPMENT.md names the evidence-only report as the publishable form of a licensed clip"
+    );
+
+    let output = animsmith()
+        .args(["report", "--help"])
+        .output()
+        .expect("runs report --help");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("--evidence-only"), "{help}");
+}
