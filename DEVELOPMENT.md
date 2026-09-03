@@ -141,10 +141,11 @@ so the conventional paths hold default-feature artifacts only:
 | a published release archive | `fbx`, `report` | external evaluation, verified per [RELEASING.md](RELEASING.md) |
 
 `just release-cli` is what proves the first row rather than assuming it. It
-builds both release variants, requires the retained
-`target/release/animsmith` to admit the self-authored FBX fixture and expose
-`report` while the isolated minimal binary refuses both, and prints the
-provenance record to keep beside an evaluation's results:
+builds both release variants and probes each one: both must admit glTF, the
+retained `target/release/animsmith` must also admit the self-authored FBX
+fixture and expose `report`, and the isolated minimal binary must refuse those
+two. It then prints the provenance record to keep beside an evaluation's
+results:
 
 ```console
 $ just release-cli

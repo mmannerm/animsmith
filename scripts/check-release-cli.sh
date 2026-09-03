@@ -15,11 +15,12 @@
 #      justfile and in the reusable checks workflow redirects CARGO_TARGET_DIR
 #      to the isolated directory, so the conventional paths cannot be
 #      overwritten in the first place;
-#   2. capability probes that discriminate the two artifacts by behavior. The
-#      same probes run against both binaries: the retained one must pass every
-#      one, and the isolated minimal one must fail every one. Running them both
-#      ways is what proves the check can tell the variants apart rather than
-#      passing on anything that executes.
+#   2. capability probes that discriminate the two artifacts by behavior. Both
+#      binaries must admit glTF, which every build reads; only the retained one
+#      may admit FBX or expose `report`, and the isolated minimal one must
+#      refuse both. Running the same probes both ways is what proves the check
+#      can tell the variants apart rather than passing on anything that
+#      executes.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,8 +39,9 @@ JUSTFILE_ISOLATION='CARGO_TARGET_DIR="{{no_default_target}}"'
 WORKFLOW_ISOLATION="CARGO_TARGET_DIR=${NO_DEFAULT_TARGET}"
 WORKFLOW=".github/workflows/checks.yml"
 
-# A self-authored fixture, so the FBX admission probe needs no licensed asset.
+# Self-authored fixtures, so the admission probes need no licensed asset.
 FBX_FIXTURE="crates/animsmith-fbx/testdata/rigged_triangle.fbx"
+GLTF_FIXTURE="examples/assets/clip.glb"
 
 fail() {
   echo "release-cli: $*" >&2
@@ -149,22 +151,39 @@ retained="$(binary_in target/release)" \
 minimal="$(binary_in "$NO_DEFAULT_TARGET/release")" \
   || fail "$NO_DEFAULT_TARGET/release/animsmith is missing; run 'just release-cli'"
 
-test -f "$FBX_FIXTURE" || fail "$FBX_FIXTURE is missing; the FBX admission probe needs it"
+for fixture in "$FBX_FIXTURE" "$GLTF_FIXTURE"; do
+  test -f "$fixture" || fail "$fixture is missing; the admission probes need it"
+done
 
-# A default-feature capability, named for the diagnostics, plus the probe that
-# proves it by executing the binary rather than by reading its version line.
+# Each probe names a capability for the diagnostics and proves it by executing
+# the binary, never by reading its version line.
+probe_gltf_admission() {
+  local inspected
+  inspected="$("$1" inspect "$GLTF_FIXTURE" 2>/dev/null)" || return 1
+  grep -Fq 'skeleton: 3 bones' <<<"$inspected" && grep -Fq 'swing: 1.000s' <<<"$inspected"
+}
+
 probe_fbx_admission() {
   local inspected
   inspected="$("$1" inspect "$FBX_FIXTURE" 2>/dev/null)" || return 1
-  grep -Fq 'skeleton: 3 bones' <<<"$inspected"
+  grep -Fq 'skeleton: 3 bones' <<<"$inspected" && grep -Fq 'take: 1.000s' <<<"$inspected"
 }
 
 probe_report_command() {
   "$1" report --help >/dev/null 2>&1
 }
 
+# glTF is the format every build reads, so both artifacts must admit it. That
+# also keeps the negative branch honest: a minimal binary that failed every
+# probe because it is broken rather than because it lacks the features would
+# fail here.
+universal_probes=(
+  "glTF admission (inspect names the example clip's skeleton and its 'swing' clip):probe_gltf_admission"
+)
+
+# The capabilities only the default feature set provides.
 default_feature_probes=(
-  "FBX admission (inspect names the fixture's 3-bone skeleton):probe_fbx_admission"
+  "FBX admission (inspect names the fixture's skeleton and its 'take' clip):probe_fbx_admission"
   "report subcommand (report --help):probe_report_command"
 )
 
@@ -189,12 +208,19 @@ retained_version="$(require_version_line "$retained")"
 require_version_line "$minimal" >/dev/null
 
 proven=""
-for entry in "${default_feature_probes[@]}"; do
+for entry in "${universal_probes[@]}" "${default_feature_probes[@]}"; do
   capability="${entry%%:*}"
   probe="${entry##*:}"
   "$probe" "$retained" \
     || fail "$retained does not provide $capability, so it is not the default-feature build a released CLI ships"
   proven="${proven:+$proven; }$capability"
+done
+
+for entry in "${universal_probes[@]}"; do
+  capability="${entry%%:*}"
+  probe="${entry##*:}"
+  "$probe" "$minimal" \
+    || fail "$minimal does not provide $capability, which every build owes, so its refusals below would not mean 'this feature is absent'"
 done
 
 for entry in "${default_feature_probes[@]}"; do
@@ -217,7 +243,7 @@ sha256_of() {
   fi
 }
 
-printf 'ok: %s admits FBX and exposes report; %s refuses both\n' "$retained" "$minimal"
+printf 'ok: %s admits glTF and FBX and exposes report; %s admits glTF and refuses the rest\n' "$retained" "$minimal"
 cat <<RECORD
 release-cli: provenance of the retained default-feature CLI
   binary:       $retained
