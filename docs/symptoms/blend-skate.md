@@ -25,14 +25,14 @@ The synthetic ring below holds four clips built from one analytic gait, with
 measured from the left-minus-right foot height relative to the hips, so the
 shift is visible as the same curve starting at a different point.
 
-<img src="../visuals/run-ring.gait-group.svg" alt="The four run-ring members' left-minus-right foot height on one phase axis: three curves coincide with their stride anchors at 0.75, and run_left runs a quarter cycle ahead with its anchor at 0.50, outside the tolerance band" width="720">
+<img src="../visuals/run-ring.gait-group.svg" alt="The four run-ring members' left-minus-right foot height on one phase axis: three curves coincide with their stride anchors at 0.75, and run_left runs a quarter cycle earlier with its anchor at 0.50, outside the tolerance band" width="720">
 
 The report draws one figure per declared gait group. Every member is on the
 same normalized source-phase axis and none of them is shifted onto another:
 aligning them would draw one curve four times and hide the very thing the
 group is checked for. `run_forward`, `run_backward` and `run_right` share one
 gait, so their curves coincide and their stride-anchor marks land together at
-0.75; `run_left` runs a quarter cycle ahead and its mark sits at 0.50. The
+0.75; `run_left` runs a quarter cycle earlier and its mark sits at 0.50. The
 shaded band is the declared 0.15 cap either side of the circular mean of the
 measured anchors, and `run_left` is the anchor outside it. No member is
 nominated as the reference: the check judges the set's spread, so the figure
