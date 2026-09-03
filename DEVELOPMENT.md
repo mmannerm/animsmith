@@ -112,7 +112,10 @@ $ cargo build -p animsmith --release --no-default-features --target-dir target/n
 `--target-dir` is not optional bookkeeping. Without it these builds land on
 `target/debug/animsmith`, `target/release/animsmith`, and `target/doc`, and
 whichever feature set ran last is what stays there; see Evaluation Artifacts
-below. `just github-community` rejects a gate command that omits it.
+below. `just github-community` enforces the pairing: in `justfile`,
+`.github/workflows/checks.yml`, and `scripts/*.sh`, a non-comment line naming
+`--no-default-features` must name `--target-dir target/no-default-features` on
+that same line.
 
 In that build, glTF inspect, measure, lint, transform, fix, scale, diff,
 `generate addressability`, and `collection transform-foot-cycle` stay
@@ -154,9 +157,11 @@ release name while naming none.
 
 `just gates` runs it as its last line and the CI test job as that job's last
 step, so what it attests to is what the completed run retained. The isolation
-itself is held in place separately, by `just github-community`: it refuses any
-file the gate runs whose `--no-default-features` cargo commands would write to
-the shared target directory.
+itself is held in place separately, by `just github-community`: across
+`justfile`, `.github/workflows/checks.yml`, and `scripts/*.sh` it requires the
+two flags to appear together on one line, and it requires the probe to be the
+last step of the `gates` recipe and of the workflow's `test` job, so nothing
+runs afterwards that could replace the artifact it just attested to.
 
 ## Cross-platform determinism
 
