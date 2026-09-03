@@ -263,8 +263,10 @@ fn example_assets_keep_their_pinned_payload_identity_under_this_release_stamp() 
 /// its four-byte padding, the container's length fields and the offset the
 /// BIN chunk starts at all move: that is what a bump like 0.9.9 → 0.10.0
 /// does to a committed file. The BIN half of the identity is the SHA-256 of
-/// that whole chunk, so holding it equal across the two stamps is the
-/// chunks' byte-for-byte comparison.
+/// that whole chunk, so a restamp that disturbed any of those bytes would
+/// fail here; the chunk bytes themselves are compared directly, across
+/// stamps of three lengths, by `animsmith-testkit`'s
+/// `restamping_replaces_the_stamp_and_nothing_else_in_either_direction`.
 #[test]
 fn restamping_an_asset_with_another_release_version_keeps_its_identity() {
     let stamp = format!("{}-restamped", release_stamp());

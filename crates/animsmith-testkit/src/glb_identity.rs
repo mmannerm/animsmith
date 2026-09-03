@@ -293,6 +293,17 @@ mod tests {
         payload_identity(bytes).expect("the fixture is a readable GLB")
     }
 
+    /// The BIN chunk payload itself. The module's own tests can read it
+    /// through the private reader, so the byte-level comparisons below need
+    /// no public accessor for it.
+    fn bin(bytes: &[u8]) -> Vec<u8> {
+        chunks(bytes)
+            .expect("the fixture is a readable GLB")
+            .1
+            .expect("the fixture carries a buffer")
+            .to_vec()
+    }
+
     #[test]
     fn every_release_stamp_of_one_payload_shares_an_identity() {
         // Four stamps of four different lengths, the way 0.9.9 → 0.10.0
@@ -325,9 +336,15 @@ mod tests {
                 "the release stamp is the only JSON difference"
             );
             assert_eq!(
+                bin(file),
+                [1, 2, 3, 4],
+                "and the buffer comes back as the four authored bytes, compared as bytes \
+                 rather than through a digest"
+            );
+            assert_eq!(
                 stamped.bin_sha256,
                 sha256_hex(&[1, 2, 3, 4]),
-                "and the BIN half is the digest of the four authored bytes"
+                "which is what the BIN half digests"
             );
         }
     }
@@ -491,9 +508,9 @@ mod tests {
                 "the JSON chunk must differ only in the stamp"
             );
             assert_eq!(
-                identity(restamped).bin_sha256,
-                identity(&before).bin_sha256,
-                "and the buffer must survive the re-framing"
+                bin(restamped),
+                bin(&before),
+                "and the buffer must survive the re-framing byte for byte, at its new offset"
             );
         }
     }
