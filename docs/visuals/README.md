@@ -10,10 +10,11 @@ site publishes only the visuals themselves.
 
 ## Generated files
 
-`crates/animsmith/examples/gen_docs_visuals.rs` runs the `report` command
-on the committed fixtures in [`examples/assets/`](../../examples/assets/README.md)
-with the committed configs beside them, then cuts the standalone charts
-out of the rendered reports. Regenerate them with:
+`crates/animsmith/examples/gen_docs_visuals.rs` runs one ordered list of
+`animsmith` invocations over the committed fixtures in
+[`examples/assets/`](../../examples/assets/README.md) with the committed
+configs beside them, then cuts the standalone charts out of the rendered
+reports. Regenerate them with:
 
 ```console
 $ cargo run -p animsmith --example gen_docs_visuals
@@ -36,19 +37,30 @@ generator and that test both drive.
 | `walk-frozen-arm.report.html` | `walk-frozen-arm.glb` | [`walk-frozen-arm.animsmith.toml`](../../examples/walk-frozen-arm.animsmith.toml) |
 | `walk-scaled.report.html` | `walk-scaled.glb` | none — the mechanical checks need no contract |
 | `foot-slide-before.report.html` | `report-comparison-before.glb` | [`report-comparison.animsmith.toml`](../../examples/report-comparison.animsmith.toml) |
-| `foot-slide-after.report.html` | `report-comparison-after.glb` | [`report-comparison.animsmith.toml`](../../examples/report-comparison.animsmith.toml) |
 | `foot-slide.comparison.html` | both `report-comparison-*.glb`, clip `acceptance-matrix` | [`report-comparison.animsmith.toml`](../../examples/report-comparison.animsmith.toml) |
+| `clip-dirty.fix.comparison.html` | `clip-dirty.glb` against `animsmith fix clip-dirty.glb`'s own output, clip `swing` | none — the mechanical checks need no contract |
 | `walk-dirty.foot-height.svg` | foot-height figure of `walk-dirty.report.html` | |
 | `walk.foot-height.svg` | foot-height figure of `walk.report.html` | |
 | `walk.root-path.svg` | root-path figure of `walk.report.html` | |
 | `walk-travel.root-path.svg` | root-path figure of `walk-travel.report.html` | |
 | `run-ring.gait-group.svg` | gait-group figure of group `run-ring` in `run-ring.report.html` | |
-| `foot-slide-before.foot-height.svg` | foot-height figure of `foot-slide-before.report.html` | |
-| `foot-slide-after.foot-height.svg` | foot-height figure of `foot-slide-after.report.html` | |
 
 The reports are rendered from the fixture directory, so each one names
 its input by basename: no checkout path, no timestamp, and no absolute
 path is embedded, and two machines produce the same bytes.
+
+A report may also need an input no fixture holds — the output of the very
+command the page it illustrates is about. Each invocation in the manifest
+therefore names the file it writes, and one that names `{scratch}/…` writes
+an intermediate rather than a committed visual; run order is the whole
+dependency rule, so a later invocation reads what an earlier one wrote.
+`clip-dirty.fix.comparison.html` is the one report built that way today: its
+after side is what `animsmith fix clip-dirty.glb` writes, not a hand-authored
+clean clip that resembles it. A comparison document records each side by
+content identity, so the committed bytes carry that output's digest and no
+path — `a_prepared_report_does_not_depend_on_where_its_input_was_written` in
+`crates/animsmith/tests/docs_visuals.rs` renders it into two differently named
+scratch directories and compares the results.
 
 An extracted chart is the report's own `<svg>` element with four
 changes: the SVG namespace a standalone document needs, an id that keeps
@@ -78,6 +90,13 @@ error rather than a silent first match. A group figure carries every member
 on one shared phase axis, which is one picture where two per-clip charts side
 by side used to be — and the reason no committed chart is cut per clip any
 more.
+
+A visual earns its bytes only where a page shows it: every generated file
+here is embedded, linked or pictured on a page under `docs/`, or is the report
+a committed chart is cut from — `walk.report.html` is the second kind.
+`every_committed_visual_is_shown_on_a_page_or_is_a_charts_source` holds the
+directory to that, so a rendered document no reader can reach loses its
+manifest entry rather than sitting here.
 
 A chart earns a file only where a still picture carries the symptom on
 its own. `walk-travel.glb` is why the root-path figures are committed:

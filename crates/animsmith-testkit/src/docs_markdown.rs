@@ -49,6 +49,29 @@ pub fn fenced_blocks(markdown: &str, language: &str) -> Vec<String> {
     blocks
 }
 
+/// Every raw-HTML reference a page actually **renders**, in document
+/// order, read the way [`crate::docs_html::html_references`] reads a tag.
+///
+/// HTML inside a fenced or indented code block, or in a code span, is
+/// `Event::Text` rather than `Event::Html`, so a code-shaped decoy is
+/// invisible here exactly as it is to a reader: the browser never sees
+/// that tag. A gate that scanned the Markdown source instead would let a
+/// fenced example satisfy a promise about what a page shows.
+///
+/// `crates/animsmith/tests/docs_links.rs` keeps its own single pass
+/// because it interleaves Markdown link and image destinations with these
+/// in one document order; everything that needs only the raw-HTML half
+/// asks here.
+pub fn rendered_html_references(markdown: &str, wanted: &[(&str, &str)]) -> Vec<(String, String)> {
+    let mut references = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        if let Event::Html(html) | Event::InlineHtml(html) = event {
+            references.extend(crate::docs_html::html_references(&html, wanted));
+        }
+    }
+    references
+}
+
 /// Link destinations, `#fragment`s stripped, in the **Document column** —
 /// the first cell of each body row — of the first table whose leading
 /// header cell is exactly `Document`.
@@ -117,6 +140,32 @@ pub fn index_targets(markdown: &str, header: &str, column: usize) -> BTreeSet<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A page promises what it renders: a tag inside a fenced block, an
+    /// indented block or a code span is an example, and a reader's
+    /// browser never sees it.
+    #[test]
+    fn only_rendered_raw_html_counts_as_a_reference() {
+        const MEDIA: [(&str, &str); 2] = [("img", "src"), ("iframe", "src")];
+        let markdown = "<img src=\"chart.svg\">\n\n\
+             <iframe src=\"report.html#embed=1\"></iframe>\n\n\
+             ```html\n\
+             <img src=\"fenced.svg\">\n\
+             <iframe src=\"fenced.html\"></iframe>\n\
+             ```\n\n\
+             \x20   <img src=\"indented.svg\">\n\n\
+             An inline `<img src=\"span.svg\">` code span, then\n\
+             <img src=\"last.svg\"> at the end.\n";
+        assert_eq!(
+            rendered_html_references(markdown, &MEDIA),
+            [
+                ("img".to_owned(), "chart.svg".to_owned()),
+                ("iframe".to_owned(), "report.html#embed=1".to_owned()),
+                ("img".to_owned(), "last.svg".to_owned()),
+            ],
+            "every rendered source is seen and every code-shaped decoy is invisible"
+        );
+    }
 
     /// Only fenced blocks with the asked-for tag are promises: a
     /// differently tagged block is illustration, and an indented one is

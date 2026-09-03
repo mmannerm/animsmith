@@ -27,10 +27,11 @@ five identical values, and `arm_r` never reached the file at all. The report
 plays back the exact frames the checks judged, so the still arm is visible in
 the pose grid rather than inferred from the message.
 
-<iframe src="../visuals/walk-frozen-arm.report.html#embed=1&finding=0" title="AnimSmith report for walk-frozen-arm.glb, scrubbed to the judged frame" width="100%" height="520" loading="lazy"></iframe>
+<iframe src="../visuals/walk-frozen-arm.report.html#embed=1&finding=2" title="AnimSmith report for walk-frozen-arm.glb, scrubbed to the frozen-bone finding" width="100%" height="520" loading="lazy"></iframe>
 
 [Open the interactive report](../visuals/walk-frozen-arm.report.html) to scrub
-the cycle and watch the left arm stay where it started.
+the cycle and watch the left arm stay where it started; it opens on the
+`frozen-bone` finding that names it.
 
 ## What the finding looks like
 

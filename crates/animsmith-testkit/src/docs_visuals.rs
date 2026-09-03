@@ -9,12 +9,20 @@
 //! drift guard (`crates/animsmith/tests/docs_visuals.rs`) cannot
 //! disagree about what the committed bytes are. Neither side renders a
 //! report itself: both hand [`write_docs_visuals`] a closure that runs
-//! the `report` command, so the committed documents come from the same
-//! code path a reader's own `animsmith report` invocation takes.
+//! one `animsmith` invocation, so the committed documents come from the
+//! same code path a reader's own command takes.
+//!
+//! A report may also need an input no fixture holds — the output of the
+//! very command the page is about. The manifest is therefore one ordered
+//! list of invocations, each naming the file it writes: a committed
+//! visual, or a [`SCRATCH`] file a later invocation reads. The rendered
+//! comparison records each side by content identity rather than by path,
+//! so the committed bytes do not depend on where that scratch directory
+//! was.
 
 use std::path::Path;
 
-/// Directory every [`DocsReport::arguments`] list is relative to.
+/// Directory every [`DocsCommand::arguments`] list is relative to.
 ///
 /// The `report` command records the input path it was given, so the
 /// commands run from the fixture directory: the committed documents then
@@ -299,12 +307,25 @@ pub const GROUP_MEMBER_DASHES: [&str; GROUP_MEMBERS] = ["", "7 4", "2 3", "12 5"
 /// The SVG namespace a standalone chart needs and an embedded one does not.
 const SVG_NAMESPACE: &str = " xmlns=\"http://www.w3.org/2000/svg\"";
 
-/// One committed report document.
-pub struct DocsReport {
-    /// File name written under [`OUTPUT_DIR`].
+/// The prefix a manifest name gives a file in the scratch directory.
+///
+/// [`resolve`] replaces it with the directory [`write_docs_visuals`] was
+/// given, so `{scratch}/clip-fixed.glb` is an intermediate an earlier
+/// invocation wrote rather than a committed fixture or a committed
+/// visual.
+pub const SCRATCH: &str = "{scratch}/";
+
+/// Prefix for the throwaway directory a caller creates for [`SCRATCH`]
+/// files, so the generator and its drift guard name it the same way.
+pub const SCRATCH_PREFIX: &str = "animsmith-docs-visuals-scratch-";
+
+/// One `animsmith` invocation the committed visuals are made of.
+pub struct DocsCommand {
+    /// The file this invocation writes: a name under [`OUTPUT_DIR`], or
+    /// a [`SCRATCH`] name for an intermediate a later invocation reads.
     pub output: &'static str,
     /// `animsmith` arguments, resolved from [`WORKING_DIR`], without the
-    /// `-o` pair: [`write_docs_visuals`] appends the output path.
+    /// `-o` pair: [`write_docs_visuals`] appends the resolved output.
     pub arguments: &'static [&'static str],
 }
 
@@ -328,7 +349,7 @@ pub enum ChartSubject {
 pub struct DocsChart {
     /// File name written under [`OUTPUT_DIR`].
     pub output: &'static str,
-    /// [`DocsReport::output`] the figure is taken from.
+    /// [`DocsCommand::output`] the figure is taken from.
     pub report: &'static str,
     /// The figure's `data-kind` attribute.
     pub kind: &'static str,
@@ -361,12 +382,15 @@ const GAIT_GROUP_CLASSES: &[&str] = &[
     "phase-band",
 ];
 
-/// Every committed report, in write order.
+/// Every invocation, in run order.
+///
+/// Order is the whole dependency rule: an invocation may read a
+/// [`SCRATCH`] file only if an earlier one wrote it.
 ///
 /// `clip-dirty.glb` carries no rig roles, so its report has no charts;
 /// it is committed whole for the mechanical-defect symptom page.
-pub const REPORTS: &[DocsReport] = &[
-    DocsReport {
+pub const COMMANDS: &[DocsCommand] = &[
+    DocsCommand {
         output: "walk-dirty.report.html",
         arguments: &[
             "--config",
@@ -375,19 +399,19 @@ pub const REPORTS: &[DocsReport] = &[
             "walk-dirty.glb",
         ],
     },
-    DocsReport {
+    DocsCommand {
         output: "walk.report.html",
         arguments: &["--config", "../walk.animsmith.toml", "report", "walk.glb"],
     },
-    DocsReport {
+    DocsCommand {
         output: "clip-dirty.report.html",
         arguments: &["report", "clip-dirty.glb"],
     },
-    DocsReport {
+    DocsCommand {
         output: "walk-short-channel.report.html",
         arguments: &["report", "walk-short-channel.glb"],
     },
-    DocsReport {
+    DocsCommand {
         output: "walk-travel.report.html",
         arguments: &[
             "--config",
@@ -396,7 +420,7 @@ pub const REPORTS: &[DocsReport] = &[
             "walk-travel.glb",
         ],
     },
-    DocsReport {
+    DocsCommand {
         output: "run-ring.report.html",
         arguments: &[
             "--config",
@@ -405,7 +429,7 @@ pub const REPORTS: &[DocsReport] = &[
             "run-ring.glb",
         ],
     },
-    DocsReport {
+    DocsCommand {
         output: "walk-frozen-arm.report.html",
         arguments: &[
             "--config",
@@ -414,11 +438,11 @@ pub const REPORTS: &[DocsReport] = &[
             "walk-frozen-arm.glb",
         ],
     },
-    DocsReport {
+    DocsCommand {
         output: "walk-scaled.report.html",
         arguments: &["report", "walk-scaled.glb"],
     },
-    DocsReport {
+    DocsCommand {
         output: "foot-slide-before.report.html",
         arguments: &[
             "--config",
@@ -427,16 +451,7 @@ pub const REPORTS: &[DocsReport] = &[
             "report-comparison-before.glb",
         ],
     },
-    DocsReport {
-        output: "foot-slide-after.report.html",
-        arguments: &[
-            "--config",
-            "../report-comparison.animsmith.toml",
-            "report",
-            "report-comparison-after.glb",
-        ],
-    },
-    DocsReport {
+    DocsCommand {
         output: "foot-slide.comparison.html",
         arguments: &[
             "--config",
@@ -449,6 +464,27 @@ pub const REPORTS: &[DocsReport] = &[
             "acceptance-matrix",
             "--after-clip",
             "acceptance-matrix",
+        ],
+    },
+    // The after side of the comparison below is not a committed fixture:
+    // it is what `animsmith fix` writes for the clip beside it, so the
+    // page shows the repair it tells a reader to run rather than a
+    // hand-authored clean clip that resembles one.
+    DocsCommand {
+        output: "{scratch}/clip-fixed.glb",
+        arguments: &["fix", "clip-dirty.glb"],
+    },
+    DocsCommand {
+        output: "clip-dirty.fix.comparison.html",
+        arguments: &[
+            "report",
+            "clip-dirty.glb",
+            "--compare-after",
+            "{scratch}/clip-fixed.glb",
+            "--before-clip",
+            "swing",
+            "--after-clip",
+            "swing",
         ],
     },
 ];
@@ -494,44 +530,80 @@ pub const CHARTS: &[DocsChart] = &[
         subject: ChartSubject::Group("run-ring"),
         classes: GAIT_GROUP_CLASSES,
     },
-    DocsChart {
-        output: "foot-slide-before.foot-height.svg",
-        report: "foot-slide-before.report.html",
-        kind: "gait",
-        subject: ChartSubject::Only,
-        classes: GAIT_CLASSES,
-    },
-    DocsChart {
-        output: "foot-slide-after.foot-height.svg",
-        report: "foot-slide-after.report.html",
-        kind: "gait",
-        subject: ChartSubject::Only,
-        classes: GAIT_CLASSES,
-    },
 ];
+
+/// One argument list with every [`SCRATCH`] placeholder replaced by
+/// `scratch_dir`.
+///
+/// The manifest names a prepared file the way a reader would read it —
+/// `{scratch}/clip-fixed.glb` — and the directory it actually lands in
+/// belongs to the caller. Every invocation resolves through this one
+/// function, so the file an earlier one writes and the file a later one
+/// reads cannot end up being two different paths.
+pub fn resolve(arguments: &[&str], scratch_dir: &Path) -> Result<Vec<String>, String> {
+    let scratch = scratch_dir
+        .to_str()
+        .ok_or_else(|| format!("scratch directory is not UTF-8: {}", scratch_dir.display()))?;
+    Ok(arguments
+        .iter()
+        .map(|argument| match argument.strip_prefix(SCRATCH) {
+            Some(name) => format!("{scratch}/{name}"),
+            None => (*argument).to_owned(),
+        })
+        .collect())
+}
+
+/// Run one manifest invocation, writing its output under `out_dir` — or
+/// under `scratch_dir` for a [`SCRATCH`] name.
+///
+/// `render` runs one `animsmith` invocation with the given arguments — the
+/// list [`resolve`] produced, so a caller never re-borrows it; the caller
+/// decides which binary that is and runs it in [`WORKING_DIR`]. The
+/// generator and the drift guard both reach an invocation through here,
+/// so neither can assemble a command line the other does not.
+pub fn run_docs_command(
+    command: &DocsCommand,
+    out_dir: &Path,
+    scratch_dir: &Path,
+    render: &mut impl FnMut(&[String]) -> Result<(), String>,
+) -> Result<(), String> {
+    let output = output_path(command.output, out_dir, scratch_dir);
+    let output = output
+        .to_str()
+        .ok_or_else(|| format!("output path is not UTF-8: {}", output.display()))?
+        .to_owned();
+    let mut arguments = resolve(command.arguments, scratch_dir)?;
+    arguments.extend(["-o".to_owned(), output]);
+    render(&arguments)
+}
+
+/// Where one manifest name is written.
+pub fn output_path(output: &str, out_dir: &Path, scratch_dir: &Path) -> std::path::PathBuf {
+    match output.strip_prefix(SCRATCH) {
+        Some(name) => scratch_dir.join(name),
+        None => out_dir.join(output),
+    }
+}
 
 /// Write every committed visual into `out_dir`.
 ///
-/// `render` runs one `report` invocation with the given arguments; the
-/// caller decides which `animsmith` binary that is and runs it in
-/// [`WORKING_DIR`]. Charts are then cut out of the documents this call
-/// just wrote, so the two halves cannot describe different runs.
+/// The invocations run in manifest order, so one that reads a [`SCRATCH`]
+/// file finds what an earlier one wrote there. `scratch_dir` belongs to
+/// the caller, and no committed byte records it. Charts are then cut out
+/// of the documents this call just wrote, so the two halves cannot
+/// describe different runs.
 pub fn write_docs_visuals(
     out_dir: &Path,
-    mut render: impl FnMut(&[&str]) -> Result<(), String>,
+    scratch_dir: &Path,
+    mut render: impl FnMut(&[String]) -> Result<(), String>,
 ) -> Result<(), String> {
     std::fs::create_dir_all(out_dir)
         .map_err(|error| format!("creates {}: {error}", out_dir.display()))?;
+    std::fs::create_dir_all(scratch_dir)
+        .map_err(|error| format!("creates {}: {error}", scratch_dir.display()))?;
 
-    for report in REPORTS {
-        let output = out_dir.join(report.output);
-        let output = output
-            .to_str()
-            .ok_or_else(|| format!("report output path is not UTF-8: {}", output.display()))?
-            .to_owned();
-        let mut arguments = report.arguments.to_vec();
-        arguments.extend(["-o", output.as_str()]);
-        render(&arguments)?;
+    for command in COMMANDS {
+        run_docs_command(command, out_dir, scratch_dir, &mut render)?;
     }
 
     for chart in CHARTS {
@@ -868,11 +940,89 @@ mod tests {
         assert!(svg.contains("viewBox=\"0 0 5 5\""), "{svg}");
     }
 
+    /// The placeholder is a prefix of an argument, not a word the
+    /// substitution may find anywhere: a fixture basename passes through
+    /// untouched, and so does an argument that merely *contains* the
+    /// placeholder text, which a `replace` over the whole string would
+    /// have rewritten into a path.
+    #[test]
+    fn resolving_rewrites_the_scratch_prefix_and_nothing_else() {
+        let resolved = resolve(
+            &[
+                "report",
+                "clip-dirty.glb",
+                "--before-clip",
+                "swing{scratch}/decoy",
+                "--compare-after",
+                "{scratch}/clip-fixed.glb",
+            ],
+            Path::new("/somewhere/else"),
+        )
+        .expect("a UTF-8 scratch directory resolves");
+        assert_eq!(
+            resolved,
+            [
+                "report",
+                "clip-dirty.glb",
+                "--before-clip",
+                "swing{scratch}/decoy",
+                "--compare-after",
+                "/somewhere/else/clip-fixed.glb"
+            ]
+        );
+    }
+
+    /// One manifest name is written in exactly one place: a committed
+    /// visual under the output directory, a [`SCRATCH`] name under the
+    /// caller's throwaway one.
+    #[test]
+    fn a_scratch_name_is_written_beside_the_intermediates_not_the_visuals() {
+        let out = Path::new("/out");
+        let scratch = Path::new("/scratch");
+        assert_eq!(
+            output_path("walk.report.html", out, scratch),
+            Path::new("/out/walk.report.html")
+        );
+        assert_eq!(
+            output_path("{scratch}/clip-fixed.glb", out, scratch),
+            Path::new("/scratch/clip-fixed.glb")
+        );
+    }
+
+    /// An invocation may read a scratch file only if an earlier one wrote
+    /// it. Run order is the manifest's whole dependency rule, so a
+    /// reordering that put a reader first — or a name nothing writes —
+    /// would otherwise render whatever a previous run left behind.
+    #[test]
+    fn every_scratch_input_is_written_by_an_earlier_invocation() {
+        let mut written: Vec<&str> = Vec::new();
+        let mut read = 0usize;
+        for command in COMMANDS {
+            for argument in command.arguments {
+                if argument.starts_with(SCRATCH) {
+                    assert!(
+                        written.contains(argument),
+                        "{} reads {argument}, which no earlier invocation writes",
+                        command.output
+                    );
+                    read += 1;
+                }
+            }
+            written.push(command.output);
+        }
+        assert!(
+            read > 0,
+            "the manifest keeps demonstrating a repair the CLI itself produced"
+        );
+    }
+
     #[test]
     fn every_committed_chart_names_a_committed_report() {
         for chart in CHARTS {
             assert!(
-                REPORTS.iter().any(|report| report.output == chart.report),
+                COMMANDS
+                    .iter()
+                    .any(|command| command.output == chart.report),
                 "{} is cut from an unwritten report {}",
                 chart.output,
                 chart.report
