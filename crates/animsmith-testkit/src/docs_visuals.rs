@@ -252,22 +252,23 @@ pub fn chart_style(scope: &str) -> String {
     // The dash patterns and the band tint are geometry rather than colour:
     // members of a coherent group draw the same curve onto the same
     // coordinates, and without them every member after the first would be
-    // hidden under the last one drawn.
-    let members: String = (0..GROUP_MEMBERS)
-        .map(|member| {
-            format!(
-                "#{scope} .series-member-{member}{{fill:none;stroke-width:1.5}}\
+    // hidden under the last one drawn. The patterns reach the curves only,
+    // the way the report's own stylesheet applies them.
+    let members: String =
+        (0..GROUP_MEMBERS)
+            .map(|member| {
+                format!(
+                    "#{scope} .series-member-{member}{{fill:none;stroke-width:1.5}}\
                  #{scope} .anchor-member-{member}{{stroke-width:2.5}}{}",
-                match GROUP_MEMBER_DASHES[member] {
-                    "" => String::new(),
-                    dashes => format!(
-                        "#{scope} .series-member-{member},#{scope} \
-                         .anchor-member-{member}{{stroke-dasharray:{dashes}}}"
-                    ),
-                }
-            )
-        })
-        .collect();
+                    match GROUP_MEMBER_DASHES[member] {
+                        "" => String::new(),
+                        dashes => format!(
+                            "#{scope} path.series-member-{member}{{stroke-dasharray:{dashes}}}"
+                        ),
+                    }
+                )
+            })
+            .collect();
     format!(
         "#{scope} .series-left,#{scope} .series-right,#{scope} .series-diff,\
          #{scope} .root-path,#{scope} .pathstart{{fill:none;stroke-width:1.5}}\
@@ -284,11 +285,16 @@ pub fn chart_style(scope: &str) -> String {
 
 /// Members one gait-group figure can tell apart, which is the number of
 /// series colours the report defines.
-const GROUP_MEMBERS: usize = 6;
+pub const GROUP_MEMBERS: usize = 6;
 
-/// The dash pattern each member's series and anchor mark carry, matching
-/// `assets/viewer.css`. The first member is solid.
-const GROUP_MEMBER_DASHES: [&str; GROUP_MEMBERS] = ["", "7 4", "2 3", "12 5", "4 2 1 2", "1 4"];
+/// The dash pattern each member's curve carries.
+///
+/// The report's own stylesheet is the authority; this is the copy an
+/// extracted chart is styled from, and `animsmith-report`'s render tests pin
+/// the two together, so a pattern changed in one place fails rather than
+/// producing a standalone picture that reads differently from the report it
+/// was cut out of. The first member is solid.
+pub const GROUP_MEMBER_DASHES: [&str; GROUP_MEMBERS] = ["", "7 4", "2 3", "12 5", "4 2 1 2", "1 4"];
 
 /// The SVG namespace a standalone chart needs and an embedded one does not.
 const SVG_NAMESPACE: &str = " xmlns=\"http://www.w3.org/2000/svg\"";
@@ -304,16 +310,16 @@ pub struct DocsReport {
 
 /// Which figure of a report a chart is cut from, beyond its kind.
 ///
-/// A report of one clip carries one figure of each kind; a report of
-/// several carries one per clip, and a report with declared gait groups
-/// carries one per group as well. Naming the subject is what keeps an
-/// ambiguous selector an error rather than a silent first match.
+/// A report of one clip carries one figure of each kind, and a report with
+/// declared gait groups carries one per group as well. Naming the subject is
+/// what keeps an ambiguous selector an error rather than a silent first
+/// match. A report of several clips carries one figure per clip, which no
+/// committed chart is cut from: the group figure is what a multi-clip
+/// document has to show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChartSubject {
     /// The report holds exactly one figure of this kind.
     Only,
-    /// The figure of one named clip (`data-clip`).
-    Clip(&'static str),
     /// The figure of one named gait group (`data-group`).
     Group(&'static str),
 }
@@ -635,7 +641,6 @@ fn figure_selector(kind: &str, subject: ChartSubject) -> Vec<String> {
     let mut selector = Vec::with_capacity(2);
     match subject {
         ChartSubject::Only => {}
-        ChartSubject::Clip(clip) => selector.push(format!("data-clip=\"{clip}\"")),
         ChartSubject::Group(group) => selector.push(format!("data-group=\"{group}\"")),
     }
     selector.push(format!("data-kind=\"{kind}\""));
@@ -794,57 +799,6 @@ mod tests {
         assert_eq!(
             standalone_chart(FIXTURE, &missing).unwrap_err(),
             "report has no <figure class=\"chart\" data-kind=\"absent\">"
-        );
-    }
-
-    /// The selector matches attributes independently, so a renderer that
-    /// writes them in the other order still yields the same figure.
-    #[test]
-    fn a_clip_selector_does_not_depend_on_the_attribute_order() {
-        let swapped = TWO_CLIP_FIXTURE
-            .replace(
-                "data-clip=\"run_left\" data-kind=\"gait\"",
-                "data-kind=\"gait\" data-clip=\"run_left\"",
-            )
-            .replace(
-                "data-clip=\"run_forward\" data-kind=\"gait\"",
-                "data-kind=\"gait\" data-clip=\"run_forward\"",
-            );
-        assert!(
-            swapped != TWO_CLIP_FIXTURE,
-            "the fixture must really be rewritten"
-        );
-        let chart = DocsChart {
-            subject: ChartSubject::Clip("run_left"),
-            ..gait(&["series-left"])
-        };
-        let svg = standalone_chart(&swapped, &chart).expect("extracts run_left either way");
-        assert!(svg.contains("viewBox=\"0 0 3 3\""), "{svg}");
-    }
-
-    #[test]
-    fn a_clip_selector_picks_one_figure_out_of_a_multi_clip_report() {
-        let ambiguous = standalone_chart(TWO_CLIP_FIXTURE, &gait(&["series-left"])).unwrap_err();
-        assert_eq!(
-            ambiguous, "report has more than one data-kind=\"gait\" figure",
-            "a report of two clips is not silently cut at its first figure"
-        );
-        for (clip, view_box) in [("run_forward", "0 0 2 2"), ("run_left", "0 0 3 3")] {
-            let chart = DocsChart {
-                subject: ChartSubject::Clip(clip),
-                ..gait(&["series-left"])
-            };
-            let svg = standalone_chart(TWO_CLIP_FIXTURE, &chart)
-                .unwrap_or_else(|error| panic!("extracts {clip}: {error}"));
-            assert!(svg.contains(&format!("viewBox=\"{view_box}\"")), "{svg}");
-        }
-        let absent = DocsChart {
-            subject: ChartSubject::Clip("run_right"),
-            ..gait(&["series-left"])
-        };
-        assert_eq!(
-            standalone_chart(TWO_CLIP_FIXTURE, &absent).unwrap_err(),
-            "report has no <figure class=\"chart\" data-clip=\"run_right\" data-kind=\"gait\">"
         );
     }
 

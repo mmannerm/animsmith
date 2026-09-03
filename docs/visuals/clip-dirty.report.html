@@ -130,16 +130,22 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 .series-member-3, .series-member-4, .series-member-5 { fill: none; stroke-width: 1.5; }
 .anchor-member-0, .anchor-member-1, .anchor-member-2,
 .anchor-member-3, .anchor-member-4, .anchor-member-5 { stroke-width: 2.5; }
-/* Members of a coherent group draw the same curve and land on the same
-   anchor, so every one after the first would hide the ones under it. Each
-   member carries its own dash pattern as well as its own colour, and the
-   coincident ones then interleave instead of covering each other. */
 .series-member-0, .anchor-member-0 { stroke: var(--accent); }
-.series-member-1, .anchor-member-1 { stroke: var(--warning); stroke-dasharray: 7 4; }
-.series-member-2, .anchor-member-2 { stroke: var(--pass); stroke-dasharray: 2 3; }
-.series-member-3, .anchor-member-3 { stroke: var(--note); stroke-dasharray: 12 5; }
-.series-member-4, .anchor-member-4 { stroke: var(--error); stroke-dasharray: 4 2 1 2; }
-.series-member-5, .anchor-member-5 { stroke: var(--muted); stroke-dasharray: 1 4; }
+.series-member-1, .anchor-member-1 { stroke: var(--warning); }
+.series-member-2, .anchor-member-2 { stroke: var(--pass); }
+.series-member-3, .anchor-member-3 { stroke: var(--note); }
+.series-member-4, .anchor-member-4 { stroke: var(--error); }
+.series-member-5, .anchor-member-5 { stroke: var(--muted); }
+/* Members of a coherent group draw the same curve, so every one after the
+   first would hide the ones under it. Each member's curve carries its own
+   dash pattern as well as its own colour and the coincident ones interleave.
+   Only the curves: a 14-unit anchor mark under `1 4` is three dots, and a
+   10-unit legend swatch stops saying which colour it stands for. */
+path.series-member-1 { stroke-dasharray: 7 4; }
+path.series-member-2 { stroke-dasharray: 2 3; }
+path.series-member-3 { stroke-dasharray: 12 5; }
+path.series-member-4 { stroke-dasharray: 4 2 1 2; }
+path.series-member-5 { stroke-dasharray: 1 4; }
 /* The tolerance the group declares, drawn as a region rather than a line:
    the anchors inside it are the ones within the cap. It sits under every
    curve, so it is tinted rather than painted. */
@@ -338,7 +344,7 @@ function animsmithFrameLoop(advance) {
   };
 }
 </script>
-<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"spine","parent":0},{"name":"chest","parent":1}],"clips":[{"duration":1.0,"frames":5,"name":"swing","positions":"AAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAdXVMvUxcfz8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA92/LvdJyfT8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAbU4XvndIej8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA12FHvlTldT8AAAAA","trails":{}}],"evidence_only":false,"file":"clip-dirty.glb","findings":[{"bone":"spine","check":"quat-norm","clip":"swing","message":"non-unit rotation key (worst at key 2)","node":null,"severity":"error","time":0.5},{"bone":"spine","check":"quat-flip","clip":"swing","message":"2 hemisphere flip(s) between adjacent rotation keys (first between keys 2 and 3) — engines without neighborhood correction will spin the long way","node":null,"severity":"warning","time":0.75}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"swing"}}],"prediction_provenance":null,"predictions":[],"profile":"unknown"}</script>
+<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"spine","parent":0},{"name":"chest","parent":1}],"clips":[{"cycle":4,"duration":1.0,"frames":5,"name":"swing","positions":"AAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAdXVMvUxcfz8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA92/LvdJyfT8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAbU4XvndIej8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA12FHvlTldT8AAAAA","trails":{}}],"evidence_only":false,"file":"clip-dirty.glb","findings":[{"bone":"spine","check":"quat-norm","clip":"swing","message":"non-unit rotation key (worst at key 2)","node":null,"severity":"error","time":0.5},{"bone":"spine","check":"quat-flip","clip":"swing","message":"2 hemisphere flip(s) between adjacent rotation keys (first between keys 2 and 3) — engines without neighborhood correction will spin the long way","node":null,"severity":"warning","time":0.75}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"swing"}}],"prediction_provenance":null,"predictions":[],"profile":"unknown"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
 // Renders exactly the pose-grid frames the checks judged; no animation
 // sampling happens here.
@@ -557,19 +563,24 @@ function setFrame(f) {
 function updateCharts() {
   if (!clip) return;
   const u = clip.frames > 1 ? frame / (clip.frames - 1) : 0;
+  // A group figure's axis is the stride cycle its members were measured on,
+  // which excludes the duplicate wrap sample a longer grid repeats. The
+  // clip figures' axis is the clip's own frames.
+  const cycle = clip.cycle > 0 ? Math.min(1, frame / clip.cycle) : u;
   for (const fig of document.querySelectorAll(".chart")) {
     // A group figure draws every member of a declared gait group against the
-    // others, so it stays visible whichever member is selected; a clip
-    // figure belongs to its own clip. Its playhead follows the selected
-    // clip's phase either way, because that is the position the reader is
-    // scrubbing on the shared axis.
-    const active = "group" in fig.dataset || fig.dataset.clip === clip.name;
+    // others, so it stays visible while any member is selected — but only
+    // then. Its caption describes its members' own source phase, so a clip
+    // outside the group must not drive its playhead, and a figure of a group
+    // the reader is not looking at is not evidence about the clip they are.
+    const members = "members" in fig.dataset ? fig.dataset.members.split(",") : null;
+    const active = members ? members.includes(clip.name) : fig.dataset.clip === clip.name;
     fig.style.display = active ? "" : "none";
     if (!active) continue;
     const playhead = fig.querySelector(".playhead");
     if (playhead) {
       const pad = parseFloat(fig.dataset.pad);
-      const x = pad + parseFloat(fig.dataset.plotw) * u;
+      const x = pad + parseFloat(fig.dataset.plotw) * (members ? cycle : u);
       playhead.setAttribute("x1", x);
       playhead.setAttribute("x2", x);
     }

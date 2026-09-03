@@ -1706,6 +1706,8 @@ const groupFigures = documentCharts(groupHtml).filter((figure) => figure.dataset
 if (groupFigures.length !== 1) throw new Error(`the gait-group fixture must render exactly one group figure, saw ${groupFigures.length}`);
 if (groupFigures[0].dataset.clip !== undefined) throw new Error("a group figure must carry no data-clip, or it would be hidden with its clip");
 if (groupFigures[0].dataset.group !== "run-ring") throw new Error(`the group figure names its group: ${groupFigures[0].dataset.group}`);
+const groupMembers = (groupFigures[0].dataset.members || "").split(",").filter(Boolean);
+if (groupMembers.length < 2) throw new Error(`the group figure names its members: ${groupFigures[0].dataset.members}`);
 const groupPad = Number(groupFigures[0].dataset.pad), groupPlotW = Number(groupFigures[0].dataset.plotw);
 if (!(groupPad > 0) || !(groupPlotW > 0)) throw new Error("the group figure does not publish its plot rectangle");
 
@@ -1745,6 +1747,40 @@ groupRun.nodes.scrub.value = String(groupMidFrame);
 groupRun.nodes.scrub.listeners.input();
 const groupExpected = groupPad + groupPlotW * (groupMidFrame / groupLastFrame);
 if (Math.abs(groupPlayheadOf(groupRun) - groupExpected) > 1e-6) throw new Error(`the group playhead follows the scrubbed phase: ${groupPlayheadOf(groupRun)} against ${groupExpected}`);
+
+// A group figure's axis is the stride cycle its members were measured on,
+// which is not the clip's frame count when the grid has no duplicate wrap
+// sample to drop. The committed fixture's cycle is `frames - 1`, where the
+// two agree, so the short-grid case is introduced here in the payload.
+const shortCycle = JSON.parse(JSON.stringify(groupPayload));
+shortCycle.clips[0].cycle = shortCycle.clips[0].frames;
+const shortRun = runSingle(group, groupHtml, shortCycle);
+const shortLast = shortCycle.clips[0].frames - 1;
+shortRun.nodes.scrub.value = String(shortLast);
+shortRun.nodes.scrub.listeners.input();
+const onCycle = groupPad + groupPlotW * (shortLast / shortCycle.clips[0].cycle);
+const onFrames = groupPad + groupPlotW;
+if (Math.abs(onCycle - onFrames) < 1) throw new Error("the harness failed to make the two axes differ");
+if (Math.abs(groupPlayheadOf(shortRun) - onCycle) > 1e-6) throw new Error(`the group playhead follows the members' cycle, not the clip's frame count: ${groupPlayheadOf(shortRun)} against ${onCycle}`);
+
+// A clip outside the group is not what the figure draws, and its phase is
+// not the axis the caption describes. Selecting it hides the figure rather
+// than leaving it on screen driven by a clip it does not plot. The fixture
+// is all members, so the non-member is introduced here, in the payload the
+// viewer reads.
+const outsider = JSON.parse(JSON.stringify(groupPayload));
+const stranger = "clip-outside-the-ring";
+if (groupMembers.includes(stranger)) throw new Error("the harness picked a name the group declares");
+outsider.clips.push(Object.assign({}, outsider.clips[0], {name: stranger}));
+const outsiderRun = runSingle(group, groupHtml, outsider);
+outsiderRun.nodes["clip-select"].value = stranger;
+outsiderRun.nodes["clip-select"].listeners.change();
+if (outsiderRun.nodes["clip-select"].value !== stranger) throw new Error("the harness failed to select the non-member");
+if (groupFigureOf(outsiderRun).style.display !== "none") throw new Error("a clip outside the group left its figure visible, with a playhead driven by a phase the figure does not plot");
+outsiderRun.nodes["clip-select"].value = firstMember.name;
+outsiderRun.nodes["clip-select"].listeners.change();
+if (groupFigureOf(outsiderRun).style.display === "none") throw new Error("selecting a member again did not restore the group figure");
+
 assertNoHashWrites(groupRun, "selecting a member of a gait group");
 
 // ---- system theme changes ----------------------------------------------

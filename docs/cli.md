@@ -196,7 +196,18 @@ retain exactly the root's X/Z path, the two foot-height series relative to
 the hips plus their difference, the last on its own right-hand axis, and — for
 each declared gait group with a member in the file — one left-minus-right
 foot-height series per member with its measured stride anchor. Nothing in any
-of them is per bone. Every comparison panel is a
+of them is per bone.
+
+`--clip NAME` and the gait-group figure meet deliberately. The clip filter
+scopes the document to one clip: its pose grid, its findings and its own two
+charts. A gait group is a contract between clips, so the figure for a group
+that clip belongs to keeps drawing and naming every declared member — a group
+compared against one of its own members is not a comparison. Groups the
+selected clip does not belong to are not drawn at all. What that publishes
+beyond the selected clip is one left-minus-right foot-height series and one
+measured anchor per member, which is the single-series metric evidence the
+[licensed-asset policy](../DEVELOPMENT.md#golden-tests) allows; the pose grid
+of a clip the filter excluded is never embedded. Every comparison panel is a
 viewer drawing made from the pose grid — both role-trajectory panels, both gait
 panels, and the shared root chart — so an evidence-only comparison replaces all
 of them with the same notice. Everything else the full comparison embeds stays:

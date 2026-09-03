@@ -1148,11 +1148,13 @@ fn circular_spread_handles_wrap() {
 /// a single bit of the spread: the number is a reference-implementation port
 /// that lint text, collection evidence and the foot-cycle proof all print.
 ///
-/// The reference below is the arithmetic as it stood before the extraction,
-/// so the comparison is exact on any platform rather than pinned to literals
-/// one machine's `libm` produced.
+/// Two independent pins. The reference below is the arithmetic as it stood
+/// before the extraction, compared exactly, so the check holds on any
+/// platform rather than on the machine that recorded it. The literals beside
+/// it are the values that arithmetic is supposed to produce, so a refactor
+/// that moved both the implementation and its reference copy still fails.
 #[test]
-fn circular_spread_keeps_its_reference_arithmetic() {
+fn circular_spread_keeps_its_reference_arithmetic_and_its_values() {
     use animsmith_core::metrics::circular_phase_spread;
     use std::f64::consts::{PI, TAU};
 
@@ -1174,37 +1176,43 @@ fn circular_spread_keeps_its_reference_arithmetic() {
         max_dev
     }
 
-    for phases in [
-        &[][..],
-        &[0.75][..],
-        &[0.98, 0.02][..],
-        &[0.25, 0.75][..],
-        &[0.0, 0.5][..],
-        &[0.75, 0.75, 0.50, 0.75][..],
-        &[0.1, 0.2, 0.3, 0.4, 0.9][..],
+    for (phases, expected) in [
+        (&[][..], 0.0),
+        (&[0.75][..], 0.0),
+        (&[0.98, 0.02][..], 0.02),
+        (&[0.25, 0.75][..], 0.25),
+        (&[0.0, 0.5][..], 0.25),
+        (&[0.75, 0.75, 0.50, 0.75][..], 0.198_792),
+        (&[0.1, 0.2, 0.3, 0.4, 0.9][..], 0.3),
     ] {
         assert_eq!(
             circular_phase_spread(phases),
             reference_spread(phases),
-            "the spread of {phases:?} moved"
+            "the spread of {phases:?} moved off its reference arithmetic"
+        );
+        assert!(
+            (circular_phase_spread(phases) - expected).abs() < 5e-6,
+            "the spread of {phases:?} is {}, not {expected}",
+            circular_phase_spread(phases)
         );
     }
 }
 
-/// The circular mean is the centre the spread measures deviations from, on
-/// the `[0, 1)` cycle axis a caller draws a tolerance band on.
+/// The circular centre is where the spread is measured from, and the pair is
+/// derived in one pass over the phases.
 #[test]
-fn circular_mean_is_the_centre_the_spread_measures_from() {
-    use animsmith_core::metrics::{circular_phase_mean, circular_phase_spread};
-
-    assert_eq!(circular_phase_mean(&[]), None, "an empty set has no mean");
-
-    // Cycle distance on the ring, which is what a band around the mean has
-    // to contain.
-    let distance = |a: f64, b: f64| {
-        let d = (a - b).abs() % 1.0;
-        d.min(1.0 - d)
+fn circular_centre_is_where_the_spread_is_measured_from() {
+    use animsmith_core::metrics::{
+        circular_phase_center_spread, circular_phase_distance, circular_phase_spread,
+        wrap_unit_phase,
     };
+
+    assert_eq!(
+        circular_phase_center_spread(&[]),
+        None,
+        "an empty set has no centre"
+    );
+
     for phases in [
         &[0.25][..],
         &[0.98, 0.02][..],
@@ -1212,34 +1220,114 @@ fn circular_mean_is_the_centre_the_spread_measures_from() {
         &[0.75, 0.75, 0.50, 0.75][..],
         &[0.1, 0.2, 0.3, 0.4, 0.9][..],
     ] {
-        let mean = circular_phase_mean(phases).expect("a non-empty set has a mean");
+        let (centre, spread) = circular_phase_center_spread(phases).expect("a non-empty set");
         assert!(
-            (0.0..1.0).contains(&mean),
-            "the mean of {phases:?} is a cycle position: {mean}"
+            (0.0..1.0).contains(&centre),
+            "the centre of {phases:?} is a cycle position: {centre}"
+        );
+        assert_eq!(
+            spread,
+            circular_phase_spread(phases),
+            "the pair's spread is the spread"
         );
         let widest = phases
             .iter()
-            .map(|&p| distance(p, mean))
+            .map(|&p| circular_phase_distance(p, centre))
             .fold(0.0f64, f64::max);
         assert!(
-            (widest - circular_phase_spread(phases)).abs() < 1e-12,
-            "the spread of {phases:?} is the widest deviation from its mean: \
-             {widest} against {}",
-            circular_phase_spread(phases)
+            (widest - spread).abs() < 1e-12,
+            "the spread of {phases:?} is the widest distance from its centre: \
+             {widest} against {spread}"
         );
     }
 
-    // A single phase is its own mean, and a wrapped pair means the wrap
-    // point rather than the far side of the ring.
-    assert!((circular_phase_mean(&[0.25]).expect("one phase") - 0.25).abs() < 1e-12);
-    let wrapped = circular_phase_mean(&[0.98, 0.02]).expect("a wrapped pair");
+    // The run-ring anchors: three coherent members at 0.75 pull the centre
+    // toward them. Their unit vectors sum to (-1, -3) — the 0.50 member
+    // contributes the whole of the real part — so the centre is
+    // atan2(-3, -1) / TAU folded into [0, 1).
+    let (ring, spread) = circular_phase_center_spread(&[0.75, 0.75, 0.50, 0.75]).expect("the ring");
     assert!(
-        distance(wrapped, 0.0) < 1e-12,
+        (ring - 0.698_792).abs() < 1e-6,
+        "the centre leans toward the three coherent members: {ring}"
+    );
+    assert!((spread - 0.198_792).abs() < 1e-6, "{spread}");
+    // Three members, two coherent: the sum is (-1, -2) and the centre moves
+    // to atan2(-2, -1) / TAU. This is the set the report's band test draws.
+    let (three, _) = circular_phase_center_spread(&[0.75, 0.75, 0.50]).expect("three anchors");
+    assert!((three - 0.676_208).abs() < 1e-6, "{three}");
+
+    // A single phase is its own centre, and a pair either side of the wrap
+    // means the wrap rather than the far side of the ring.
+    let (single, _) = circular_phase_center_spread(&[0.25]).expect("one phase");
+    assert!((single - 0.25).abs() < 1e-12, "{single}");
+    let (wrapped, _) = circular_phase_center_spread(&[0.98, 0.02]).expect("a wrapped pair");
+    assert!(
+        circular_phase_distance(wrapped, 0.0) < 1e-12,
         "a pair either side of the wrap means the wrap: {wrapped}"
     );
-    let ring = circular_phase_mean(&[0.75, 0.75, 0.50, 0.75]).expect("the run-ring anchors");
-    assert!(
-        (ring - 0.698_78).abs() < 1e-4,
-        "the mean leans toward the three coherent members: {ring}"
+
+    // A cycle position is folded into [0, 1): a full turn is zero, and a
+    // hair-negative phase does not round its wrap up to one.
+    assert_eq!(wrap_unit_phase(1.0), 0.0);
+    assert_eq!(wrap_unit_phase(-1e-18), 0.0);
+    assert_eq!(wrap_unit_phase(-0.25), 0.75);
+    assert_eq!(wrap_unit_phase(0.25), 0.25);
+    assert!(circular_phase_distance(0.98, 0.02) - 0.04 < 1e-12);
+    assert!((circular_phase_distance(0.0, 0.5) - 0.5).abs() < 1e-12);
+}
+
+/// A gait group's tolerances are ranges, and the config boundary is where a
+/// value outside them is refused.
+///
+/// A circular spread cannot exceed half a cycle, so a larger cap admits every
+/// possible set, and a negative or non-finite cap is not a tolerance at all —
+/// `spread > NaN` is false, so such a group silently never failed. The
+/// declared-generation boundary in `foot_cycle.rs` has always held the same
+/// range; this brings the parsed configuration to it.
+#[test]
+fn a_gait_group_tolerance_outside_its_range_is_refused_at_the_config_boundary() {
+    let parse = |cap: serde_json::Value, floor: serde_json::Value| {
+        serde_json::from_value::<Config>(serde_json::json!({
+            "gait_groups": { "ring": {
+                "clips": ["a", "b"],
+                "max_gait_phase_spread": cap,
+                "min_lr_amplitude_m": floor
+            }}
+        }))
+    };
+    let ok = |cap: f64, floor: f64| {
+        let config = parse(serde_json::json!(cap), serde_json::json!(floor))
+            .unwrap_or_else(|error| panic!("cap {cap} floor {floor} must parse: {error}"));
+        let group = config.gait_groups.get("ring").expect("the declared group");
+        assert_eq!(group.max_gait_phase_spread, cap);
+        assert_eq!(group.min_lr_amplitude_m, floor);
+    };
+    // The inclusive ends of both ranges, and a value inside them.
+    ok(0.0, 0.0);
+    ok(0.5, 0.03);
+    ok(0.15, 1.0);
+
+    for cap in [-0.001_f64, 0.500_1, f64::INFINITY, f64::NAN] {
+        let refused = parse(serde_json::json!(cap), serde_json::json!(0.03));
+        assert!(
+            refused.is_err(),
+            "a {cap} cycle cap is not a tolerance and must be refused"
+        );
+    }
+    for floor in [-0.001_f64, f64::NEG_INFINITY, f64::NAN] {
+        let refused = parse(serde_json::json!(0.15), serde_json::json!(floor));
+        assert!(
+            refused.is_err(),
+            "a {floor} m amplitude floor must be refused"
+        );
+    }
+    // The floor stays optional and defaults to admitting every swing.
+    let defaulted = serde_json::from_value::<Config>(serde_json::json!({
+        "gait_groups": { "ring": { "clips": ["a"], "max_gait_phase_spread": 0.15 }}
+    }))
+    .expect("an omitted floor parses");
+    assert_eq!(
+        defaulted.gait_groups["ring"].min_lr_amplitude_m, 0.0,
+        "an omitted floor excludes nothing"
     );
 }

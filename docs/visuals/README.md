@@ -71,12 +71,13 @@ picture here becomes the picture itself, and a frame becomes a
 site-absolute path, which is the one spelling that resolves both on the
 chapter page and on mdBook's aggregated print page.
 
-A report of more than one clip carries one figure per clip, and a report
-with declared gait groups carries one figure per group as well, so a chart
-cut out of either names its subject — the clip or the group — as well as the
-figure kind; an ambiguous selector is an error rather than a silent first
-match. A group figure carries the group's members on one shared phase axis,
-so it is one picture where two per-clip charts side by side used to be.
+A report carries one figure per clip and, where the run declares gait
+groups, one per group as well, so a chart cut out of a report of more than
+one names its group as well as the figure kind; an ambiguous selector is an
+error rather than a silent first match. A group figure carries every member
+on one shared phase axis, which is one picture where two per-clip charts side
+by side used to be — and the reason no committed chart is cut per clip any
+more.
 
 A chart earns a file only where a still picture carries the symptom on
 its own. `walk-travel.glb` is why the root-path figures are committed:

@@ -2026,15 +2026,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             };
             let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
             let html = match comparison_after {
-                None => animsmith_report::render(
-                    &grids,
-                    &roles,
-                    &evaluations,
+                None => animsmith_report::render(animsmith_report::ReportInputs {
+                    grids: &grids,
+                    roles: &roles,
+                    checks: &evaluations,
                     config,
-                    prediction_provenance.as_ref(),
-                    clip.as_deref(),
-                    report_options,
-                ),
+                    prediction_provenance: prediction_provenance.as_ref(),
+                    clip: clip.as_deref(),
+                    options: report_options,
+                }),
                 Some(after_loaded) => {
                     let before_clip = before_clip
                         .ok_or_else(|| "--compare-after requires --before-clip".to_string())?;

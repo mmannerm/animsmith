@@ -332,11 +332,30 @@ pub struct GaitGroup {
     pub clips: Vec<String>,
     /// Maximum circular spread of the members' gait phases, in cycle
     /// fraction `[0, 0.5]`.
+    ///
+    /// Half a cycle is the widest a circular spread can be, so a larger cap
+    /// admits every possible set and a negative or non-finite one is not a
+    /// tolerance at all. The TOML boundary refuses those; an embedder
+    /// building this value programmatically owes the same range.
+    #[serde(deserialize_with = "deserialize_half_cycle")]
     pub max_gait_phase_spread: f64,
     /// Members with L−R amplitude under this (metres) are excluded from
     /// the spread (their phase is noise, not signal).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_nonnegative_finite")]
     pub min_lr_amplitude_m: f64,
+}
+
+fn deserialize_half_cycle<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = f64::deserialize(deserializer)?;
+    if !value.is_finite() || !(0.0..=0.5).contains(&value) {
+        return Err(serde::de::Error::custom(
+            "must be a finite number in the range [0, 0.5] cycle",
+        ));
+    }
+    Ok(value)
 }
 
 /// Thresholds for detecting a pair that is more phase-similar under reflected

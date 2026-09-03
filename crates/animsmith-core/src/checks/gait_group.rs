@@ -13,7 +13,7 @@ use crate::evaluation::{
 };
 use crate::finding::{Finding, Severity};
 use crate::metrics::{
-    GaitPhaseOutcome, MIN_STRIDE_STEP_M, circular_phase_spread, foot_cycle_metrics,
+    GaitMemberPhase, circular_phase_spread, gait_member_phase, gait_phase_evidence,
 };
 
 pub struct GaitGroup;
@@ -58,74 +58,79 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
         let mut measured: Vec<(&str, f64)> = Vec::new();
         let mut existing_members = 0usize;
         for clip_name in &group.clips {
-            let Some(index) = ctx.doc.clips.iter().position(|c| &c.name == clip_name) else {
-                out.push(
+            let index = ctx.doc.clips.iter().position(|c| &c.name == clip_name);
+            // One classifier serves the check and every presentation of it,
+            // so a picture cannot show a member as measured where this
+            // records a coverage gap. Only the wording below is the check's.
+            let evidence = index
+                .and_then(|index| ctx.grid(index))
+                .and_then(|grid| gait_phase_evidence(&grid, ctx.roles));
+            let phase_scope =
+                || EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT).subject(clip_name);
+            match gait_member_phase(
+                ctx.roles,
+                index.is_some(),
+                evidence.as_ref(),
+                group.min_lr_amplitude_m,
+            ) {
+                GaitMemberPhase::Absent => out.push(
                     Finding::new(
                         "gait-group",
                         Severity::Error,
                         format!("gait group '{group_name}' member not found in file"),
                     )
                     .clip(clip_name.clone()),
-                );
-                continue;
-            };
-            existing_members += 1;
-            if roles_gap.is_some() {
-                continue;
+                ),
+                // The rig itself is the gap, reported once for the group
+                // below rather than once per member.
+                GaitMemberPhase::RolesUnresolved => existing_members += 1,
+                GaitMemberPhase::NoFootCycle => {
+                    existing_members += 1;
+                    coverage.gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            "gait phase could not be measured",
+                        )
+                        .scope(phase_scope()),
+                    );
+                }
+                GaitMemberPhase::NoAnchor(outcome) => {
+                    existing_members += 1;
+                    coverage.gaps.push(
+                        gait_phase_gap(outcome, GaitPhaseGapContext::GaitGroup)
+                            .expect("non-measured gait phase outcome has a coverage gap")
+                            .scope(phase_scope()),
+                    );
+                }
+                GaitMemberPhase::BelowFloor {
+                    amplitude_m,
+                    floor_m,
+                } => {
+                    existing_members += 1;
+                    coverage.gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            format!(
+                                "left/right gait amplitude {amplitude_m:.3} m is below the \
+                                 {floor_m:.3} m evidence floor"
+                            ),
+                        )
+                        .scope(phase_scope()),
+                    );
+                }
+                GaitMemberPhase::Measured(phase) => {
+                    existing_members += 1;
+                    measured.push((clip_name.as_str(), phase));
+                }
             }
-            let gait = ctx
-                .grid(index)
-                .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M));
-            let Some(metrics) = gait else {
-                coverage.gaps.push(
-                    CoverageGap::new(
-                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                        "gait phase could not be measured",
-                    )
-                    .scope(
-                        EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
-                            .subject(clip_name),
-                    ),
-                );
-                continue;
-            };
-            let outcome = metrics.gait_phase_outcome(ctx.roles);
-            let GaitPhaseOutcome::Measured(phase) = outcome else {
-                coverage.gaps.push(
-                    gait_phase_gap(outcome, GaitPhaseGapContext::GaitGroup)
-                        .expect("non-measured gait phase outcome has a coverage gap")
-                        .scope(
-                            EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
-                                .subject(clip_name),
-                        ),
-                );
-                continue;
-            };
-            if metrics.lr_amplitude_m < group.min_lr_amplitude_m {
-                coverage.gaps.push(
-                    CoverageGap::new(
-                        CoverageGapCode::MEASUREMENT_UNAVAILABLE,
-                        format!(
-                            "left/right gait amplitude {:.3} m is below the {:.3} m evidence floor",
-                            metrics.lr_amplitude_m, group.min_lr_amplitude_m
-                        ),
-                    )
-                    .scope(
-                        EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT)
-                            .subject(clip_name),
-                    ),
-                );
-                continue;
-            }
-            measured.push((clip_name, phase));
         }
 
-        let phase_scope =
+        let coherence_scope =
             EvaluationScope::new(EvaluationScopeCode::PHASE_COHERENCE).subject(group_name.clone());
         if existing_members > 0
             && let Some(gap) = &roles_gap
         {
-            coverage.gaps.push(gap.clone().scope(phase_scope));
+            coverage.gaps.push(gap.clone().scope(coherence_scope));
             continue;
         }
 
@@ -153,7 +158,7 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
                     .expected(group.max_gait_phase_spread),
                 );
             }
-            coverage.evaluated_scopes.push(phase_scope.clone());
+            coverage.evaluated_scopes.push(coherence_scope.clone());
         }
 
         if !group.clips.is_empty() && (measured.len() < 2 || measured.len() < group.clips.len()) {
@@ -177,7 +182,7 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
             };
             coverage
                 .gaps
-                .push(CoverageGap::new(code, message).scope(phase_scope));
+                .push(CoverageGap::new(code, message).scope(coherence_scope));
         }
     }
     coverage
