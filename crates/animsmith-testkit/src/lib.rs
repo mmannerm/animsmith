@@ -662,7 +662,7 @@ pub fn write_example_assets<E>(
 pub fn rest_bind_scale_rig_glb() -> Vec<u8> {
     glb_container(
         rest_bind_scale_rig_json("").as_bytes(),
-        &rest_bind_scale_rig_buffer(),
+        Some(&rest_bind_scale_rig_buffer()),
     )
 }
 
@@ -682,7 +682,7 @@ pub fn clipless_mesh_scale_rig_glb() -> Vec<u8> {
         .expect("the shared rig carries its animation last");
     let mut json = json[..animation].to_owned();
     json.push_str("\n}\n");
-    glb_container(json.as_bytes(), &rest_bind_scale_rig_buffer())
+    glb_container(json.as_bytes(), Some(&rest_bind_scale_rig_buffer()))
 }
 
 /// The scale rig with a rotation-only clip and no mesh instance.
@@ -720,7 +720,7 @@ pub fn rotation_only_meshless_scale_rig_glb() -> Vec<u8> {
 }
 "#,
     );
-    glb_container(json.as_bytes(), &rest_bind_scale_rig_buffer())
+    glb_container(json.as_bytes(), Some(&rest_bind_scale_rig_buffer()))
 }
 
 /// The same rig as [`rest_bind_scale_rig_glb`], as a self-contained JSON
@@ -865,7 +865,7 @@ fn rest_bind_scale_rig_json(buffer_uri: &str) -> String {
 pub fn unaffected_bind_scale_rig_glb() -> Vec<u8> {
     glb_container(
         UNAFFECTED_BIND_SCALE_RIG_JSON.as_bytes(),
-        &unaffected_bind_scale_rig_buffer(),
+        Some(&unaffected_bind_scale_rig_buffer()),
     )
 }
 
@@ -974,7 +974,7 @@ const UNAFFECTED_BIND_SCALE_RIG_JSON: &str = r#"{
 pub fn nodes_only_scale_rig_glb() -> Vec<u8> {
     glb_container(
         NODES_ONLY_SCALE_RIG_JSON.as_bytes(),
-        &nodes_only_scale_rig_buffer(),
+        Some(&nodes_only_scale_rig_buffer()),
     )
 }
 
@@ -1057,7 +1057,7 @@ const OVERSIZED_KEY_COUNT: usize = 5_000;
 pub fn oversized_proof_scale_rig_glb() -> Vec<u8> {
     glb_container(
         oversized_proof_scale_rig_json().as_bytes(),
-        &oversized_proof_scale_rig_buffer(),
+        Some(&oversized_proof_scale_rig_buffer()),
     )
 }
 
@@ -1161,9 +1161,14 @@ fn oversized_proof_scale_rig_json() -> String {
     )
 }
 
-/// Wrap a JSON chunk and a BIN chunk in a glTF 2.0 GLB container, padding
-/// each chunk to the four-byte alignment the specification requires.
-fn glb_container(json: &[u8], bin: &[u8]) -> Vec<u8> {
+/// Wrap a JSON chunk and an optional BIN chunk in a glTF 2.0 GLB
+/// container, padding each chunk to the four-byte alignment the
+/// specification requires.
+///
+/// `None` omits the BIN chunk, which is what a document with no binary
+/// data must do: an empty chunk is `GLB_EMPTY_CHUNK`, which the Khronos
+/// validator rejects.
+pub(crate) fn glb_container(json: &[u8], bin: Option<&[u8]>) -> Vec<u8> {
     const JSON_CHUNK: u32 = 0x4e4f_534a;
     const BIN_CHUNK: u32 = 0x004e_4942;
 
@@ -1171,11 +1176,14 @@ fn glb_container(json: &[u8], bin: &[u8]) -> Vec<u8> {
     while !json.len().is_multiple_of(4) {
         json.push(b' ');
     }
-    let mut bin = bin.to_vec();
-    while !bin.len().is_multiple_of(4) {
-        bin.push(0);
-    }
-    let total = 12 + 8 + json.len() + 8 + bin.len();
+    let bin = bin.map(|bin| {
+        let mut bin = bin.to_vec();
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        bin
+    });
+    let total = 12 + 8 + json.len() + bin.as_ref().map_or(0, |bin| 8 + bin.len());
     let mut out = Vec::with_capacity(total);
     out.extend_from_slice(b"glTF");
     out.extend_from_slice(&2u32.to_le_bytes());
@@ -1183,8 +1191,10 @@ fn glb_container(json: &[u8], bin: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&(json.len() as u32).to_le_bytes());
     out.extend_from_slice(&JSON_CHUNK.to_le_bytes());
     out.extend_from_slice(&json);
-    out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
-    out.extend_from_slice(&BIN_CHUNK.to_le_bytes());
-    out.extend_from_slice(&bin);
+    if let Some(bin) = bin {
+        out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        out.extend_from_slice(&BIN_CHUNK.to_le_bytes());
+        out.extend_from_slice(&bin);
+    }
     out
 }

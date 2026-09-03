@@ -18,9 +18,8 @@
 //! disk.
 //!
 //! [`restamped`] is the other half: the same GLB with another release's
-//! stamp, re-framed so the stamp may be any length. [`bin_chunk`] hands
-//! back the payload bytes themselves, for a comparison that wants bytes
-//! rather than a digest.
+//! stamp, re-framed through the crate's one GLB framer so the stamp may be
+//! any length.
 
 use animsmith_core::sha256_hex;
 use serde_json::Value;
@@ -59,13 +58,14 @@ pub struct GlbPayloadIdentity {
 /// Two GLBs written by different releases from the same document share
 /// both digests, while a difference inside either chunk — a keyframe
 /// value, a node name, an accessor count — changes one of them. The
-/// identity covers the first JSON chunk and the first BIN chunk only: the
-/// container's own framing, and any further chunk, is not digested.
+/// identity covers the JSON and BIN chunks only: the container's own
+/// framing, and any further chunk of another type, is not digested.
 ///
 /// # Errors
 ///
 /// Returns a description of the first thing that does not hold: the GLB
-/// header or its chunk framing does not parse, there is no JSON chunk, the
+/// header or its chunk framing does not parse, the first chunk is not the
+/// JSON chunk, a JSON or BIN chunk repeats, there is no JSON chunk, the
 /// JSON chunk is not valid JSON, or its `asset.generator` string does not
 /// appear in the chunk exactly once in `serde_json`'s serialization (the
 /// form every writer in this workspace emits). A JSON chunk carrying no
@@ -104,21 +104,7 @@ pub fn restamped(bytes: &[u8], generator: &str) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "GLB carries no asset.generator to restamp".to_owned())?;
     let replacement = serialize(generator)?;
     let json = replace_generator(glb.json, stamp, replacement.as_bytes())?;
-    Ok(frame(&json, glb.bin))
-}
-
-/// The GLB's BIN chunk payload, empty when the container omits the chunk.
-///
-/// These are the bytes [`payload_identity`] digests, verbatim and
-/// including the zero padding the chunk length covers, for a comparison
-/// that holds two files' payloads against each other byte for byte rather
-/// than by digest.
-///
-/// # Errors
-///
-/// The container errors [`payload_identity`] lists.
-pub fn bin_chunk(bytes: &[u8]) -> Result<&[u8], String> {
-    Ok(Glb::read(bytes)?.bin.unwrap_or_default())
+    Ok(crate::glb_container(&json, glb.bin))
 }
 
 /// A GLB read far enough to talk about its payload.
@@ -152,8 +138,13 @@ impl<'a> Glb<'a> {
 }
 
 /// The JSON and BIN chunk payloads of a GLB, the BIN one `None` when the
-/// container omits it. Chunks of any other type are skipped, as the
-/// specification requires of a reader, and so is a repeat of either type.
+/// container omits it.
+///
+/// The JSON chunk must come first and neither chunk may repeat, both of
+/// which the specification requires of a writer; a container that breaks
+/// either rule is refused rather than read with one of its chunks
+/// silently ignored. Chunks of any other type are skipped, as the
+/// specification requires of a reader.
 fn chunks(bytes: &[u8]) -> Result<(&[u8], Option<&[u8]>), String> {
     let header = bytes
         .get(..12)
@@ -187,10 +178,20 @@ fn chunks(bytes: &[u8]) -> Result<(&[u8], Option<&[u8]>), String> {
         let data = bytes
             .get(cursor + 8..end)
             .ok_or_else(|| format!("chunk at byte {cursor} claims {length} bytes past the file"))?;
-        match &framing[4..8] {
-            kind if kind == JSON_CHUNK && json.is_none() => json = Some(data),
-            kind if kind == BIN_CHUNK && bin.is_none() => bin = Some(data),
-            _ => {}
+        let kind = &framing[4..8];
+        if json.is_none() && kind != JSON_CHUNK {
+            return Err("GLB's first chunk is not the JSON chunk".to_owned());
+        }
+        if kind == JSON_CHUNK {
+            if json.is_some() {
+                return Err("GLB carries more than one JSON chunk".to_owned());
+            }
+            json = Some(data);
+        } else if kind == BIN_CHUNK {
+            if bin.is_some() {
+                return Err("GLB carries more than one BIN chunk".to_owned());
+            }
+            bin = Some(data);
         }
         cursor = end;
     }
@@ -198,37 +199,6 @@ fn chunks(bytes: &[u8]) -> Result<(&[u8], Option<&[u8]>), String> {
         json.ok_or_else(|| "GLB carries no JSON chunk".to_owned())?,
         bin,
     ))
-}
-
-/// A GLB container around `json` and `bin`, padded and length-stamped as
-/// the specification requires. The BIN chunk is omitted for `None` rather
-/// than emitted empty, which is invalid.
-fn frame(json: &[u8], bin: Option<&[u8]>) -> Vec<u8> {
-    let mut json = json.to_vec();
-    while !json.len().is_multiple_of(4) {
-        json.push(b' ');
-    }
-    let bin = bin.map(|bin| {
-        let mut bin = bin.to_vec();
-        while !bin.len().is_multiple_of(4) {
-            bin.push(0);
-        }
-        bin
-    });
-    let total = 12 + 8 + json.len() + bin.as_ref().map_or(0, |bin| 8 + bin.len());
-    let mut out = Vec::with_capacity(total);
-    out.extend_from_slice(GLB_MAGIC);
-    out.extend_from_slice(&2u32.to_le_bytes());
-    out.extend_from_slice(&(total as u32).to_le_bytes());
-    out.extend_from_slice(&(json.len() as u32).to_le_bytes());
-    out.extend_from_slice(JSON_CHUNK);
-    out.extend_from_slice(&json);
-    if let Some(bin) = bin {
-        out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
-        out.extend_from_slice(BIN_CHUNK);
-        out.extend_from_slice(&bin);
-    }
-    out
 }
 
 /// `json` with the serialized form of the `stamp` string replaced by
@@ -267,11 +237,10 @@ fn trim_padding(json: &[u8]) -> &[u8] {
 }
 
 /// `haystack` with its single occurrence of `needle` replaced, or `None`
-/// when `needle` is empty or occurs any number of times other than once.
+/// when `needle` occurs any number of times other than once.
+///
+/// `needle` is a serialized JSON string, so it is never empty.
 fn replace_only_occurrence(haystack: &[u8], needle: &[u8], replacement: &[u8]) -> Option<Vec<u8>> {
-    if needle.is_empty() {
-        return None;
-    }
     let mut found = None;
     for (start, window) in haystack.windows(needle.len()).enumerate() {
         if window == needle {
@@ -298,27 +267,25 @@ mod tests {
         format!(r#"{{"asset":{{{asset_fields}"version":"2.0"}},"nodes":[{{"name":"{node}"}}]}}"#)
     }
 
-    /// A minimal GLB carrying one named node and `bin` as its buffer,
-    /// framed by the shared fixture builder rather than by this module.
+    /// A minimal GLB carrying one named node and `bin` as its buffer.
     fn glb(generator: &str, node: &str, bin: &[u8]) -> Vec<u8> {
         let asset_fields = format!(r#""generator":"{generator}","#);
-        glb_container(rig(&asset_fields, node).as_bytes(), bin)
+        glb_container(rig(&asset_fields, node).as_bytes(), Some(bin))
     }
 
-    /// A GLB with a JSON chunk and no BIN chunk, framed by hand — what the
-    /// writer emits for a document with no binary data.
-    fn json_only_glb(json: &str) -> Vec<u8> {
-        let mut json = json.as_bytes().to_vec();
-        while !json.len().is_multiple_of(4) {
-            json.push(b' ');
-        }
-        let total = 12 + 8 + json.len();
-        let mut out = b"glTF".to_vec();
+    /// A GLB framed around an arbitrary chunk sequence, for containers the
+    /// writer would never emit. Every payload must already be four-byte
+    /// aligned; nothing here pads or reorders, which is the point.
+    fn chunk_sequence(chunks: &[(&[u8; 4], &[u8])]) -> Vec<u8> {
+        let total = 12 + chunks.iter().map(|(_, data)| 8 + data.len()).sum::<usize>();
+        let mut out = GLB_MAGIC.to_vec();
         out.extend_from_slice(&2u32.to_le_bytes());
         out.extend_from_slice(&(total as u32).to_le_bytes());
-        out.extend_from_slice(&(json.len() as u32).to_le_bytes());
-        out.extend_from_slice(b"JSON");
-        out.extend_from_slice(&json);
+        for (kind, data) in chunks {
+            out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            out.extend_from_slice(*kind);
+            out.extend_from_slice(data);
+        }
         out
     }
 
@@ -349,19 +316,58 @@ mod tests {
             "the stamps must move the container framing, not only its bytes: {lengths:?}"
         );
 
-        let identities: Vec<GlbPayloadIdentity> = files.iter().map(|glb| identity(glb)).collect();
-        for ((stamp, identity), file) in stamps.iter().zip(&identities).zip(&files) {
-            assert_eq!(identity.generator.as_deref(), Some(*stamp));
+        let first = identity(&files[0]);
+        for (stamp, file) in stamps.iter().zip(&files) {
+            let stamped = identity(file);
+            assert_eq!(stamped.generator.as_deref(), Some(*stamp));
             assert_eq!(
-                identity.json_sha256, identities[0].json_sha256,
+                stamped.json_sha256, first.json_sha256,
                 "the release stamp is the only JSON difference"
             );
             assert_eq!(
-                bin_chunk(file).expect("the fixture is a readable GLB"),
-                &[1, 2, 3, 4],
-                "the buffer must come back byte for byte, not merely as a matching digest"
+                stamped.bin_sha256,
+                sha256_hex(&[1, 2, 3, 4]),
+                "and the BIN half is the digest of the four authored bytes"
             );
         }
+    }
+
+    #[test]
+    fn the_json_half_pins_the_chunk_bytes_not_the_value_they_parse_to() {
+        // One document, four spellings. A digest taken over a re-serialized
+        // `serde_json::Value` would collapse the first three into one — the
+        // committed assets are already in serde_json's own spelling, so such
+        // a digest would agree with every pin in the repository and still
+        // stop noticing a change in what the writer emits.
+        let asset = r#""asset":{"generator":"animsmith 0.10.0","version":"2.0"}"#;
+        let node = r#""nodes":[{"name":"root","scale":[1.0,1.0,1.0]}]"#;
+        let canonical = format!("{{{asset},{node}}}");
+        let reordered = format!("{{{node},{asset}}}");
+        let spaced = format!("{{ {asset}, {node} }}");
+        let integers = canonical.replace("[1.0,1.0,1.0]", "[1,1,1]");
+
+        let value = |json: &str| serde_json::from_str::<Value>(json).expect("valid JSON");
+        assert_eq!(
+            value(&canonical),
+            value(&reordered),
+            "key order does not change what the document says"
+        );
+        assert_eq!(
+            value(&canonical),
+            value(&spaced),
+            "nor does whitespace — these two are what a value digest cannot tell apart"
+        );
+
+        let spellings = [canonical, reordered, spaced, integers];
+        let digests: BTreeSet<String> = spellings
+            .iter()
+            .map(|json| identity(&glb_container(json.as_bytes(), Some(&[1, 2, 3, 4]))).json_sha256)
+            .collect();
+        assert_eq!(
+            digests.len(),
+            spellings.len(),
+            "each spelling must carry its own JSON digest"
+        );
     }
 
     #[test]
@@ -395,18 +401,37 @@ mod tests {
     }
 
     #[test]
-    fn a_glb_without_a_generator_still_has_an_identity_but_cannot_be_restamped() {
-        let stampless = glb_container(rig("", "root").as_bytes(), &[1, 2, 3, 4]);
-        let identity = identity(&stampless);
+    fn a_glb_without_a_generator_pins_its_json_bytes_and_cannot_be_restamped() {
+        let stampless = identity(&glb_container(
+            rig("", "root").as_bytes(),
+            Some(&[1, 2, 3, 4]),
+        ));
+        let renamed = identity(&glb_container(
+            rig("", "hips").as_bytes(),
+            Some(&[1, 2, 3, 4]),
+        ));
 
-        assert_eq!(identity.generator, None);
+        assert_eq!(stampless.generator, None);
         assert_eq!(
-            identity.bin_sha256,
+            stampless.json_sha256,
+            sha256_hex(rig("", "root").as_bytes()),
+            "with no stamp to replace, the JSON half is the trimmed chunk itself"
+        );
+        assert_ne!(
+            stampless.json_sha256, renamed.json_sha256,
+            "and it still moves when the JSON does"
+        );
+        assert_eq!(
+            stampless.bin_sha256,
             sha256_hex(&[1, 2, 3, 4]),
             "the BIN chunk is digested verbatim"
         );
         assert_eq!(
-            restamped(&stampless, "animsmith 0.11.0").expect_err("there is no stamp to replace"),
+            restamped(
+                &glb_container(rig("", "root").as_bytes(), Some(&[1, 2, 3, 4])),
+                "animsmith 0.11.0"
+            )
+            .expect_err("there is no stamp to replace"),
             "GLB carries no asset.generator to restamp"
         );
     }
@@ -415,9 +440,11 @@ mod tests {
     fn a_glb_without_a_bin_chunk_digests_as_an_empty_payload() {
         // The writer omits the BIN chunk for a document with no binary
         // data rather than emitting an empty one, which GLB forbids.
-        let bufferless = json_only_glb(&rig(r#""generator":"animsmith 0.10.0","#, "root"));
+        let bufferless = glb_container(
+            rig(r#""generator":"animsmith 0.10.0","#, "root").as_bytes(),
+            None,
+        );
 
-        assert_eq!(bin_chunk(&bufferless).expect("readable GLB"), b"");
         assert_eq!(
             identity(&bufferless).bin_sha256,
             sha256_hex(b""),
@@ -437,29 +464,38 @@ mod tests {
     }
 
     #[test]
-    fn restamping_replaces_the_stamp_and_nothing_else() {
+    fn restamping_replaces_the_stamp_and_nothing_else_in_either_direction() {
         let before = glb("animsmith 0.10.0", "root", &[1, 2, 3, 4]);
-        let after = restamped(&before, "animsmith 0.100.111").expect("restamps");
+        let longer = restamped(&before, "animsmith 0.100.111").expect("restamps");
+        let shorter = restamped(&longer, "animsmith 0.9.9").expect("restamps back down");
 
         assert_eq!(
-            identity(&after).generator.as_deref(),
+            identity(&longer).generator.as_deref(),
             Some("animsmith 0.100.111")
         );
-        assert_ne!(
-            after.len(),
+        assert_eq!(
+            identity(&shorter).generator.as_deref(),
+            Some("animsmith 0.9.9")
+        );
+        assert!(
+            longer.len() > before.len() && shorter.len() < longer.len(),
+            "the container must re-frame in both directions: {} then {} then {}",
             before.len(),
-            "a stamp three bytes longer must re-frame the container"
+            longer.len(),
+            shorter.len()
         );
-        assert_eq!(
-            bin_chunk(&after).expect("readable GLB"),
-            bin_chunk(&before).expect("readable GLB"),
-            "the BIN chunk must survive a restamp byte for byte"
-        );
-        assert_eq!(
-            identity(&after).json_sha256,
-            identity(&before).json_sha256,
-            "and the JSON chunk must differ only in the stamp"
-        );
+        for restamped in [&longer, &shorter] {
+            assert_eq!(
+                identity(restamped).json_sha256,
+                identity(&before).json_sha256,
+                "the JSON chunk must differ only in the stamp"
+            );
+            assert_eq!(
+                identity(restamped).bin_sha256,
+                identity(&before).bin_sha256,
+                "and the buffer must survive the re-framing"
+            );
+        }
     }
 
     #[test]
@@ -482,38 +518,60 @@ mod tests {
     #[test]
     fn malformed_containers_are_reported_rather_than_read() {
         let good = glb("animsmith 0.10.0", "root", &[1, 2, 3, 4]);
-
-        assert!(payload_identity(&good[..8]).is_err(), "truncated header");
+        let json = rig(r#""generator":"animsmith 0.10.0","#, "root");
+        let json = json.as_bytes();
+        let bin: &[u8] = &[1, 2, 3, 4];
 
         let mut wrong_magic = good.clone();
         wrong_magic[..4].copy_from_slice(b"GLTF");
-        assert!(payload_identity(&wrong_magic).is_err(), "wrong magic");
-
         let mut wrong_version = good.clone();
         wrong_version[4..8].copy_from_slice(&1u32.to_le_bytes());
-        assert!(payload_identity(&wrong_version).is_err(), "not GLB 2");
-
         let mut short = good.clone();
         short.pop();
-        assert!(
-            payload_identity(&short).is_err(),
-            "the header's total length no longer matches the file"
-        );
-
         let mut lying_chunk = good.clone();
         lying_chunk[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(
-            payload_identity(&lying_chunk).is_err(),
-            "a chunk length past the end of the file"
-        );
 
-        let mut no_json = good.clone();
-        no_json[16..20].copy_from_slice(BIN_CHUNK);
-        assert!(payload_identity(&no_json).is_err(), "no JSON chunk");
+        // Each case names the one thing wrong with it, so a reader that
+        // failed for a different reason would not satisfy this test.
+        let cases: [(Vec<u8>, &str); 10] = [
+            (good[..8].to_vec(), "shorter than a GLB header"),
+            (wrong_magic, "does not start with the glTF magic"),
+            (wrong_version, "container version 1 is not 2"),
+            (short, "GLB header claims"),
+            (lying_chunk, "bytes past the file"),
+            (chunk_sequence(&[]), "carries no JSON chunk"),
+            (
+                chunk_sequence(&[(BIN_CHUNK, bin), (JSON_CHUNK, json)]),
+                "first chunk is not the JSON chunk",
+            ),
+            (
+                chunk_sequence(&[(JSON_CHUNK, json), (JSON_CHUNK, json)]),
+                "more than one JSON chunk",
+            ),
+            (
+                chunk_sequence(&[(JSON_CHUNK, json), (BIN_CHUNK, bin), (BIN_CHUNK, bin)]),
+                "more than one BIN chunk",
+            ),
+            (
+                glb_container(br#"{"asset": "#, None),
+                "JSON chunk does not parse",
+            ),
+        ];
+        for (bytes, expected) in cases {
+            let error = payload_identity(&bytes)
+                .expect_err(&format!("a container that is {expected} must be refused"));
+            assert!(
+                error.contains(expected),
+                "expected an error naming {expected:?}, got {error:?}"
+            );
+        }
 
-        assert!(
-            payload_identity(&json_only_glb(r#"{"asset": "#)).is_err(),
-            "a JSON chunk that does not parse"
+        // A chunk of an unknown type is skipped, as a reader must.
+        let with_extension =
+            chunk_sequence(&[(JSON_CHUNK, json), (BIN_CHUNK, bin), (b"XTRA", b"whyknot?")]);
+        assert_eq!(
+            identity(&with_extension).bin_sha256,
+            identity(&good).bin_sha256
         );
     }
 }

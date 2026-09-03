@@ -219,53 +219,40 @@ fn example_assets_match_generator_output() {
     }
 }
 
-/// The committed and regenerated assets both carry the pinned payload
-/// identity, and both are stamped with this release.
+/// Every committed asset carries the pinned payload identity, under this
+/// release's stamp.
 ///
 /// This is the release-refresh contract of RELEASING.md step 4 made
 /// mechanical: after regenerating, the stamp has moved to the new version
-/// and the identities have not moved at all.
+/// and the identities have not moved at all. The regenerated files are not
+/// read again here — `example_assets_match_generator_output` above proves
+/// they are these bytes.
 #[test]
 fn example_assets_keep_their_pinned_payload_identity_under_this_release_stamp() {
-    let tmp = unique_temp_dir("identity");
-    animsmith_testkit::write_example_assets(tmp.path(), |doc, path| {
-        animsmith_gltf::write::write(doc, path).map(|_| ())
-    })
-    .expect("writes example assets");
     let stamp = release_stamp();
 
     for (name, json_sha256, bin_sha256) in PAYLOAD_IDENTITIES {
-        // Both arms, not just the committed one: the pin then holds the
-        // generator to the payload as well as the checked-in bytes, and it
-        // keeps saying so if the byte comparison above is ever narrowed.
-        for (source, path) in [
-            ("committed", asset(name)),
-            ("regenerated", tmp.path().join(name)),
-        ] {
-            let bytes =
-                std::fs::read(&path).unwrap_or_else(|e| panic!("reads {source} {name}: {e}"));
-            let identity = glb_identity::payload_identity(&bytes)
-                .unwrap_or_else(|e| panic!("{source} {name} is a readable GLB: {e}"));
+        let bytes = std::fs::read(asset(name)).expect("reads committed asset");
+        let identity = glb_identity::payload_identity(&bytes)
+            .unwrap_or_else(|e| panic!("{name} is a readable GLB: {e}"));
 
-            assert_eq!(
-                identity.generator.as_deref(),
-                Some(stamp.as_str()),
-                "{source} {name} must carry this release's stamp"
-            );
-            assert_eq!(
-                identity.json_sha256, json_sha256,
-                "{source} {name}: the JSON chunk changed outside asset.generator. A release \
-                 bump does not do this, so something else did: a deliberate fixture change, \
-                 or a change in what the writer emits. Say which in the PR — do not paste \
-                 the new digest."
-            );
-            assert_eq!(
-                identity.bin_sha256, bin_sha256,
-                "{source} {name}: the BIN chunk changed. A release bump does not do this, so \
-                 something else did: a deliberate fixture change, or a change in what the \
-                 writer emits. Say which in the PR — do not paste the new digest."
-            );
-        }
+        assert_eq!(
+            identity.generator.as_deref(),
+            Some(stamp.as_str()),
+            "{name} must carry this release's stamp"
+        );
+        assert_eq!(
+            identity.json_sha256, json_sha256,
+            "{name}: the JSON chunk changed outside asset.generator. A release bump does not \
+             do this, so something else did: a deliberate fixture change, or a change in what \
+             the writer emits. Say which in the PR — do not paste the new digest."
+        );
+        assert_eq!(
+            identity.bin_sha256, bin_sha256,
+            "{name}: the BIN chunk changed. A release bump does not do this, so something \
+             else did: a deliberate fixture change, or a change in what the writer emits. Say \
+             which in the PR — do not paste the new digest."
+        );
     }
 }
 
@@ -275,8 +262,9 @@ fn example_assets_keep_their_pinned_payload_identity_under_this_release_stamp() 
 /// The replacement stamp is longer than this release's, so the JSON chunk,
 /// its four-byte padding, the container's length fields and the offset the
 /// BIN chunk starts at all move: that is what a bump like 0.9.9 → 0.10.0
-/// does to a committed file. The BIN chunk is then compared byte for byte
-/// across the two stamps, not only by digest.
+/// does to a committed file. The BIN half of the identity is the SHA-256 of
+/// that whole chunk, so holding it equal across the two stamps is the
+/// chunks' byte-for-byte comparison.
 #[test]
 fn restamping_an_asset_with_another_release_version_keeps_its_identity() {
     let stamp = format!("{}-restamped", release_stamp());
@@ -289,11 +277,6 @@ fn restamping_an_asset_with_another_release_version_keeps_its_identity() {
             restamped.len(),
             committed.len(),
             "{name}: a longer stamp must re-frame the container"
-        );
-        assert_eq!(
-            glb_identity::bin_chunk(&restamped).expect("restamped GLB"),
-            glb_identity::bin_chunk(&committed).expect("committed GLB"),
-            "{name}: the BIN chunk must survive another release's stamp byte for byte"
         );
 
         let identity = glb_identity::payload_identity(&restamped)
@@ -358,6 +341,41 @@ fn one_moved_keyframe_fails_the_pin_although_the_stamp_and_json_are_intact() {
     assert_ne!(
         mutated.bin_sha256, bin_sha256,
         "a moved key must fail the pin: that is the whole point of the BIN half"
+    );
+}
+
+/// One renamed bone fails the JSON pin while the BIN pin holds — the
+/// other half of the split, and the reason the identity carries two
+/// digests rather than one.
+#[test]
+fn one_renamed_bone_fails_the_json_pin_although_the_buffer_is_intact() {
+    let name = "report-comparison-before.glb";
+    let (json_sha256, bin_sha256) = pinned_identity(name);
+    let mut doc = animsmith_testkit::comparison_report_before_doc();
+
+    // A bone's name is written into the JSON node array and nowhere else:
+    // no accessor, no key time, no sampled value moves with it.
+    doc.skeleton.bones[0].name = format!("{}_renamed", doc.skeleton.bones[0].name);
+
+    let renamed = written_identity(&doc, name);
+    let control = written_identity(&animsmith_testkit::comparison_report_before_doc(), name);
+    assert_eq!(
+        (control.json_sha256.as_str(), control.bin_sha256.as_str()),
+        (json_sha256, bin_sha256),
+        "the unrenamed document must reproduce the pin, or the comparison below proves nothing"
+    );
+
+    assert_eq!(
+        renamed.generator, control.generator,
+        "the rename is invisible to the release stamp"
+    );
+    assert_ne!(
+        renamed.json_sha256, json_sha256,
+        "a renamed bone must fail the pin: that is what the JSON half is for"
+    );
+    assert_eq!(
+        renamed.bin_sha256, bin_sha256,
+        "and it must leave the sampled payload alone"
     );
 }
 
