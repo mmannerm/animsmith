@@ -17,22 +17,18 @@ band-aids exist to hide the result.
 
 ## What AnimSmith measures
 
-The synthetic gait below has a left foot that skates during stance. The
-comparison report samples stance intervals with the run's contact threshold
-and shades them, so the slide is visible as foot motion inside a shaded
-interval.
+The synthetic gait below has a left foot that skates during stance. The report
+samples stance intervals with the run's contact threshold and shades them, so
+the slide is visible as foot motion inside a shaded interval.
 
-<iframe src="../visuals/foot-slide.comparison.html#embed=1" title="AnimSmith before/after comparison report for the synthetic foot-slide pair" width="100%" height="640" loading="lazy"></iframe>
+<iframe src="../visuals/foot-slide-before.report.html#embed=1&finding=3" title="AnimSmith report for report-comparison-before.glb, scrubbed to the first foot-slide finding" width="100%" height="520" loading="lazy"></iframe>
 
-[Open the interactive comparison](../visuals/foot-slide.comparison.html) to
-see the before and after side by side, or the
-[single-clip report of the defective clip](../visuals/foot-slide-before.report.html).
-Press play beside the shared phase to run both sides together, or tick
-**Overlay after on before** to put the two skeletons in one pane. This clip
-declares a loop and a `speed_mps` pin, so the gait panel's caption says its
-curves should end where they began and that the shaded bands are the stance
-intervals `foot-slide` judged: a foot that moves horizontally inside its band
-is the slide.
+[Open the interactive report](../visuals/foot-slide-before.report.html) to
+scrub the exact frames the checks judged; it opens on the first of the two
+`foot-slide` findings. This clip declares a loop and a `speed_mps` pin, so the
+gait panel's caption says its curves should end where they began and that the
+shaded bands are the stance intervals `foot-slide` judged: a foot that moves
+horizontally inside its band is the slide.
 
 ## What the finding looks like
 
@@ -47,6 +43,28 @@ examples/assets/report-comparison-before.glb:
   coverage[bind-pose] insufficient_rotation_evidence ×1 (scopes: first_frame_rest_delta; subjects: acceptance-matrix): only 1 usable first-frame rotation track(s); at least three are required
 2 error(s), 2 warning(s), 1 note(s), 1 coverage gap(s), 0 available prediction facet(s), 0 required-unavailable prediction facet(s)   # exits 1
 ```
+
+## What the repair looks like
+
+The after clip below is an authored repair: both sides come from this
+repository's fixture generator, and the after side is the same gait with those
+defects repaired. It is not the output of an AnimSmith transform, because
+AnimSmith does not re-author contacts.
+
+<iframe src="../visuals/foot-slide.comparison.html#embed=1" title="AnimSmith comparison of the synthetic foot-slide pair and its authored repair" width="100%" height="640" loading="lazy"></iframe>
+
+[Open the interactive comparison](../visuals/foot-slide.comparison.html) to see
+the two side by side; press play beside the shared phase to run them together,
+or tick **Overlay after on before** to put the two skeletons in one pane. The
+skeleton and the root path are the same on both sides, so what the panels show
+is the stance repair.
+
+What AnimSmith itself does here is the measuring and one narrow transform: it
+reports the slide with the stance intervals it judged, and
+`transform --gait-anchor` can rotate an eligible in-place cycle's phase to
+choose a better stride cut. Anchoring changes which frame the cycle starts on,
+not how fast a planted foot travels, so it does not repair this finding.
+Contact cleanup stays DCC work.
 
 ## What to do
 

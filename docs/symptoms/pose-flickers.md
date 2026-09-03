@@ -71,6 +71,31 @@ fixed.glb:
 0 error(s), 0 warning(s), 0 note(s), 1 coverage gap(s), 0 available prediction facet(s), 0 required-unavailable prediction facet(s)   # exits 0
 ```
 
+## What AnimSmith can do
+
+The comparison below is that repair, run by the generator that renders this
+page: the before side is `clip-dirty.glb` and the after side is the file
+`animsmith fix` wrote from it, not a hand-authored clean copy of the clip.
+Each side prints its own SHA-256 above the pose, which is what pins the after
+side to that output — the document records both inputs by content identity and
+carries no path.
+
+<iframe src="../visuals/clip-dirty.fix.comparison.html#embed=1" title="AnimSmith comparison of clip-dirty.glb with the clip animsmith fix wrote from it" width="100%" height="640" loading="lazy"></iframe>
+
+[Open the interactive comparison](../visuals/clip-dirty.fix.comparison.html)
+and press play beside the shared phase to run both sides together, or tick
+**Overlay after on before** to draw the two skeletons in one pane — the before
+solid, the after dashed over it.
+
+The findings list is what changed: the non-unit key and the hemisphere flip on
+the before side, and nothing on the after side. The two pose panels play the
+same swing, for the reason above — both defects were in the representation,
+and AnimSmith normalizes every rotation key it samples — which is also why
+[`diff` reports no measurement moved](../../examples/README.md#2-repairing-an-asset).
+No rig role resolves on this three-bone chain, so the trajectory and gait
+panels report their evidence unavailable: the findings and the two identities
+are what this comparison has to show.
+
 ## What to do
 
 1. **Non-unit or flipped rotation keys.** Run `animsmith fix`. The repair is

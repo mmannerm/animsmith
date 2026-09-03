@@ -9,7 +9,9 @@
 //! them. Every report is rendered by the `animsmith` CLI itself — this
 //! example only decides which invocations to run and where their output
 //! goes — so a committed report is exactly what a reader gets from the
-//! same command on the same committed fixture.
+//! same command on the same committed fixture. An invocation whose input
+//! is the output of a repair reads it from a throwaway scratch directory
+//! an earlier invocation wrote and the committed bytes never name.
 //!
 //! Run (writes to the repo's `docs/visuals/`):
 //!   cargo run -p animsmith --example gen_docs_visuals
@@ -31,8 +33,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let working_dir = repository.join(animsmith_testkit::docs_visuals::WORKING_DIR);
     let animsmith = build_cli(&repository)?;
+    // A report whose after side is an AnimSmith command's own output needs
+    // somewhere to put that output. It is never committed and never named
+    // in a committed byte, so it is a throwaway directory rather than a
+    // path anyone has to choose.
+    let scratch = tempfile::Builder::new()
+        .prefix(animsmith_testkit::docs_visuals::SCRATCH_PREFIX)
+        .tempdir()?;
 
-    animsmith_testkit::docs_visuals::write_docs_visuals(&out_dir, |arguments| {
+    animsmith_testkit::docs_visuals::write_docs_visuals(&out_dir, scratch.path(), |arguments| {
         let status = Command::new(&animsmith)
             .args(arguments)
             .current_dir(&working_dir)

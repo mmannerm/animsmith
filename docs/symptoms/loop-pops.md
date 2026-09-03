@@ -24,9 +24,13 @@ The synthetic walk below was cut a quarter-cycle short. Foot height relative
 to the hips no longer returns to its first-frame value, so the loop cannot
 close.
 
-| Before: `walk-dirty.glb` | After: `walk.glb` |
+| Cut short: `walk-dirty.glb` | Closed cycle: `walk.glb` |
 |---|---|
-| <img src="../visuals/walk-dirty.foot-height.svg" alt="Foot height before the fix: the curves end away from their start" width="360"> | <img src="../visuals/walk.foot-height.svg" alt="Foot height after the fix: the curves return to their start" width="360"> |
+| <img src="../visuals/walk-dirty.foot-height.svg" alt="Foot height in the clip cut short: the curves end away from their start" width="360"> | <img src="../visuals/walk.foot-height.svg" alt="Foot height in the closed cycle: the curves return to their start" width="360"> |
+
+`walk.glb` is the clean control this fixture was cut from, not a repair of
+`walk-dirty.glb`: it is there to show what the closed contract looks like.
+AnimSmith does not re-author the endpoint pose.
 
 <iframe src="../visuals/walk-dirty.report.html#embed=1&finding=0" title="AnimSmith report for walk-dirty.glb, scrubbed to the judged seam frame" width="100%" height="520" loading="lazy"></iframe>
 
@@ -66,7 +70,9 @@ examples/assets/walk.glb:
    both sides of the seam in the DCC.
 3. **Only a duplicated final frame.** When `duplicate-loop-endpoint` warns,
    `animsmith transform --drop-duplicate-loop-endpoint` turns the clip into an
-   open cycle losslessly.
+   open cycle losslessly. Read the loop contract against `loop_endpoint_mode`
+   afterwards: `loop-closure` compares a repeated final sample with frame 0, so
+   an open cycle intentionally does not keep it green.
 
 Who fixes it: the artist, in the DCC. Only a strict redundant endpoint can be
 removed mechanically; pose, tangent and contact repair is DCC work, and loop

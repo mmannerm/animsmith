@@ -818,6 +818,241 @@ fn every_symptom_page_names_its_owner_and_the_evidence_that_closes_its_gate() {
     }
 }
 
+/// The byte range of the `## <title>` section: from that heading's own
+/// start to the next heading of the same level or higher.
+///
+/// Read from heading events rather than from a `find("## ")`, so a `##`
+/// inside a fenced block or a differently spelled heading cannot open or
+/// close a section.
+fn section_span(markdown: &str, title: &str) -> Option<std::ops::Range<usize>> {
+    let mut start: Option<usize> = None;
+    let mut heading: Option<usize> = None;
+    let mut text = String::new();
+    for (event, range) in Parser::new_ext(markdown, options()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading { .. }) => {
+                heading = Some(range.start);
+                text.clear();
+            }
+            Event::Text(part) | Event::Code(part) if heading.is_some() => text.push_str(&part),
+            Event::End(TagEnd::Heading(level)) => {
+                let offset = heading.take().expect("a heading ends after it starts");
+                match start {
+                    None if level == HeadingLevel::H2 && text.trim() == title => {
+                        start = Some(offset);
+                    }
+                    Some(start) if level <= HeadingLevel::H2 => return Some(start..offset),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    start.map(|start| start..markdown.len())
+}
+
+/// The `src` of every `<iframe>` the page **renders**, in document
+/// order. A frame inside a fenced block is an example rather than
+/// something a reader is shown, so it cannot satisfy a promise here.
+fn frames(markdown: &str) -> Vec<String> {
+    animsmith_testkit::docs_markdown::rendered_html_references(markdown, &[("iframe", "src")])
+        .into_iter()
+        .map(|(_, source)| source)
+        .collect()
+}
+
+/// The committed fixture a page is about: the one named by the first
+/// `animsmith` command in its own transcripts that runs one. A page opens
+/// with commands that take no clip, so this is the first *fixture*
+/// argument rather than the first command.
+///
+/// Taking it from the page rather than from a table beside the gate is
+/// what binds a page to its own clip: a page that embedded the report of
+/// somebody else's fixture would still be showing a real measurement of a
+/// real clip, and only the page's own commands say which clip that should
+/// be. It is read through the shared transcript reader and only from the
+/// command line, so a fixture named in quoted *output* — or by a
+/// `cargo` line the gate never runs — cannot claim the page.
+fn documented_fixture(markdown: &str, page: &str) -> Option<String> {
+    fenced_blocks(markdown, "console")
+        .into_iter()
+        .flat_map(|block| animsmith_testkit::docs_transcripts::documented_commands(&block, page))
+        .filter(|documented| documented.command.starts_with("animsmith "))
+        .find_map(|documented| {
+            documented
+                .command
+                .split_whitespace()
+                .filter_map(|argument| argument.strip_prefix("examples/assets/"))
+                .find(|name| name.ends_with(".glb"))
+                .map(str::to_owned)
+        })
+}
+
+/// The check ids a page names in its header, above its first `##`
+/// section.
+fn header_checks(markdown: &str) -> BTreeSet<String> {
+    let registered = registered_check_ids();
+    let mut named = BTreeSet::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Heading {
+                level: HeadingLevel::H2,
+                ..
+            }) => break,
+            Event::Code(code) if registered.contains(code.as_ref()) => {
+                named.insert(code.into_string());
+            }
+            _ => {}
+        }
+    }
+    named
+}
+
+/// The findings a committed single-clip report embeds, in the order the
+/// viewer lists them and `#finding=N` indexes them.
+fn report_findings(visual: &std::path::Path) -> Vec<serde_json::Value> {
+    const MARKER: &str = "<script type=\"application/json\" id=\"report-data\">";
+    let html = std::fs::read_to_string(visual)
+        .unwrap_or_else(|error| panic!("reads {}: {error}", visual.display()));
+    let start = html
+        .find(MARKER)
+        .unwrap_or_else(|| panic!("{} carries its report data", visual.display()))
+        + MARKER.len();
+    let end = html[start..]
+        .find("</script>")
+        .unwrap_or_else(|| panic!("{} closes its report data", visual.display()))
+        + start;
+    let data: serde_json::Value =
+        serde_json::from_str(&html[start..end]).expect("report data is JSON");
+    data["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{} lists findings", visual.display()))
+        .clone()
+}
+
+/// The first report a symptom page embeds is its own defective clip's,
+/// not a picture of that clip already repaired.
+///
+/// Every page embeds, inside its "What AnimSmith measures" section, the
+/// single-clip report of the fixture its own transcripts run, and that is
+/// the first report any of its frames carry; a comparison, which
+/// shows two clips and which an absent finding on one side can flatter,
+/// comes later under its own heading. This is about report documents
+/// rather than still pictures: `loop-pops.md` opens the same section with
+/// two foot-height charts, which is the page reading well and not a
+/// repaired clip standing in for the defective one.
+///
+/// Where the frame deep-links a finding, that finding is the first one of
+/// its check on the clip, and its check is one the page's header names —
+/// so the viewer opens on the symptom the page is about rather than on
+/// whatever the renderer happens to list first.
+#[test]
+fn the_first_report_a_symptom_page_embeds_is_its_defective_clips_own() {
+    let visuals = repo("docs/visuals");
+    let fixtures = repo(animsmith_testkit::docs_visuals::WORKING_DIR);
+    let mut unbound: Vec<String> = Vec::new();
+    for page in symptom_pages() {
+        let path = format!("docs/symptoms/{page}");
+        let markdown = markdown(&path);
+        let Some(fixture) = documented_fixture(&markdown, &path) else {
+            assert!(
+                frames(&markdown).is_empty(),
+                "{path} runs no committed fixture of its own, so it must embed no report: {:?}",
+                frames(&markdown)
+            );
+            unbound.push(page);
+            continue;
+        };
+        assert!(
+            fixtures.join(&fixture).is_file(),
+            "{path} runs {fixture}, which examples/assets/ does not hold"
+        );
+
+        let section = section_span(&markdown, "What AnimSmith measures")
+            .unwrap_or_else(|| panic!("{path} must carry a `What AnimSmith measures` section"));
+        assert!(
+            frames(&markdown[..section.start]).is_empty(),
+            "{path} embeds a report above its `What AnimSmith measures` heading: {:?}",
+            frames(&markdown[..section.start])
+        );
+        let embedded = frames(&markdown[section.clone()]);
+        let source = embedded.first().unwrap_or_else(|| {
+            panic!("{path} embeds no report in its `What AnimSmith measures` section")
+        });
+
+        let name = source
+            .split('#')
+            .next()
+            .and_then(|path| path.strip_prefix("../visuals/"))
+            .unwrap_or_else(|| panic!("{path} must embed a document under docs/visuals: {source}"));
+        assert!(
+            visuals.join(name).is_file(),
+            "{path} embeds {name}, which docs/visuals/ does not hold"
+        );
+        let command = animsmith_testkit::docs_visuals::COMMANDS
+            .iter()
+            .find(|command| command.output == name)
+            .unwrap_or_else(|| panic!("{path} embeds {name}, which no generator writes"));
+        assert!(
+            !command.arguments.contains(&"--compare-after"),
+            "the first report {path} embeds is {name}, which is a two-clip comparison: a page \
+             embeds the defective clip's own report first and shows a comparison under a \
+             later heading"
+        );
+        assert_eq!(
+            command
+                .arguments
+                .iter()
+                .copied()
+                .filter(|argument| argument.ends_with(".glb"))
+                .collect::<Vec<_>>(),
+            vec![fixture.as_str()],
+            "{path} runs {fixture} and embeds {name}, which is a report of another clip"
+        );
+
+        // The deep link scrubs the viewer to `findings[N]`, so an index
+        // the report no longer has opens on nothing, and one that lands
+        // on a different check opens on the wrong symptom.
+        if let Some(index) = source
+            .split(['#', '&'])
+            .find_map(|option| option.strip_prefix("finding="))
+        {
+            let index: usize = index
+                .parse()
+                .unwrap_or_else(|error| panic!("{path}: unreadable finding index: {error}"));
+            let findings = report_findings(&visuals.join(name));
+            let finding = findings.get(index).unwrap_or_else(|| {
+                panic!(
+                    "{path} opens {name} on finding {index}, which it does not have \
+                     ({} finding(s))",
+                    findings.len()
+                )
+            });
+            let check = finding["check"]
+                .as_str()
+                .expect("a finding names its check");
+            assert!(
+                header_checks(&markdown).contains(check),
+                "{path} opens {name} on a {check:?} finding, which its header does not name"
+            );
+            assert_eq!(
+                findings
+                    .iter()
+                    .position(|row| row["check"] == finding["check"]),
+                Some(index),
+                "{path} opens {name} on finding {index}, which is not the first {check:?} \
+                 finding on that clip"
+            );
+        }
+    }
+    assert_eq!(
+        unbound,
+        ["identity-mismatch.md"],
+        "identity is the one symptom answered by `inspect` and a collection manifest rather \
+         than by a measurement of one clip; every other page runs the clip it is about"
+    );
+}
+
 /// The symptom index is the router: every page in its directory has a row
 /// that reaches it, every row reaches a page in that directory, and the
 /// runtime problems with no page of their own — the two that are not
