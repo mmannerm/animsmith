@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/mmannerm/animsmith/compare/v0.12.0...v0.13.0) - 2026-09-03
+
+### Added
+
+- *(report)* play two clips of one document side by side at a shared phase
+- *(report)* overlay a gait group's members on one phase-aligned figure
+- *(cli)* name the compiled features in --version
+- *(report)* overlay the after skeleton on the before pane
+
+### Fixed
+
+- *(core)* validate a gait group's tolerances on the embedding path too
+- *(report)* carry gait-group membership as data, not a delimited attribute
+- *(report)* keep each comparison pane's own label under the overlay
+
 ## [0.12.0](https://github.com/mmannerm/animsmith/compare/v0.11.1...v0.12.0) - 2026-09-03
 
 ### Added
