@@ -101,19 +101,18 @@ report feature. The `--no-default-features` build must keep working as a
 pure-Rust glTF-only binary:
 
 ```console
-$ export CARGO_TARGET_DIR=target/no-default-features
-$ cargo test -p animsmith --test cli_contract --no-default-features
-$ cargo test -p animsmith --test foot_cycle_cli --no-default-features
-$ cargo test -p animsmith --test scale_cli --no-default-features
-$ cargo test -p animsmith --test transition_pose_cli --no-default-features
-$ cargo build -p animsmith --no-default-features
-$ cargo build -p animsmith --release --no-default-features
+$ cargo test -p animsmith --test cli_contract --no-default-features --target-dir target/no-default-features
+$ cargo test -p animsmith --test foot_cycle_cli --no-default-features --target-dir target/no-default-features
+$ cargo test -p animsmith --test scale_cli --no-default-features --target-dir target/no-default-features
+$ cargo test -p animsmith --test transition_pose_cli --no-default-features --target-dir target/no-default-features
+$ cargo build -p animsmith --no-default-features --target-dir target/no-default-features
+$ cargo build -p animsmith --release --no-default-features --target-dir target/no-default-features
 ```
 
-The redirected target directory is not optional bookkeeping. Without it these
-builds land on `target/debug/animsmith`, `target/release/animsmith`, and
-`target/doc`, and whichever feature set ran last is what stays there; see
-Evaluation Artifacts below.
+`--target-dir` is not optional bookkeeping. Without it these builds land on
+`target/debug/animsmith`, `target/release/animsmith`, and `target/doc`, and
+whichever feature set ran last is what stays there; see Evaluation Artifacts
+below. `just github-community` rejects a gate command that omits it.
 
 In that build, glTF inspect, measure, lint, transform, fix, scale, diff,
 `generate addressability`, and `collection transform-foot-cycle` stay
@@ -130,40 +129,34 @@ rather than inside the feature-gated `assembly` module. Both `scale_cli` and
 ## Evaluation Artifacts
 
 A checkout holds more than one CLI, and they do not have the same
-capabilities. Feature-variant builds write to `target/no-default-features/`,
-so the conventional paths hold default-feature artifacts only:
+capabilities. Every `--no-default-features` command carries
+`--target-dir target/no-default-features`, so no feature-variant build writes
+to the conventional paths:
 
 | Path | Compiled features | Use |
 |---|---|---|
-| `target/release/animsmith` | `fbx`, `report` | external evaluation, after a green `just gates` |
-| `target/debug/animsmith` | `fbx`, `report` | development and the local skill gates |
+| `target/release/animsmith` | `fbx`, `report`, proven by probing | external evaluation, after a green `just gates` |
+| `target/debug/animsmith` | default: no feature-variant build writes here | development and the local skill gates |
 | `target/no-default-features/{debug,release}/animsmith` | none | proving the minimal build still works |
 | a published release archive | `fbx`, `report` | external evaluation, verified per [RELEASING.md](RELEASING.md) |
 
-`just release-cli` is what proves the first row rather than assuming it. It
-builds both release variants and probes each one: both must admit glTF, the
-retained `target/release/animsmith` must also admit the self-authored FBX
-fixture and expose `report`, and the isolated minimal binary must refuse those
-two. It then prints the provenance record to keep beside an evaluation's
-results:
+The first row is the only one this repository proves rather than arranges, and
+`just release-cli` is what proves it. It builds nothing, so it judges the
+artifacts a run leaves behind: both binaries must admit glTF, the retained
+`target/release/animsmith` must also admit the self-authored FBX fixture and
+expose `report`, and the isolated minimal binary must refuse those two. It then
+prints a provenance record to keep beside an evaluation's results — the binary
+path, its SHA-256, its `--version` line, the capabilities the probes proved,
+`git rev-parse HEAD`, and `git describe --tags --dirty`. That last field reads
+`no tag reachable` in a shallow or tag-less checkout, which is what CI clones;
+it is not degraded to a bare hash, because a hash there would read like a
+release name while naming none.
 
-```console
-$ just release-cli
-release-cli: provenance of the retained default-feature CLI
-  binary:       target/release/animsmith
-  sha256:       <sha256 of that file>
-  version:      <the --version line, which names the compiled features>
-  capabilities: <what the probes proved, not what the binary claims>
-  commit:       <git rev-parse HEAD>
-  describe:     <git describe --tags --dirty --always>
-```
-
-`just gates` runs that recipe, and CI runs the same script after its release
-builds. The isolation itself is held in place separately, by
-`scripts/check-feature-isolation.py` under `just github-community`: it refuses
-a justfile or a reusable checks workflow whose `--no-default-features` commands
-would write to the shared target directory, and self-tests that rule against
-mutated fixtures on every run.
+`just gates` runs it as its last line and the CI test job as that job's last
+step, so what it attests to is what the completed run retained. The isolation
+itself is held in place separately, by `just github-community`: it refuses any
+file the gate runs whose `--no-default-features` cargo commands would write to
+the shared target directory.
 
 ## Cross-platform determinism
 

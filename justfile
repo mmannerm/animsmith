@@ -1,11 +1,6 @@
 # Task runner for animsmith. `just gates` green locally == PR CI green.
 
 worktree_root := parent_directory(justfile_directory()) / "animsmith-worktrees"
-# Feature-variant builds write here instead of the conventional paths, so
-# target/debug, target/release, and target/doc only ever hold default-feature
-# artifacts. Nested under target/ so the existing .gitignore entry and the CI
-# target-directory cache both keep covering it.
-no_default_target := "target/no-default-features"
 # Keep generated documentation beside, never inside, this checkout.  This is
 # portable and avoids sharing a mutable staging directory between worktrees.
 docs_stage := env_var_or_default("ANIMSMITH_DOCS_STAGE", justfile_directory() + "-docs-site")
@@ -92,7 +87,7 @@ test:
 # Render public docs with rustdoc warnings and missing docs denied.
 doc:
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
-    RUSTDOCFLAGS="-D warnings -D missing_docs" CARGO_TARGET_DIR="{{no_default_target}}" cargo doc -p animsmith --no-default-features --no-deps
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps --target-dir target/no-default-features
 
 # Stage canonical tracked Markdown and generate navigation from docs/README.md.
 docs-stage:
@@ -142,11 +137,11 @@ bevy-readback-test:
 release-packaging:
     bash scripts/check-release-packaging.sh
 
-# Prove the retained release CLI is the default-feature build, and print the
-# provenance record an external evaluation should keep beside its results.
+# Prove the release CLI a gate run leaves at target/release/animsmith is the
+# default-feature build, and print the provenance record an external evaluation
+# should keep beside its results. Builds nothing on purpose: it has to judge
+# the artifacts that are there, so `gates` runs it last of all.
 release-cli:
-    cargo build -p animsmith --release
-    CARGO_TARGET_DIR="{{no_default_target}}" cargo build -p animsmith --release --no-default-features
     bash scripts/check-release-cli.sh
 
 # Behavioral and published-report checks for the reusable animation-pack skill.
@@ -205,17 +200,20 @@ gates: require-cargo-deny require-typos
     just docs-check
     typos
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
-    RUSTDOCFLAGS="-D warnings -D missing_docs" CARGO_TARGET_DIR="{{no_default_target}}" cargo doc -p animsmith --no-default-features --no-deps
-    CARGO_TARGET_DIR="{{no_default_target}}" cargo test -p animsmith --test cli_contract --no-default-features
-    CARGO_TARGET_DIR="{{no_default_target}}" cargo test -p animsmith --test foot_cycle_cli --no-default-features
-    CARGO_TARGET_DIR="{{no_default_target}}" cargo test -p animsmith --test measure_mesh --no-default-features
-    CARGO_TARGET_DIR="{{no_default_target}}" cargo test -p animsmith --test scale_cli --no-default-features
-    CARGO_TARGET_DIR="{{no_default_target}}" cargo build -p animsmith --no-default-features
-    just release-cli
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps --target-dir target/no-default-features
+    cargo test -p animsmith --test cli_contract --no-default-features --target-dir target/no-default-features
+    cargo test -p animsmith --test foot_cycle_cli --no-default-features --target-dir target/no-default-features
+    cargo test -p animsmith --test measure_mesh --no-default-features --target-dir target/no-default-features
+    cargo test -p animsmith --test scale_cli --no-default-features --target-dir target/no-default-features
+    cargo build -p animsmith --no-default-features --target-dir target/no-default-features
+    cargo build -p animsmith --release
+    cargo build -p animsmith --release --no-default-features --target-dir target/no-default-features
     just package-inventory
     just release-packaging
     just animation-pack-skill
     just report-browser
+    # Last, so it judges the artifacts this whole run leaves behind.
+    just release-cli
 
 # See .agent-instructions/shared.md for the required env var.
 # Env-gated reference tests against licensed assets plus CI-visible FBX coverage.

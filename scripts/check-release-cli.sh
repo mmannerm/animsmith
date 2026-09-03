@@ -9,13 +9,17 @@
 # ran last, and `--version` printed the same line either way -- so a pack
 # evaluation could select a binary that silently rejects FBX.
 #
-# `scripts/check-feature-isolation.py` keeps the two builds writing to
-# different directories. This script proves what is actually at each path, by
-# behavior rather than by the version line: both binaries must admit glTF,
-# which every build reads, while only the retained one may admit FBX or expose
-# `report` and the isolated minimal one must refuse both. Running the same
-# probes both ways is what shows the check can tell the variants apart rather
-# than passing on anything that executes.
+# `scripts/check-github-community-files.sh` keeps the two builds writing to
+# different directories. This script judges what a completed run actually left
+# at each path, by behavior rather than by the version line: both binaries must
+# admit glTF, which every build reads, while only the retained one may admit
+# FBX or expose `report` and the isolated minimal one must refuse both. Running
+# the same probes both ways is what shows the check can tell the variants apart
+# rather than passing on anything that executes.
+#
+# It builds nothing. `just gates` runs it last of all, and the CI test job runs
+# it as that job's final step, so it attests to the artifacts the whole run
+# leaves behind rather than to something it just produced itself.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,8 +27,8 @@ cd "$repo_root"
 
 export LC_ALL=C
 
-# Where scripts/check-feature-isolation.py requires every feature-variant build
-# to write, and therefore where the minimal artifact this script probes lives.
+# Where every `--no-default-features` command sends its artifacts, and
+# therefore where the minimal binary this script probes is found.
 NO_DEFAULT_TARGET="target/no-default-features"
 
 # Self-authored fixtures, so the admission probes need no licensed asset.
@@ -52,16 +56,16 @@ binary_in() {
 }
 
 retained="$(binary_in target/release)" \
-  || fail "target/release/animsmith is missing; run 'just release-cli' or 'cargo build -p animsmith --release'"
+  || fail "target/release/animsmith is missing; run 'cargo build -p animsmith --release' first"
 minimal="$(binary_in "$NO_DEFAULT_TARGET/release")" \
-  || fail "$NO_DEFAULT_TARGET/release/animsmith is missing; run 'just release-cli'"
+  || fail "$NO_DEFAULT_TARGET/release/animsmith is missing; run 'cargo build -p animsmith --release --no-default-features --target-dir target/no-default-features' first"
 
 for fixture in "$FBX_FIXTURE" "$GLTF_FIXTURE"; do
   test -f "$fixture" || fail "$fixture is missing; the admission probes need it"
 done
 
-# Each probe names a capability for the diagnostics and proves it by executing
-# the binary, never by reading its version line.
+# Each probe proves a capability by running the binary, never by reading its
+# version line, and names that capability for the diagnostics.
 probe_gltf_admission() {
   local inspected
   inspected="$("$1" inspect "$GLTF_FIXTURE" 2>/dev/null)" || return 1
@@ -79,63 +83,58 @@ probe_report_command() {
 }
 
 # glTF is the format every build reads, so both artifacts must admit it. That
-# also keeps the negative branch honest: a minimal binary that failed every
-# probe because it is broken rather than because it lacks the features would
-# fail here.
-universal_probes=(
-  "glTF admission (inspect names the example clip's skeleton and its 'swing' clip):probe_gltf_admission"
+# is also what keeps the negative branch below honest: a minimal binary that
+# failed every probe because it is broken rather than because it lacks the
+# features would fail here instead of confirming the check.
+universal_probes=(probe_gltf_admission)
+universal_capabilities=(
+  "glTF admission (inspect names the example clip's skeleton and its 'swing' clip)"
 )
 
 # The capabilities only the default feature set provides.
-default_feature_probes=(
-  "FBX admission (inspect names the fixture's skeleton and its 'take' clip):probe_fbx_admission"
-  "report subcommand (report --help):probe_report_command"
+default_feature_probes=(probe_fbx_admission probe_report_command)
+default_feature_capabilities=(
+  "FBX admission (inspect names the fixture's skeleton and its 'take' clip)"
+  "report subcommand (report --help)"
 )
 
-# The version line names the compiled features, but a label the build stamps on
-# itself is not a capability -- the probes above are the evidence. Assert only
-# that both artifacts report this checkout's version. A Windows checkout can
-# hold CRLF and the manifest match is whole-line, so strip the carriage returns.
-manifest_versions="$(sed -n 's/^version = "\(.*\)"$/\1/p' <(tr -d '\r' <Cargo.toml))"
-manifest_version="${manifest_versions%%$'\n'*}"
-test -n "$manifest_version" || fail "Cargo.toml has no workspace version"
-
-require_version_line() {
-  local binary="$1" reported line
-  reported="$("$binary" --version)" || fail "$binary cannot report --version"
-  line="${reported%%$'\n'*}"
-  case "$line" in
-  "animsmith $manifest_version"*) printf '%s\n' "$line" ;;
-  *) fail "$binary reports '$line'; expected it to start with 'animsmith $manifest_version'" ;;
-  esac
-}
-
-retained_version="$(require_version_line "$retained")"
-require_version_line "$minimal" >/dev/null
+retained_probes=("${universal_probes[@]}" "${default_feature_probes[@]}")
+retained_capabilities=("${universal_capabilities[@]}" "${default_feature_capabilities[@]}")
 
 proven=""
-for entry in "${universal_probes[@]}" "${default_feature_probes[@]}"; do
-  capability="${entry%%:*}"
-  probe="${entry##*:}"
-  "$probe" "$retained" \
+for index in "${!retained_probes[@]}"; do
+  capability="${retained_capabilities[index]}"
+  "${retained_probes[index]}" "$retained" \
     || fail "$retained does not provide $capability, so it is not the default-feature build a released CLI ships"
   proven="${proven:+$proven; }$capability"
 done
 
-for entry in "${universal_probes[@]}"; do
-  capability="${entry%%:*}"
-  probe="${entry##*:}"
-  "$probe" "$minimal" \
+for index in "${!universal_probes[@]}"; do
+  capability="${universal_capabilities[index]}"
+  "${universal_probes[index]}" "$minimal" \
     || fail "$minimal does not provide $capability, which every build owes, so its refusals below would not mean 'this feature is absent'"
 done
 
-for entry in "${default_feature_probes[@]}"; do
-  capability="${entry%%:*}"
-  probe="${entry##*:}"
-  if "$probe" "$minimal"; then
+for index in "${!default_feature_probes[@]}"; do
+  capability="${default_feature_capabilities[index]}"
+  if "${default_feature_probes[index]}" "$minimal"; then
     fail "$minimal provides $capability, so these probes cannot tell a default-feature build from a minimal one"
   fi
 done
+
+# The version line is recorded, not trusted: `cli_contract.rs` pins its shape
+# under both feature sets, and the probes above are what establish capability.
+reported_version="$("$retained" --version)" || fail "$retained cannot report --version"
+retained_version="${reported_version%%$'\n'*}"
+
+# `--always` would degrade a tag-less checkout to a bare hash that reads like a
+# describe, which is exactly wrong in a provenance record: CI checks out
+# shallow and without tags, so the field would silently stop naming a release.
+# Say so instead.
+describe_of_head() {
+  git describe --tags --dirty 2>/dev/null && return 0
+  printf 'no tag reachable (shallow or untagged checkout)\n'
+}
 
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -157,5 +156,5 @@ release-cli: provenance of the retained default-feature CLI
   version:      $retained_version
   capabilities: $proven
   commit:       $(git rev-parse HEAD 2>/dev/null || echo "unavailable outside a Git checkout")
-  describe:     $(git describe --tags --dirty --always 2>/dev/null || echo "unavailable outside a Git checkout")
+  describe:     $(describe_of_head)
 RECORD

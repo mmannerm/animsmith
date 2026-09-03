@@ -49,15 +49,38 @@ require_animation_pack_workflow() {
   python3 scripts/check-animation-pack-workflow.py --self-test
 }
 
-# Feature-variant builds must not overwrite the conventional target paths
-# (#653). The workflow half needs YAML decoding, because a step selects the
-# target directory through its env mapping rather than through its run text.
+# `just gates` and CI both build the CLI twice. While a --no-default-features
+# build wrote to the conventional target directory, the artifact a gate run
+# left at target/release/animsmith was whichever variant ran last -- a binary
+# that rejects FBX while `--version` looked identical (#653). Every such
+# command, in any file the gate runs, must redirect its own artifacts.
 require_feature_isolation() {
+  local offenders
+
   require_file justfile
   require_file .github/workflows/checks.yml
-  python3 scripts/check-feature-isolation.py \
-    --justfile justfile --workflow .github/workflows/checks.yml
-  python3 scripts/check-feature-isolation.py --self-test
+
+  # Comment lines are skipped so a prose mention of the flags cannot satisfy
+  # the rule, and so commenting a command out cannot hide it.
+  offenders="$(
+    awk '
+      { line = $0; sub(/^[[:space:]]+/, "", line) }
+      line ~ /^#/ { next }
+      index(line, "cargo ") == 0 { next }
+      index(line, "--no-default-features") == 0 { next }
+      index(line, "--target-dir target/no-default-features") { next }
+      { printf "%s:%d: %s\n", FILENAME, FNR, line }
+    ' justfile .github/workflows/checks.yml scripts/*.sh
+  )"
+  test -z "$offenders" || fail "every --no-default-features cargo command must carry --target-dir target/no-default-features, or it overwrites the default-feature artifact at target/release/animsmith -- $offenders"
+
+  require_literal justfile "just release-cli" "the retained release CLI proof"
+  require_literal .github/workflows/checks.yml "bash scripts/check-release-cli.sh" \
+    "the retained release CLI proof"
+  # The path is spelled in three files; the probe would report a missing binary
+  # rather than a drifted contract if this one fell out of step.
+  require_literal scripts/check-release-cli.sh "target/no-default-features" \
+    "the isolated target directory whose artifact it probes"
 }
 
 # A release published with the repository GITHUB_TOKEN creates no workflow run,

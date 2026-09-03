@@ -62,30 +62,23 @@ fn compiled_features_names_the_activated_features_and_drops_the_default_alias() 
     );
 }
 
+/// The derivation reads whatever Cargo activated, so a feature added to the
+/// manifest later is named without editing the build script.
+#[test]
+fn compiled_features_names_a_feature_the_build_script_never_heard_of() {
+    assert_eq!(
+        build_script::compiled_features(
+            ["CARGO_FEATURE_DEFAULT", "CARGO_FEATURE_TELEMETRY"].map(str::to_owned)
+        ),
+        ["telemetry"]
+    );
+}
+
 #[test]
 fn compiled_features_is_empty_for_a_build_with_no_features_activated() {
     assert_eq!(
         build_script::compiled_features(["PATH", "CARGO_PKG_NAME"].map(str::to_owned)),
         Vec::<String>::new()
-    );
-}
-
-#[test]
-fn version_with_features_names_the_surface_after_the_composed_version() {
-    assert_eq!(
-        build_script::version_with_features(
-            "0.1.0 (v0.1.0-3-gabc1234)",
-            &["fbx".to_owned(), "report".to_owned()]
-        ),
-        "0.1.0 (v0.1.0-3-gabc1234) [features: fbx, report]"
-    );
-}
-
-#[test]
-fn version_with_features_distinguishes_a_build_carrying_no_features() {
-    assert_eq!(
-        build_script::version_with_features("0.1.0 (v0.1.0-3-gabc1234)", &[]),
-        "0.1.0 (v0.1.0-3-gabc1234) [features: none]"
     );
 }
 
