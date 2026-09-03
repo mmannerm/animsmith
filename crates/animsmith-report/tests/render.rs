@@ -1957,6 +1957,67 @@ fn both_reports_embed_one_shared_fragment_runtime() {
     }
 }
 
+#[test]
+fn both_single_clip_forms_offer_pairing_and_only_a_full_one_names_the_two_halves() {
+    let doc = chart_roles_fixture();
+    let grids = MetricGrids::new(&doc);
+    let roles = chart_roles(&doc);
+    let config = no_groups();
+    let single = |options| {
+        animsmith_report::render(animsmith_report::ReportInputs {
+            options,
+            ..animsmith_report::ReportInputs::new(&grids, &roles, &[], &config)
+        })
+    };
+    let full_html = single(full());
+    let evidence_html = single(evidence_only());
+
+    // Pairing selects which clips' charts are shown as well as which poses,
+    // so an evidence-only report offers it too.
+    for (kind, html) in [("full", &full_html), ("evidence-only", &evidence_html)] {
+        assert!(
+            html.contains("<select id=\"with-select\"></select>"),
+            "{kind}: the document declares the control and the viewer fills it"
+        );
+        // Both selects are named the same way, and the second one's name is
+        // the word the label and the fragment key share.
+        for (control, name) in [("clip-select", "clip"), ("with-select", "with")] {
+            assert!(
+                html.contains(&format!("<label for=\"{control}\">{name}</label>")),
+                "{kind}: {control} is named in the control row"
+            );
+        }
+        let controls = html
+            .find("<div id=\"controls\">")
+            .expect("the control row is rendered");
+        let row_end = html[controls..].find("</div>").expect("the row closes") + controls;
+        assert!(
+            (controls..row_end).contains(&html.find("id=\"with-select\"").expect("present")),
+            "{kind}: the pairing control sits in the transport row"
+        );
+    }
+
+    // The colour key names the two halves of the pose view, so it stands
+    // exactly where a pose view does — and an evidence-only report's
+    // omission notice already stands there instead.
+    assert!(has_id(&full_html, "gl") && has_id(&full_html, "pane-labels"));
+    assert!(
+        !has_id(&evidence_html, "gl") && !has_id(&evidence_html, "pane-labels"),
+        "an evidence-only report renders neither the canvas nor a key to its halves"
+    );
+    assert!(
+        element_with_id(&evidence_html, "gl-notice").contains("Pose playback omitted"),
+        "the omission notice stands where both panes would"
+    );
+
+    // The comparison's two clips are declared by its inputs, so it has no
+    // pairing to offer.
+    assert!(
+        !has_id(&comparison_documents(full()), "with-select"),
+        "the comparison document renders no pairing control"
+    );
+}
+
 /// Each `<figure class="chart">` block, which is the unit the documentation
 /// site lifts out of a report.
 fn chart_figures(html: &str) -> Vec<String> {

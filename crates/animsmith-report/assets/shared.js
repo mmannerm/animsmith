@@ -34,8 +34,10 @@ function animsmithRgb(hex) {
 
 // Bounded, total parser for a report's URL fragment: `&`-separated
 // `key=value` pairs. `embed` strips the page chrome for an iframe, `theme`
-// pins light or dark, and `clip`, `frame`, and `finding` are the deep-link
-// selectors.
+// pins light or dark, and `clip`, `with`, `frame`, and `finding` are the
+// deep-link selectors. `with` names a second clip of the same document to
+// show beside the selected one; an empty or unusable value is the default,
+// which is the selected clip alone.
 //
 // Each option has three states, because a fragment is navigated as well as
 // loaded: `undefined` when the key never appeared (leave that state alone),
@@ -64,6 +66,7 @@ function animsmithFragmentOptions(hash) {
       case "embed": options.embed = value === "1" || value === "true"; break;
       case "theme": options.theme = value === "light" || value === "dark" ? value : null; break;
       case "clip": options.clip = animsmithDecoded(value); break;
+      case "with": options.with = animsmithDecoded(value); break;
       case "frame": options.frame = animsmithIndex(value); break;
       case "finding": options.finding = animsmithIndex(value); break;
       default: break;
@@ -82,6 +85,33 @@ function animsmithDecoded(value) {
 // count, so no separate length rule is needed here.
 function animsmithIndex(value) {
   return /^[0-9]+$/.test(value) ? Number(value) : null;
+}
+
+// Two clips shown together are shown at one normalized phase, and both
+// documents place the second one against the first the same way: the grid
+// frame nearest that phase, in the frame count the clip actually has.
+//
+// It selects a sample the checks already judged — it never resamples,
+// interpolates, or retimes — which is what the disclosure says wherever a
+// document shows two timelines at once. Both viewers label the mapping with
+// that one sentence, and both label both source times beside it, so the
+// reader is never shown one clock for two clips.
+const ANIMSMITH_PHASE_DISCLOSURE = "normalized phase, not a time warp";
+
+// Where a frame sits in its own clip, on [0, 1]. A clip with fewer than two
+// frames has no span to sit in, so every frame of it is phase 0 rather than
+// a division by zero.
+function animsmithPhaseOf(frames, at) {
+  return frames > 1 ? at / (frames - 1) : 0;
+}
+
+// The inverse: the clip's own grid frame nearest a phase. A phase past the
+// end lands on the last frame, and anything unreadable — a negative, a NaN
+// from an empty clip — lands on the first, so the result is always a frame
+// the clip has.
+function animsmithFrameAtPhase(frames, phase) {
+  if (!(frames > 1) || !(phase > 0)) return 0;
+  return Math.min(frames - 1, Math.round(phase * (frames - 1)));
 }
 
 // Repaint hook for a reader who switches their system theme with the report

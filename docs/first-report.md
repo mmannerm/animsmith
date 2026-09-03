@@ -13,7 +13,7 @@ same synthetic samples used in [first lint](first-lint.md).
 
 ```console
 $ animsmith --config examples/walk.animsmith.toml report examples/assets/walk-dirty.glb -o report.html
-wrote report.html (1 clip(s), 3 finding(s), 0.0 MB)   # exits 0
+wrote report.html (1 clip(s), 3 finding(s), 0.1 MB)   # exits 0
 ```
 
 Open `report.html` in a browser. This is the same report, embedded here and
@@ -22,7 +22,10 @@ scrubbed to the first finding:
 <iframe src="visuals/walk-dirty.report.html#embed=1&finding=0" title="AnimSmith report for walk-dirty.glb" width="100%" height="520" loading="lazy"></iframe>
 
 [Open it full size](visuals/walk-dirty.report.html). Drag to orbit, use the
-wheel to zoom, and click a finding to jump to its frame. The charts share a
+wheel to zoom, and click a finding to jump to its frame. When the file holds
+more than one clip, the `with` control plays a second one beside the first at
+the same normalized phase, with both source times labelled — a presentation
+mapping between two timelines, not a retime or a blend. The charts share a
 playhead with the 3D view, and each chart caption says what to look for in
 it — derived from what your configuration declares for that clip and what the
 checks judged, not from an assumption about what the clip is. A clip declared

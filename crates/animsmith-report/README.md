@@ -16,6 +16,14 @@ plays back exactly those frames in a small hand-written WebGL viewer.
 There is no CDN, no three.js dependency, and no JavaScript resampling;
 when a finding names a frame, the viewer scrubs to that judged frame.
 
+The viewer's `with` control plays a second clip of the same document beside
+the selected one, in two scissored halves of the one canvas, through one
+camera fitted to both clips' bounds, with a key naming each half in the token
+its skeleton is drawn in. Each half is shown at the frame nearest a shared
+normalized phase in its own grid — the same frame its chart playhead and path
+dot use — with both source times labelled: a presentation mapping between two
+timelines, not a retime and not a blend.
+
 `ReportOptions::evidence_only` omits the sampled pose grid from either report
 form, for sharing evidence where the motion itself cannot travel; the
 [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#commands)
@@ -24,7 +32,7 @@ describes exactly what it keeps and drops.
 Every colour in a generated document resolves through one set of design
 tokens: dark by default, light under `prefers-color-scheme`, and either one
 pinned by a `#theme=light|dark` URL fragment, which one bounded parser reads
-along with the `embed`, `clip`, `frame`, and `finding` options. Each chart is
+along with the `embed`, `clip`, `with`, `frame`, and `finding` options. Each chart is
 a self-describing `<figure>` — `viewBox`, `role="img"`, an `aria-label` naming
 the plotted series and their units, an in-chart legend, and axis labels —
 whose paint comes from stable series classes (`series-left`, `series-right`,

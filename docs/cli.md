@@ -220,12 +220,33 @@ fragment of `&`-separated `key=value` options, so one generated file can be
 deep-linked or embedded without regenerating it. Both honour `theme=light` and
 `theme=dark`, which pin the palette; `embed=1`, whose rules hide the running
 title and the interaction hint and nothing else, so the document fits an
-`<iframe>` with its findings, charts, and evidence disclosures in place; and `frame=N`, which scrubs to a judged frame. `clip=NAME` and
-`finding=INDEX` are single-clip options — they land where clicking that clip
-or finding lands, on the same selected row, frame, chart playhead, and 3D view
+`<iframe>` with its findings, charts, and evidence disclosures in place; and `frame=N`, which scrubs to a judged frame. `clip=NAME`,
+`with=NAME`, and `finding=INDEX` are single-clip options — they land where
+clicking that clip, that pairing, or that finding lands, on the same selected
+row, frame, chart playhead, and 3D view
 — while the comparison addresses a finding through the
 `#finding-<side>-<anchor>` link its own panels carry, because its clip
 correspondence is declared by the two inputs rather than chosen in the viewer.
+
+`with=NAME` names a second clip of the same document to play beside the
+selected one, which the viewer's `with` control also chooses. The two poses
+occupy the two halves of the one canvas, drawn through a single camera fitted
+to both clips' bounds so they share a scale, and coloured by the report's
+left/right tokens; a key below the canvas names each half in the colour that
+half is drawn in, and both clips' charts are shown.
+
+The transport drives the selected clip, and each half is shown at the frame
+nearest the transport's normalized phase in its own grid, with both source
+times labelled. That one frame is also where that clip's chart playhead and
+root-path dot sit, so a chart never reports a frame other than the one its
+pose is drawn at. The mapping is a presentation mapping between two
+timelines, not a retime and not a blend: it selects samples the checks
+already judged, nothing is resampled or interpolated, and the report makes no
+claim about what a runtime blend of the two would look like. An empty value,
+a name the document does not carry, and the selected clip's own name all mean
+the default, which is that clip alone. An evidence-only report has no pose
+grid to draw, so the omission notice stands where the two halves would and
+the pairing selects charts only.
 
 A key that is absent leaves that state as it is, so following one of those
 anchors inside an embedded, theme-pinned report does not un-pin it. A key that
