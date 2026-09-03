@@ -159,9 +159,11 @@ release-cli: provenance of the retained default-feature CLI
 ```
 
 `just gates` runs that recipe, and CI runs the same script after its release
-builds. The script also refuses a justfile or reusable checks workflow whose
-`--no-default-features` commands would write to the shared target directory,
-so the isolation cannot be dropped without the gate saying so.
+builds. The isolation itself is held in place separately, by
+`scripts/check-feature-isolation.py` under `just github-community`: it refuses
+a justfile or a reusable checks workflow whose `--no-default-features` commands
+would write to the shared target directory, and self-tests that rule against
+mutated fixtures on every run.
 
 ## Cross-platform determinism
 

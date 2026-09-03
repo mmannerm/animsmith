@@ -9,18 +9,13 @@
 # ran last, and `--version` printed the same line either way -- so a pack
 # evaluation could select a binary that silently rejects FBX.
 #
-# Two independent things keep that from recurring:
-#
-#   1. a structural assertion that every feature-variant cargo command in the
-#      justfile and in the reusable checks workflow redirects CARGO_TARGET_DIR
-#      to the isolated directory, so the conventional paths cannot be
-#      overwritten in the first place;
-#   2. capability probes that discriminate the two artifacts by behavior. Both
-#      binaries must admit glTF, which every build reads; only the retained one
-#      may admit FBX or expose `report`, and the isolated minimal one must
-#      refuse both. Running the same probes both ways is what proves the check
-#      can tell the variants apart rather than passing on anything that
-#      executes.
+# `scripts/check-feature-isolation.py` keeps the two builds writing to
+# different directories. This script proves what is actually at each path, by
+# behavior rather than by the version line: both binaries must admit glTF,
+# which every build reads, while only the retained one may admit FBX or expose
+# `report` and the isolated minimal one must refuse both. Running the same
+# probes both ways is what shows the check can tell the variants apart rather
+# than passing on anything that executes.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,16 +23,9 @@ cd "$repo_root"
 
 export LC_ALL=C
 
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-
-# The isolated directory feature-variant builds write to, and the exact token
-# each file must carry on such a command line. The justfile spells it through
-# its `no_default_target` variable; the workflow spells it literally.
+# Where scripts/check-feature-isolation.py requires every feature-variant build
+# to write, and therefore where the minimal artifact this script probes lives.
 NO_DEFAULT_TARGET="target/no-default-features"
-JUSTFILE_ISOLATION='CARGO_TARGET_DIR="{{no_default_target}}"'
-WORKFLOW_ISOLATION="CARGO_TARGET_DIR=${NO_DEFAULT_TARGET}"
-WORKFLOW=".github/workflows/checks.yml"
 
 # Self-authored fixtures, so the admission probes need no licensed asset.
 FBX_FIXTURE="crates/animsmith-fbx/testdata/rigged_triangle.fbx"
@@ -47,89 +35,6 @@ fail() {
   echo "release-cli: $*" >&2
   exit 1
 }
-
-# ---------------------------------------------------------------------------
-# Structural contract: feature-variant builds stay out of the shared paths.
-# ---------------------------------------------------------------------------
-
-# Every assertion below matches whole lines, and a Windows checkout can hold
-# CRLF, so read these files with the carriage returns removed.
-lines_of() {
-  tr -d '\r' <"$1"
-}
-
-# The cargo command lines in $1 that select a non-default feature set.
-feature_variant_lines() {
-  lines_of "$1" | grep -n -- '--no-default-features' | grep -F -- 'cargo ' || true
-}
-
-# Print every way $1 fails the isolation contract; return 1 when it fails any.
-# This returns rather than exits so the self-test below can assert the
-# rejection cases through the same code path the gate runs.
-isolation_errors() {
-  local file="$1" expected="$2" variant offenders minimal_release status=0
-
-  variant="$(feature_variant_lines "$file")"
-  offenders="$(grep -Fv -- "$expected" <<<"$variant" | grep -v '^$' || true)"
-  if [ -n "$offenders" ]; then
-    printf 'release-cli: %s runs a feature-variant cargo command without %s, so it can overwrite the default-feature artifact:\n%s\n' \
-      "$file" "$expected" "$offenders" >&2
-    status=1
-  fi
-
-  minimal_release="$(grep -F -- '--release --no-default-features' <<<"$variant" || true)"
-  case "$minimal_release" in
-  *"$expected"*) ;;
-  *)
-    printf 'release-cli: %s must build the release CLI without default features into %s, which is the artifact this check probes\n' \
-      "$file" "$NO_DEFAULT_TARGET" >&2
-    status=1
-    ;;
-  esac
-
-  return "$status"
-}
-
-expect_rejection() {
-  local file="$1" expected="$2" description="$3"
-
-  if isolation_errors "$file" "$expected" >/dev/null 2>&1; then
-    fail "self-test: the isolation contract accepted $description"
-  fi
-}
-
-# Mutate the tracked files the three ways this contract exists to catch and
-# require each mutant to be rejected, so the rule cannot silently degenerate
-# into one that accepts anything. The tracked files themselves are the
-# acceptance case, checked just above. A mutation that stops applying -- after
-# the just variable is renamed, say -- leaves the mutant equal to its accepted
-# source and fails here rather than passing quietly.
-self_test_isolation() {
-  lines_of justfile \
-    | sed 's|CARGO_TARGET_DIR="{{no_default_target}}" cargo test|cargo test|' \
-      >"$work/justfile-shared-target"
-  lines_of "$WORKFLOW" \
-    | sed "s|CARGO_TARGET_DIR=${NO_DEFAULT_TARGET} cargo build|cargo build|" \
-      >"$work/checks-shared-target.yml"
-  lines_of justfile \
-    | grep -v -- '--release --no-default-features' >"$work/justfile-no-minimal-release"
-
-  expect_rejection "$work/justfile-shared-target" "$JUSTFILE_ISOLATION" \
-    "a justfile whose no-default-features test commands lost their target directory"
-  expect_rejection "$work/checks-shared-target.yml" "$WORKFLOW_ISOLATION" \
-    "a workflow whose no-default-features builds lost their target directory"
-  expect_rejection "$work/justfile-no-minimal-release" "$JUSTFILE_ISOLATION" \
-    "a justfile that stopped building the minimal release CLI"
-}
-
-grep -Fxq "no_default_target := \"${NO_DEFAULT_TARGET}\"" <(lines_of justfile) \
-  || fail "justfile must define no_default_target := \"${NO_DEFAULT_TARGET}\""
-isolation_errors justfile "$JUSTFILE_ISOLATION" \
-  || fail "justfile does not isolate its feature-variant builds"
-isolation_errors "$WORKFLOW" "$WORKFLOW_ISOLATION" \
-  || fail "$WORKFLOW does not isolate its feature-variant builds"
-self_test_isolation
-echo "ok: feature-variant builds in justfile and $WORKFLOW write to $NO_DEFAULT_TARGET"
 
 # ---------------------------------------------------------------------------
 # Capability probes: which variant is actually at each path.
@@ -188,9 +93,10 @@ default_feature_probes=(
 )
 
 # The version line names the compiled features, but a label the build stamps on
-# itself is not a capability -- the probes below are the evidence. Assert only
-# that both artifacts report this checkout's version.
-manifest_versions="$(sed -n 's/^version = "\(.*\)"$/\1/p' <(lines_of Cargo.toml))"
+# itself is not a capability -- the probes above are the evidence. Assert only
+# that both artifacts report this checkout's version. A Windows checkout can
+# hold CRLF and the manifest match is whole-line, so strip the carriage returns.
+manifest_versions="$(sed -n 's/^version = "\(.*\)"$/\1/p' <(tr -d '\r' <Cargo.toml))"
 manifest_version="${manifest_versions%%$'\n'*}"
 test -n "$manifest_version" || fail "Cargo.toml has no workspace version"
 

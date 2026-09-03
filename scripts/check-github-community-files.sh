@@ -49,6 +49,17 @@ require_animation_pack_workflow() {
   python3 scripts/check-animation-pack-workflow.py --self-test
 }
 
+# Feature-variant builds must not overwrite the conventional target paths
+# (#653). The workflow half needs YAML decoding, because a step selects the
+# target directory through its env mapping rather than through its run text.
+require_feature_isolation() {
+  require_file justfile
+  require_file .github/workflows/checks.yml
+  python3 scripts/check-feature-isolation.py \
+    --justfile justfile --workflow .github/workflows/checks.yml
+  python3 scripts/check-feature-isolation.py --self-test
+}
+
 # A release published with the repository GITHUB_TOKEN creates no workflow run,
 # so the Pages root only follows the new tag while release-plz.yml dispatches
 # docs-pages.yml itself. Validate that path structurally, after YAML decoding.
@@ -201,6 +212,10 @@ require_literal .github/PULL_REQUEST_TEMPLATE.md "just package-inventory" "packa
 # another leg of the platform test matrix. Keep its invocation anchored in the
 # reusable workflow so removal cannot silently erase exact-head evidence.
 require_animation_pack_workflow
+
+# `just gates` green locally must mean PR CI green, so the local recipe and the
+# reusable workflow are held to the same feature-variant isolation (#653).
+require_feature_isolation
 
 # The Pages root tracks the latest published release and /dev/ tracks main, so
 # a successful publication must reach the Pages workflow (#652).
