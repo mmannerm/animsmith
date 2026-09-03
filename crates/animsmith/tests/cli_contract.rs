@@ -8870,10 +8870,8 @@ fn non_finite_key_times_never_escape_as_schema_invalid_nulls() {
 /// --format json | head` still exits `1`. `diff`'s exit `1` for movement it
 /// really measured is the same claim.
 ///
-/// [`ClosedStream::closed_stdout`] builds that stdout inside the child
-/// itself, so the write failure is a property of the setup rather than a race
-/// against how quickly the child reaches its write, or against what another
-/// test's concurrent spawn inherited.
+/// The reader-less stdout comes from [`ClosedStream::closed_stdout`], which
+/// explains why it is built in the child rather than here.
 #[test]
 fn a_closed_stdout_is_diagnosed_without_rewriting_any_json_command_outcome() {
     #[cfg(feature = "fbx")]

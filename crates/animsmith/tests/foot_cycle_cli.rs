@@ -619,11 +619,8 @@ fn public_runs_are_deterministic_and_destination_race_preserves_the_winner() {
 
 /// `collection transform-foot-cycle` with a stdout nobody is reading.
 ///
-/// [`ClosedStream::closed_stdout`] builds that stdout inside the child, so the
-/// write failure is a property of the setup rather than a race against how
-/// quickly the child reaches its write, or against what another test's
-/// concurrent spawn inherited. Dropping the parent's read end after the spawn
-/// was open to both.
+/// The reader-less stdout comes from [`ClosedStream::closed_stdout`], which
+/// explains why it is built in the child rather than here.
 #[test]
 fn closed_stdout_after_publication_keeps_success_and_recovery_files() {
     let fixture = FootCycleFixture::create();

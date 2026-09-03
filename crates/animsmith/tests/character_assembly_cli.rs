@@ -57,10 +57,8 @@ fn run_args(dir: &Path, args: &[&str]) -> Output {
 
 /// `assemble` with a stdout nobody is reading.
 ///
-/// [`ClosedStream::closed_stdout`] builds that stdout inside the child
-/// itself, so the write failure is a property of the setup rather than a race
-/// against how quickly the child reaches its write, or against what another
-/// test's concurrent spawn inherited.
+/// The reader-less stdout comes from [`ClosedStream::closed_stdout`], which
+/// explains why it is built in the child rather than here.
 fn run_args_into_closed_stdout(dir: &Path, args: &[&str]) -> Output {
     assemble_command(dir, args)
         .closed_stdout()
