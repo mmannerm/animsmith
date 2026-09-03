@@ -909,7 +909,7 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
             .unwrap()
             .is_empty()
     );
-    assert!(html.contains("drawn at the same metres scale as the role trajectory panels"));
+    assert!(html.contains("× relative to the trail panels"));
 }
 
 #[test]

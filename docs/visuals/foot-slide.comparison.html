@@ -375,12 +375,33 @@ function topDownMapAt(bounds, width, height, scale) {
 function topDownMap(bounds, width, height, pad) {
   return topDownMapAt(bounds, width, height, topDownScale(bounds, width, height, pad));
 }
-// The metres scale the two role-trajectory panels draw at. The shared root
-// panel borrows it, so a root that sways two centimetres is drawn two
-// centimetres wide beside feet that swing half a metre, instead of being
-// fitted to its own panel and reading as the largest thing in the document.
 const TRAIL_PANEL = { width: 360, height: 180, pad: 24 };
-const ROOT_PANEL = { width: 720, height: 180 };
+// The shared root panel is fitted to its own extent, because a root that
+// sways two centimetres drawn at the trail panels' scale is a five-unit blob
+// under its own end marks — unreadable rather than merely out of proportion.
+// What the old panel actually lacked was the size of what it drew, so the
+// panel states it twice: a scale bar in its corner, in the unit a reader
+// measures in, and the magnification against the trail panels in its
+// caption.
+const ROOT_PANEL = { width: 720, height: 180, pad: 28 };
+const ROOT_PLOT_W = ROOT_PANEL.width - 2 * ROOT_PANEL.pad;
+// Bar lengths, largest first. A reader reads a picture against a round
+// number, not against whatever fraction of the extent would have filled some
+// share of the panel.
+const SCALE_BAR_STEPS_M = [1, 0.5, 0.1, 0.05, 0.01];
+// The share of the plot a bar may take before the next step down reads
+// better. A step at or under the extent always fits the plot, so this only
+// chooses between the ones that do.
+const SCALE_BAR_MAX_SHARE = 0.6;
+// The longest bar the track is at least as wide as, preferring one that does
+// not run across the panel. `null` when the path is narrower than the
+// smallest bar, which the caption then says.
+function scaleBarStep(extent, scale) {
+  const within = SCALE_BAR_STEPS_M.filter((step) => step <= extent);
+  if (!within.length) return null;
+  return within.find((step) => step * scale <= SCALE_BAR_MAX_SHARE * ROOT_PLOT_W) || within[within.length - 1];
+}
+const scaleBarLabel = (metres) => metres >= 0.5 ? `${metres} m` : `${Math.round(metres * 100)} cm`;
 // How close a track's two ends must be to count as closing on itself: the
 // same millimetre the single-clip chart calls stationary, and finer than any
 // clip an engine distinguishes from a closed loop.
@@ -485,11 +506,7 @@ function drawRootComparison(palette, phase) {
   if (!svg) return;
   svg.replaceChildren();
   if (!sharedRootBounds) { svgMessage("comparison-root-path", svg, palette, "root trajectories unavailable: no input has finite resolved Root samples"); return; }
-  // Drawn at the role panels' metres scale rather than fitted to this panel.
-  // 180 is the panel's whole height: the role scale can never map a root
-  // extent taller than 132 units, so a drawing centred here clears the
-  // legend row whatever the two inputs travel.
-  const scale = topDownScale(sharedTrailBounds || sharedRootBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
+  const scale = topDownScale(sharedRootBounds, ROOT_PANEL.width, ROOT_PANEL.height, ROOT_PANEL.pad);
   const map = topDownMapAt(sharedRootBounds, ROOT_PANEL.width, ROOT_PANEL.height, scale);
   // A repair that leaves the root alone draws the two trajectories on top of
   // each other, and a solid `after` over a solid `before` hides the before
@@ -545,6 +562,28 @@ function drawRootComparison(palette, phase) {
   legendX += legendAdvance("start") + 8;
   svg.append(svgElement("rect", { x: legendX, y: 12, width: 7, height: 7, fill: palette.muted }));
   svg.append(svgElement("text", { x: legendX + 12, y: 20, fill: palette.muted }, "end"));
+  // The bar in the corner: how long a round number is in this panel. It is
+  // the one thing a fitted plot cannot say by its shape, and a reader
+  // measures the drawing against it directly rather than against a ratio.
+  const extent = Math.max(sharedRootBounds.x[1] - sharedRootBounds.x[0], sharedRootBounds.z[1] - sharedRootBounds.z[0]);
+  const step = scaleBarStep(extent, scale);
+  const barY = ROOT_PANEL.height - 12, barX = ROOT_PANEL.pad;
+  if (step) {
+    const barLength = step * scale;
+    svg.append(svgElement("line", { x1: barX, x2: barX + barLength, y1: barY, y2: barY, stroke: palette.muted, "stroke-width": 1.5, "data-scale-bar-m": step }));
+    for (const at of [barX, barX + barLength]) {
+      svg.append(svgElement("line", { x1: at, x2: at, y1: barY - 4, y2: barY + 4, stroke: palette.muted, "stroke-width": 1.5 }));
+    }
+    svg.append(svgElement("text", { x: barX + barLength + 6, y: barY + 3, fill: palette.muted }, scaleBarLabel(step)));
+  }
+  // And the magnification against the panels beside it, so the two pictures
+  // can be read against each other even though neither is drawn at the
+  // other's scale.
+  const trailScale = topDownScale(sharedTrailBounds || sharedRootBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
+  const magnification = scale / trailScale;
+  const sizing = magnification >= 1
+    ? `fitted to this panel, magnified ${magnification.toFixed(1)}× relative to the trail panels`
+    : `fitted to this panel, drawn at ${magnification.toFixed(1)}× the trail panels' scale`;
   const identical = rootTracksIdentical();
   const sameness = identical === null ? [] : [identical ? "the before and after paths are identical" : "the before and after paths differ"];
   const closures = ["before", "after"].map(trackClosure).filter(Boolean);
@@ -557,8 +596,9 @@ function drawRootComparison(palette, phase) {
     ...closures,
     `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m`,
     `Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`,
-    `the paths span ${Math.max(sharedRootBounds.x[1] - sharedRootBounds.x[0], sharedRootBounds.z[1] - sharedRootBounds.z[0]).toFixed(3)} m at their widest`,
-    "drawn at the same metres scale as the role trajectory panels",
+    `the paths span ${extent.toFixed(3)} m at their widest`,
+    sizing,
+    step ? `the corner bar is ${scaleBarLabel(step)}` : "no scale bar: the paths are narrower than 1 cm",
   ].join(" · "));
 }
 

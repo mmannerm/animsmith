@@ -46,9 +46,11 @@ wrote comparison.html (1 clip(s), 5 finding(s), 0.1 MB)   # exits 0
 
 [Open the comparison](visuals/foot-slide.comparison.html). Press play beside
 the shared phase to run both sides together, or scrub it by hand. The judged
-poses come first, then the shared root trajectory — drawn at the same metre
-scale as the role-trajectory panels below it, so a two-centimetre sway looks
-like two centimetres — and then each side's trails and gait. The gait panel
+poses come first, then the shared root trajectory — fitted to its own panel,
+with a scale bar in the corner and the magnification against the
+role-trajectory panels in its caption, so a two-centimetre sway is legible
+and still reads as two centimetres — and then each side's trails and gait.
+The gait panel
 shades the sampled stance intervals, and every panel's caption says what to
 look for in it.
 

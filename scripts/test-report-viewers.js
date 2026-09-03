@@ -225,6 +225,7 @@ assertNoBareSvgText(nodes, comparisonSvgs, "drawn comparison");
 // reflows them at whatever width the reader has and this reads them the
 // same way a reader does — off the element, not off the drawing.
 const panelCaption = (id) => nodes[`${id}-caption`].textContent;
+const rootCaptionOf = (state) => state["comparison-root-path-caption"].textContent;
 for (const [id, phrase] of [
   // What a reader should look for, in the words of the clip rather than of
   // the check that judged it. Each panel's sentence stays on what its own
@@ -232,7 +233,7 @@ for (const [id, phrase] of [
   // trajectory panels do not and do not claim to.
   ["comparison-root-path", "what to look for: an in-place or looping clip's root path should close on itself and stay near the origin; a travelling clip should trace a straight line ending at the declared distance; the dot is the shared phase, the hollow circle where a track starts and the square where it ends"],
   ["comparison-root-path", "before solid, after dashed and translucent"],
-  ["comparison-root-path", "drawn at the same metres scale as the role trajectory panels"],
+  ["comparison-root-path", "fitted to this panel, magnified"],
   ["before-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
   ["after-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
   ["before-path", "shared scale across both inputs"],
@@ -287,12 +288,13 @@ const beforeStroke = rootPathOf(main, "before"), afterStroke = rootPathOf(main, 
 if (!(Number(afterStroke.attrs.opacity) < Number(beforeStroke.attrs.opacity))) throw new Error(`the after track is opaque (${afterStroke.attrs.opacity}), so it hides a coincident before track`);
 if (!(Number(afterStroke.attrs["stroke-width"]) < Number(beforeStroke.attrs["stroke-width"]))) throw new Error(`the after track is not drawn thinner than the before track: ${afterStroke.attrs["stroke-width"]} against ${beforeStroke.attrs["stroke-width"]}`);
 
-// ---- the shared root panel is drawn at the role panels' metres scale ----
-// It used to be fitted to its own extent, which drew a root that sways two
-// centimetres exactly as large as feet that swing half a metre: the least of
-// the comparison then read as the most. The expected geometry is recomputed
-// here from the payload, so a viewer that goes back to fitting the panel
-// fails on the numbers rather than on a spelling.
+// ---- the shared root panel says how big what it draws is ---------------
+// The panel is fitted to its own extent, because a two-centimetre root drawn
+// at the trail panels' scale is a five-unit blob under its own end marks.
+// What it owes the reader instead is the size of the shape: a scale bar in
+// the unit a reader measures in, and the magnification against the panels
+// beside it. Both are recomputed here from the payload, so a viewer that
+// mislabels either fails on the numbers rather than on a spelling.
 const decodeFloats = (encoded) => {
   const raw = Buffer.from(encoded, "base64"), out = new Array(raw.byteLength / 4);
   for (let index = 0; index < out.length; index++) out[index] = raw.readFloatLE(index * 4);
@@ -330,21 +332,32 @@ const trailBounds = payloadBounds(data, ["root", "hips", "left_foot", "right_foo
 const rootBounds = payloadBounds(data, ["root"]);
 if (!trailBounds || !rootBounds) throw new Error("the fixture must resolve a root and its role trails");
 const roleScale = fittedScale(trailBounds, 360, 180, 24);
-if (Math.abs(roleScale - fittedScale(rootBounds, 720, 180, 28)) < 1e-6) throw new Error("the fixture's root and role extents must differ, or the two scalings cannot be told apart");
+const rootScale = fittedScale(rootBounds, 720, 180, 28);
+if (Math.abs(roleScale - rootScale) < 1e-6) throw new Error("the fixture's root and role extents must differ, or the magnification cannot be told from 1");
 const rootMap = (point) => [
-  720 / 2 + (point[0] - (rootBounds.x[0] + rootBounds.x[1]) / 2) * roleScale,
-  180 / 2 - (point[1] - (rootBounds.z[0] + rootBounds.z[1]) / 2) * roleScale,
+  720 / 2 + (point[0] - (rootBounds.x[0] + rootBounds.x[1]) / 2) * rootScale,
+  180 / 2 - (point[1] - (rootBounds.z[0] + rootBounds.z[1]) / 2) * rootScale,
 ];
-const drawnPoints = (d) => d.split(/[ML]/).filter(Boolean).map((pair) => pair.split(",").map(Number));
-const spanOf = (points, axis) => Math.max(...points.map((point) => point[axis])) - Math.min(...points.map((point) => point[axis]));
 const beforeRootMetres = payloadTrail(data, "before", "root").filter((point) => point.every(Number.isFinite));
-const beforeRootDrawn = drawnPoints(beforeStroke.attrs.d);
-if (beforeRootDrawn.length !== beforeRootMetres.length) throw new Error("the root panel drew a different number of points than the clip has finite root frames");
-for (const axis of [0, 1]) {
-  const expected = spanOf(beforeRootMetres.map(rootMap), axis);
-  const drawn = spanOf(beforeRootDrawn, axis);
-  if (Math.abs(drawn - expected) > 1e-6) throw new Error(`the shared root panel is not drawn at the role panels' metres scale: ${["X", "Z"][axis]} spans ${drawn} plot units, and the role scale over that metre extent is ${expected}`);
-}
+
+// The bar's drawn length is exactly what it says it is. A bar labelled in
+// one unit and measured off another scale is worse than no bar: a reader
+// takes a length off it and gets a number the panel never drew.
+const scaleBar = nodes["comparison-root-path"].children.find((child) => child.attrs["data-scale-bar-m"] != null);
+if (!scaleBar) throw new Error("the shared root panel draws no scale bar, so nothing in the picture says how big it is");
+const barMetres = Number(scaleBar.attrs["data-scale-bar-m"]);
+if (![1, 0.5, 0.1, 0.05, 0.01].includes(barMetres)) throw new Error(`the scale bar is ${barMetres} m, which is not a length a reader measures in`);
+const barDrawn = Number(scaleBar.attrs.x2) - Number(scaleBar.attrs.x1);
+if (Math.abs(barDrawn - barMetres * rootScale) > 1e-6) throw new Error(`the scale bar is drawn ${barDrawn} plot units for a labelled ${barMetres} m, and this panel draws ${barMetres} m as ${barMetres * rootScale}`);
+const barLabel = barMetres >= 0.5 ? `${barMetres} m` : `${Math.round(barMetres * 100)} cm`;
+if (!nodes["comparison-root-path"].children.some((child) => child.tag === "text" && child.textContent === barLabel)) throw new Error(`the scale bar is not labelled ${barLabel}`);
+if (barDrawn > 664) throw new Error(`the scale bar is ${barDrawn} plot units, wider than the ${664}-unit plot it sits in`);
+
+// And the caption states the magnification against the panels beside it, so
+// the two fitted pictures can still be read against each other.
+const magnified = rootCaptionOf(nodes).match(/magnified ([0-9.]+)× relative to the trail panels/);
+if (!magnified) throw new Error(`the caption does not state the panel's magnification against the trail panels: ${rootCaptionOf(nodes)}`);
+if (magnified[1] !== (rootScale / roleScale).toFixed(1)) throw new Error(`the caption claims ${magnified[1]}× where this panel's fitted scale is ${(rootScale / roleScale).toFixed(1)}× the trail panels'`);
 
 // Both ends of both tracks are marked, at the coordinates the first and last
 // sampled frames map to, and the start mark is hollow so the phase dot
@@ -379,7 +392,7 @@ if (!legendSwatch("rect") || legendSwatch("rect").attrs.fill === "none") throw n
 // The caption says what the reader would otherwise have to notice: that the
 // two tracks are the same line, and where each one ends relative to its own
 // start.
-const rootCaption = () => panelCaption("comparison-root-path");
+const rootCaption = () => rootCaptionOf(nodes);
 if (!rootCaption().includes("the before and after paths are identical")) throw new Error(`two identical root tracks are not declared identical: ${rootCaption()}`);
 const beforeGap = Math.hypot(
   beforeRootMetres[beforeRootMetres.length - 1][0] - beforeRootMetres[0][0],
@@ -388,6 +401,7 @@ const beforeGap = Math.hypot(
 if (!(beforeGap > 0.001)) throw new Error("the fixture's root track must not already close on itself");
 if (!rootCaption().includes(`before ends ${beforeGap.toFixed(3)} m from its start`)) throw new Error(`the caption does not state the end-to-start distance: ${rootCaption()}`);
 if (!rootCaption().includes(` m at their widest`)) throw new Error(`the caption does not state the measured extent: ${rootCaption()}`);
+if (!rootCaption().includes(`the corner bar is ${barLabel}`)) throw new Error(`the caption does not name the scale bar it draws: ${rootCaption()}`);
 
 // A root track that returns to where it began says so instead of naming a
 // distance of zero.
