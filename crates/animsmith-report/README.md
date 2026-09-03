@@ -33,10 +33,10 @@ whose paint comes from stable series classes (`series-left`, `series-right`,
 a figure lifted out of the report keeps its meaning. The `data-kind`,
 `data-pad`, and `data-plotw` hooks the playhead uses are part of that
 contract, along with the subject a figure names: `data-clip` for the gait and
-root-path figures of one clip, `data-group` plus `data-members` for the figure
-a declared gait group draws its members on. A figure whose legend needs a
-second row grows its `viewBox` by that row and moves its plot down, so the
-plotted rectangle is the same height in every chart.
+root-path figures of one clip, `data-group` for the figure a declared gait
+group draws its members on. A figure whose legend needs a second row grows its
+`viewBox` by that row and moves its plot down, so the plotted rectangle is the
+same height in every chart.
 
 That group figure is why `render` takes a `ReportInputs` carrying the
 `Config` the checks were evaluated under: a coherent group emits no finding
@@ -48,8 +48,11 @@ around their circular mean. `animsmith-core` classifies the members
 (`gait_phase_evidence` and `gait_member_phase`), so the figure and the
 `gait-group` check cannot disagree about which member was measured. The figure
 names no canonical member, because the check does not have one: it states
-which measured anchors lie outside that band, and it carries `data-members` so
-a viewer shows it only while one of those members is selected.
+which measured anchors lie outside that band. The document embeds each drawn
+group's declared membership under `groups`, joined to its figure by
+`data-group`, so a viewer shows the figure only while one of those members is
+selected; membership is data rather than a delimited attribute because a clip
+name is arbitrary authored text that any separator could split.
 
 `render_comparison` is the deliberately narrow before/after companion. Call
 `preflight_comparison_sources` on the two exact `LoadedSource` authorities
