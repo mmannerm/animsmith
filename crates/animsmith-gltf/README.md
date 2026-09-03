@@ -215,8 +215,8 @@ evidence records both the declared name and every resolved name/index tuple.
 
 ```toml
 [dependencies]
-animsmith-core = "0.12"
-animsmith-gltf = "0.12"
+animsmith-core = "0.13"
+animsmith-gltf = "0.13"
 ```
 
 The compiling load/check and repair examples live in the crate-level API
