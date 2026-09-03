@@ -667,6 +667,11 @@ pub fn current_branch(root: &Path) -> Option<String> {
 
 /// The mode a checkout carrying these signals is in.
 ///
+/// The caller passes the environment and the branch — `|name|
+/// std::env::var(name).ok()` and [`current_branch`] for a real checkout —
+/// so which variable feeds which signal is decided here, where a test can
+/// see it, rather than in an untestable wrapper.
+///
 /// An explicit `ANIMSMITH_RELEASE_PR` decides outright, so a local
 /// diagnostic run can ask for either mode. Otherwise the generated
 /// release branch is recognised by name, whether CI exports it as the
@@ -690,15 +695,6 @@ pub fn release_mode(
     } else {
         ReleaseMode::Staging
     }
-}
-
-/// The mode the checkout at `root` is in, from its environment and its
-/// branch.
-pub fn checkout_release_mode(root: &Path) -> ReleaseMode {
-    release_mode(
-        |name| std::env::var(name).ok(),
-        current_branch(root).as_deref(),
-    )
 }
 
 /// `docs` with every located claim rewritten to `target`, and the changes

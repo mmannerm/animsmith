@@ -25,6 +25,11 @@ use std::process::ExitCode;
 /// Test-only override of the checkout to write, so the gate can run this
 /// example against a temporary copy of the inventoried documents instead
 /// of the repository it was built from.
+///
+/// Set but pointing at that repository, it is refused rather than
+/// honoured: the only reason to set it is to write somewhere else, so a
+/// dropped or stale value must fail loudly instead of quietly rewriting
+/// the tree the test meant to leave alone.
 const ROOT_OVERRIDE: &str = "ANIMSMITH_DOCS_ROOT";
 
 fn main() -> ExitCode {
@@ -40,8 +45,7 @@ fn main() -> ExitCode {
 }
 
 fn stage() -> Result<(), String> {
-    let repository =
-        std::env::var_os(ROOT_OVERRIDE).map_or_else(animsmith_testkit::repo_root, PathBuf::from);
+    let repository = checkout()?;
     let target = match requested_version(std::env::args().skip(1))? {
         Some(version) => version,
         None => workspace_version(&repository)?,
@@ -60,4 +64,27 @@ fn stage() -> Result<(), String> {
         changes.len()
     );
     Ok(())
+}
+
+/// The checkout to write: the repository this example was built from, or
+/// the [`ROOT_OVERRIDE`] a test pointed somewhere else.
+fn checkout() -> Result<PathBuf, String> {
+    let repository = animsmith_testkit::repo_root();
+    let Some(overridden) = std::env::var_os(ROOT_OVERRIDE) else {
+        return Ok(repository);
+    };
+    let overridden = PathBuf::from(overridden);
+    let same_tree = std::fs::canonicalize(&overridden)
+        .ok()
+        .zip(std::fs::canonicalize(&repository).ok())
+        .map_or(overridden == repository, |(left, right)| left == right);
+    if same_tree {
+        return Err(format!(
+            "{ROOT_OVERRIDE} is set to {}, which is the repository this example was built from.\n\
+             It exists so a test can write a temporary copy, so this refuses rather than write \
+             the repository under a stale or dropped override.",
+            overridden.display()
+        ));
+    }
+    Ok(overridden)
 }

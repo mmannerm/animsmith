@@ -128,11 +128,11 @@ impl Fixture {
 fn current_release_version_docs_are_consistent() {
     let root = animsmith_testkit::repo_root();
     let workspace = versions::workspace_version(&root).expect("reads workspace version");
-    let errors = versions::validate(
-        workspace,
-        &repository_docs(),
-        versions::checkout_release_mode(&root),
+    let mode = versions::release_mode(
+        |name| std::env::var(name).ok(),
+        versions::current_branch(&root).as_deref(),
     );
+    let errors = versions::validate(workspace, &repository_docs(), mode);
     assert!(
         errors.is_empty(),
         "release-version documentation drift (run `{STAGE_COMMAND}`):\n- {}",
@@ -398,18 +398,19 @@ fn every_release_context_signal_selects_its_mode() {
             Some(branch),
             "the checked-out branch is what git reports"
         );
+        let branch_of = versions::current_branch(checkout.path());
         assert_eq!(
-            versions::release_mode(none, versions::current_branch(checkout.path()).as_deref()),
+            versions::release_mode(none, branch_of.as_deref()),
             expected,
-            "a checkout on {branch} is {expected:?}"
+            "a checkout on {branch} with no release variable set is {expected:?}"
         );
         assert_eq!(
-            versions::checkout_release_mode(checkout.path()),
             versions::release_mode(
-                |name| std::env::var(name).ok(),
-                versions::current_branch(checkout.path()).as_deref()
+                variable(&[("ANIMSMITH_RELEASE_PR", "true")]),
+                branch_of.as_deref()
             ),
-            "a checkout's mode is its environment and its own branch"
+            ReleaseMode::ReleasePr,
+            "an explicit release-PR run is strict on a {branch} checkout"
         );
     }
 }
@@ -961,6 +962,44 @@ fn the_staging_example_stages_the_next_release_restores_it_and_refuses_a_bad_inv
         before,
         "a bad invocation writes nothing"
     );
+}
+
+#[test]
+fn the_staging_example_refuses_a_root_override_that_names_the_repository() {
+    let repository = animsmith_testkit::repo_root();
+    let example = staging_example();
+    let before = repository_docs();
+
+    // Every spelling of the repository, because the override exists only to
+    // send the writer somewhere else: a stale or dropped value must fail
+    // loudly rather than quietly rewrite the tree the test left alone.
+    for overridden in [
+        std::fs::canonicalize(&repository).expect("the repository resolves"),
+        repository.join("crates").join(".."),
+        repository.clone(),
+    ] {
+        let refused = Command::new(&example)
+            .env("ANIMSMITH_DOCS_ROOT", &overridden)
+            .env_remove("ANIMSMITH_RELEASE_PR")
+            .output()
+            .expect("runs the staging example");
+        assert!(
+            !refused.status.success(),
+            "{} is the repository, so the example refuses: {refused:?}",
+            overridden.display()
+        );
+        let complaint = String::from_utf8(refused.stderr).expect("the complaint is UTF-8");
+        assert!(
+            complaint.contains("ANIMSMITH_DOCS_ROOT"),
+            "the refusal names the override: {complaint}"
+        );
+        assert_eq!(
+            repository_docs(),
+            before,
+            "{}: the repository's own documents are untouched",
+            overridden.display()
+        );
+    }
 }
 
 /// The inventory is a table of `Document`s; nothing else in the gate may
