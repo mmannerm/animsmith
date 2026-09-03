@@ -7,6 +7,8 @@ use crate::{
     GltfAddressabilityNamedMapKindV2, GltfAddressabilityProjectionV2, GltfAddressabilityReadbackV2,
     GltfAnimationCoverageStateV1,
 };
+// Generated from the committed probe lock; see `bevy_readback_lock`.
+use crate::bevy_readback_lock::{BEVY_READBACK_V1_LOCK_BYTES, BEVY_READBACK_V1_LOCK_SHA256};
 use animsmith_core::InputIdentity;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
@@ -25,11 +27,6 @@ pub const BEVY_READBACK_V1_MAX_WORK: usize = 65_536;
 pub const BEVY_READBACK_V1_MAX_UPDATES: u64 = 4_096;
 /// Exact compiler identity required by the isolated harness build script.
 pub const BEVY_READBACK_V1_RUSTC: &str = "rustc 1.95.0 (59807616e 2026-04-14)";
-/// Frozen byte count of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_392;
-/// Frozen SHA-256 of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_SHA256: &str =
-    "fd50f6f6f75f01cbd54dd1ca8f21a966dce25a6a8530733b824f55590e3dfefd";
 const MAX_TEXT_BYTES: usize = 1_024;
 
 /// Exact V2 document identity plus its canonical V4 provenance header.
@@ -966,34 +963,37 @@ mod tests {
     use crate::GltfAddressabilityV2;
 
     fn frozen_lock_identity() -> InputIdentity {
-        InputIdentity::from_sha256_digest(
-            [
-                0xfd, 0x50, 0xf6, 0xf6, 0xf7, 0x5f, 0x01, 0xcb, 0xd5, 0x4d, 0xd1, 0xca, 0x8f, 0x21,
-                0xa9, 0x66, 0xdc, 0xe2, 0x5a, 0x6a, 0x85, 0x30, 0x73, 0x3b, 0x82, 0x4f, 0x55, 0x59,
-                0x0e, 0x3d, 0xfe, 0xfd,
-            ],
-            BEVY_READBACK_V1_LOCK_BYTES,
-        )
+        InputIdentity::from_sha256_hex(BEVY_READBACK_V1_LOCK_SHA256, BEVY_READBACK_V1_LOCK_BYTES)
+            .expect("the committed lock identity is a lowercase digest")
     }
 
     #[test]
-    fn strict_reader_rejects_the_previous_mixed_bevy_patch_graph() {
-        let mut readback = valid_readback(false);
-        readback.harness.lock_identity = InputIdentity::from_sha256_digest(
-            [
-                0xe3, 0x45, 0x7e, 0x21, 0x69, 0x58, 0x74, 0xf9, 0x01, 0x10, 0xe5, 0xb9, 0x3a, 0x36,
-                0xd7, 0x68, 0x8c, 0x13, 0x4a, 0x3b, 0x92, 0x59, 0xcb, 0x1d, 0xc4, 0xd2, 0xd8, 0xe5,
-                0xf7, 0x41, 0xd1, 0xed,
-            ],
-            86_390,
-        );
-        let bytes = serde_json::to_vec(&readback).unwrap();
-        assert!(matches!(
-            validate_bevy_readback_v1(bytes.as_slice()),
-            Err(BevyReadbackV1Error::Contract(
-                "invalid frozen harness tuple"
-            ))
-        ));
+    fn strict_reader_rejects_the_previous_mixed_bevy_patch_graph_by_digest_or_by_size() {
+        // The previous graph differed from the frozen one in both size and
+        // digest. Each difference alone must reject, so neither half of the
+        // comparison can be dropped and neither half can be inferred from the
+        // other.
+        let previous_digest = "e3457e21695874f90110e5b93a36d7688c134a3b9259cb1dc4d2d8e5f741d1ed";
+        let previous_bytes = 86_390;
+        for (sha256, bytes) in [
+            (previous_digest, previous_bytes),
+            (previous_digest, BEVY_READBACK_V1_LOCK_BYTES),
+            (BEVY_READBACK_V1_LOCK_SHA256, previous_bytes),
+        ] {
+            let mut readback = valid_readback(false);
+            readback.harness.lock_identity = InputIdentity::from_sha256_hex(sha256, bytes)
+                .expect("both digests are lowercase hexadecimal");
+            let encoded = serde_json::to_vec(&readback).unwrap();
+            assert!(
+                matches!(
+                    validate_bevy_readback_v1(encoded.as_slice()),
+                    Err(BevyReadbackV1Error::Contract(
+                        "invalid frozen harness tuple"
+                    ))
+                ),
+                "accepted lock identity {sha256} at {bytes} bytes"
+            );
+        }
     }
 
     fn valid_readback(warnings_truncated: bool) -> BevyReadbackV1 {

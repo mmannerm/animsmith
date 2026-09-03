@@ -2993,3 +2993,48 @@ fn rig_info_rejects_roles_resolved_from_another_skeleton() {
         })
     );
 }
+
+#[test]
+fn input_identity_from_hex_matches_the_byte_authority_and_refuses_anything_else() {
+    // SHA-256 of the empty input, an analytic vector: the hex constructor must
+    // agree with the two constructors that hash and that take raw digest bytes.
+    let empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert_eq!(
+        InputIdentity::from_sha256_hex(empty, 0),
+        Some(InputIdentity::from_bytes(b""))
+    );
+
+    // A digest that differs from its own reversal and from any byte-swapped
+    // reading of itself, so a constructor that mixed nibble or byte order
+    // could not agree with `from_sha256_digest` on it.
+    let ordered = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let mut digest = [0_u8; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = ((index % 8) as u8 * 2) << 4 | ((index % 8) as u8 * 2 + 1);
+    }
+    let from_hex = InputIdentity::from_sha256_hex(ordered, 7).expect("64 lowercase hex digits");
+    assert_eq!(from_hex, InputIdentity::from_sha256_digest(digest, 7));
+    assert_eq!(from_hex.sha256(), ordered);
+    assert_eq!(from_hex.bytes(), 7);
+
+    // Uppercase is refused rather than normalized, and so is any length but 64.
+    assert_eq!(
+        InputIdentity::from_sha256_hex(
+            "0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef",
+            7
+        ),
+        None
+    );
+    assert_eq!(InputIdentity::from_sha256_hex(&ordered[..63], 7), None);
+    assert_eq!(
+        InputIdentity::from_sha256_hex(&format!("{ordered}0"), 7),
+        None
+    );
+    assert_eq!(
+        InputIdentity::from_sha256_hex(
+            "0123456789abcdeg0123456789abcdef0123456789abcdef0123456789abcdef",
+            7
+        ),
+        None
+    );
+}

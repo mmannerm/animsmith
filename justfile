@@ -125,9 +125,16 @@ coverage:
 package-inventory:
     bash scripts/check-package-inventory.sh
 
-# Verify the isolated exact-Bevy lock remains bound by the normal-workspace contract.
+# Verify the isolated exact-Bevy lock remains bound by the normal-workspace
+# contract, and that the engine's committed copy of that lock's identity still
+# matches it. Self-tests its own rejections.
 bevy-readback-lock:
     bash scripts/check-bevy-readback-lock.sh
+
+# Rewrite crates/animsmith-engine/src/bevy_readback_lock.txt from the committed
+# probe lock. The only supported way to change that identity file.
+bevy-readback-lock-refresh:
+    bash scripts/check-bevy-readback-lock.sh --refresh
 
 # Opt-in Bevy 0.19 isolated compile/runtime contract matrix; not part of CI.
 bevy-readback-test:

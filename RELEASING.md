@@ -102,15 +102,20 @@ shipping is riskier than changing.
    ```
 
    The isolated Bevy readback probe locks `animsmith-core` and
-   `animsmith-engine` at the workspace version and pins that lock's size and
-   SHA-256 in `crates/animsmith-engine/src/bevy_readback.rs`, so move both
-   package versions in `tools/bevy-readback/Cargo.lock` to the release and
-   refresh the pinned digest, then confirm the lock gate agrees:
+   `animsmith-engine` at the workspace version, and the engine states that
+   lock's size and SHA-256 in
+   `crates/animsmith-engine/src/bevy_readback_lock.txt`. Move both package
+   versions in `tools/bevy-readback/Cargo.lock` to the release, rewrite that
+   file from the lock, and confirm the lock gate agrees:
 
    ```console
+   just bevy-readback-lock-refresh
    just bevy-readback-lock
    cargo test -p animsmith-engine
    ```
+
+   Do not hand-edit the identity file: `just bevy-readback-lock` renders those
+   two lines again from the committed lock and fails on any difference.
 
    The cookbook drift guard fails if the committed bytes do not match the
    release version. Other deterministic fixtures may also include the package

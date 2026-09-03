@@ -10,3 +10,8 @@ crates/animsmith-report/assets/* text eol=lf
 # The documentation visuals are compared byte for byte against the generator
 # output, which writes LF.
 docs/visuals/** text eol=lf
+# The isolated Bevy probe hashes its own lock byte for byte (include_bytes!),
+# and `just bevy-readback-lock` compares the engine's copy of that identity
+# byte for byte, so both must survive every checkout unchanged.
+tools/bevy-readback/Cargo.lock text eol=lf
+crates/animsmith-engine/src/bevy_readback_lock.txt text eol=lf

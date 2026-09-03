@@ -68,6 +68,7 @@
 mod addressability;
 mod addressability_v2;
 mod bevy_readback;
+mod bevy_readback_lock;
 mod canonical;
 mod clip_boundary;
 mod error;
@@ -116,15 +117,15 @@ pub use addressability_v2::{
     TargetPointerWidth, bevy_animation_target_id_v1, build_bevy_addressability_adapter_v2,
 };
 pub use bevy_readback::{
-    BEVY_READBACK_V1_ID, BEVY_READBACK_V1_LOCK_BYTES, BEVY_READBACK_V1_LOCK_SHA256,
-    BEVY_READBACK_V1_MAX_REPORT_BYTES, BEVY_READBACK_V1_MAX_ROWS, BEVY_READBACK_V1_MAX_UPDATES,
-    BEVY_READBACK_V1_MAX_WORK, BEVY_READBACK_V1_RUSTC, BEVY_READBACK_V1_SCHEMA_VERSION,
-    BevyAnimationTargetV1, BevyConformanceCodeV1, BevyConformanceV1, BevyHarnessIdentityV1,
-    BevyIndexedLabelV1, BevyLoadErrorCodeV1, BevyNamedWinnerV1, BevyObservationV1,
-    BevyPredictionReferenceV1, BevyReadbackV1, BevyReadbackV1Error, BevyTerminalStateV1,
-    BevyWarningV1, compare_bevy_readback_v1, validate_bevy_readback_prediction_v1,
-    validate_bevy_readback_v1,
+    BEVY_READBACK_V1_ID, BEVY_READBACK_V1_MAX_REPORT_BYTES, BEVY_READBACK_V1_MAX_ROWS,
+    BEVY_READBACK_V1_MAX_UPDATES, BEVY_READBACK_V1_MAX_WORK, BEVY_READBACK_V1_RUSTC,
+    BEVY_READBACK_V1_SCHEMA_VERSION, BevyAnimationTargetV1, BevyConformanceCodeV1,
+    BevyConformanceV1, BevyHarnessIdentityV1, BevyIndexedLabelV1, BevyLoadErrorCodeV1,
+    BevyNamedWinnerV1, BevyObservationV1, BevyPredictionReferenceV1, BevyReadbackV1,
+    BevyReadbackV1Error, BevyTerminalStateV1, BevyWarningV1, compare_bevy_readback_v1,
+    validate_bevy_readback_prediction_v1, validate_bevy_readback_v1,
 };
+pub use bevy_readback_lock::{BEVY_READBACK_V1_LOCK_BYTES, BEVY_READBACK_V1_LOCK_SHA256};
 pub use clip_boundary::{ENGINE_CLIP_BOUNDARY_CHECK_ID, EngineClipBoundaryCheck};
 pub use error::{
     InvalidSettingReason, PredictionRuleError, RegistryValidationError, ResolutionError,
