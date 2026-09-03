@@ -786,8 +786,8 @@ fn lr_evidence(grid: &PoseGrid, hips: usize, left: &[usize], right: &[usize]) ->
 pub enum GaitMemberPhase {
     /// The document holds no clip of this member's name.
     Absent,
-    /// The rig resolved no hips-plus-foot pair, so no member of any group
-    /// has a phase to measure (see [`gait_roles_resolved`]).
+    /// The rig resolved neither hips nor a foot role on either side, so no
+    /// member of any group has a phase to measure.
     RolesUnresolved,
     /// The clip is present but carries no readable foot cycle.
     NoFootCycle,
