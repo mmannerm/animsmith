@@ -72,8 +72,8 @@ $ just gates
 before pushing a non-trivial PR. It runs formatting, clippy, workspace tests,
 golden skip marker verification, dependency checks, schema-id verification,
 GitHub community-file checks, spell checking, rustdoc with missing public docs
-denied, no-default-features CLI tests and builds, release binary smoke checks,
-package readiness checks, and the animation-pack skill's behavioral and
+denied, no-default-features CLI tests and builds, the retained release CLI
+proof, package readiness checks, and the animation-pack skill's behavioral and
 published-report validation.
 
 This author-side pre-push gate is distinct from the later PR audit. Once the
@@ -101,6 +101,7 @@ report feature. The `--no-default-features` build must keep working as a
 pure-Rust glTF-only binary:
 
 ```console
+$ export CARGO_TARGET_DIR=target/no-default-features
 $ cargo test -p animsmith --test cli_contract --no-default-features
 $ cargo test -p animsmith --test foot_cycle_cli --no-default-features
 $ cargo test -p animsmith --test scale_cli --no-default-features
@@ -108,6 +109,11 @@ $ cargo test -p animsmith --test transition_pose_cli --no-default-features
 $ cargo build -p animsmith --no-default-features
 $ cargo build -p animsmith --release --no-default-features
 ```
+
+The redirected target directory is not optional bookkeeping. Without it these
+builds land on `target/debug/animsmith`, `target/release/animsmith`, and
+`target/doc`, and whichever feature set ran last is what stays there; see
+Evaluation Artifacts below.
 
 In that build, glTF inspect, measure, lint, transform, fix, scale, diff,
 `generate addressability`, and `collection transform-foot-cycle` stay
@@ -120,6 +126,41 @@ evidence-emitting producers, so their shared atomic artifact/evidence and
 generation publication helpers live in `crates/animsmith/src/publish.rs`
 rather than inside the feature-gated `assembly` module. Both `scale_cli` and
 `foot_cycle_cli` are part of the no-default-features gate.
+
+## Evaluation Artifacts
+
+A checkout holds more than one CLI, and they do not have the same
+capabilities. Feature-variant builds write to `target/no-default-features/`,
+so the conventional paths hold default-feature artifacts only:
+
+| Path | Compiled features | Use |
+|---|---|---|
+| `target/release/animsmith` | `fbx`, `report` | external evaluation, after a green `just gates` |
+| `target/debug/animsmith` | `fbx`, `report` | development and the local skill gates |
+| `target/no-default-features/{debug,release}/animsmith` | none | proving the minimal build still works |
+| a published release archive | `fbx`, `report` | external evaluation, verified per [RELEASING.md](RELEASING.md) |
+
+`just release-cli` is what proves the first row rather than assuming it. It
+builds both release variants, requires the retained
+`target/release/animsmith` to admit the self-authored FBX fixture and expose
+`report` while the isolated minimal binary refuses both, and prints the
+provenance record to keep beside an evaluation's results:
+
+```console
+$ just release-cli
+release-cli: provenance of the retained default-feature CLI
+  binary:       target/release/animsmith
+  sha256:       <sha256 of that file>
+  version:      <the --version line>
+  capabilities: <what the probes proved, not what the binary claims>
+  commit:       <git rev-parse HEAD>
+  describe:     <git describe --tags --dirty --always>
+```
+
+`just gates` runs that recipe, and CI runs the same script after its release
+builds. The script also refuses a justfile or reusable checks workflow whose
+`--no-default-features` commands would write to the shared target directory,
+so the isolation cannot be dropped without the gate saying so.
 
 ## Cross-platform determinism
 

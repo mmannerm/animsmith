@@ -147,12 +147,16 @@ tool-feature unavailability is an evaluator/operator limitation, not a pack
 defect, and must remain distinct from pack findings.
 
 Never select an evaluator from an ambiguous shared `target/release` after
-mixed-feature builds. If that directory may contain artifacts from different
+mixed-feature builds. If a directory may contain artifacts from different
 feature sets, treat its identity as unresolved, discard it from consideration,
 and rebuild or select an official tagged artifact or a dedicated
-feature-isolated target directory. Repeat this preflight for each batch when
-the binary, target directory, feature set, source format, or required command
-changes.
+feature-isolated target directory. An AnimSmith checkout already separates
+them: `just gates` and CI send every `--no-default-features` command to
+`target/no-default-features/`, so `target/release/animsmith` holds the
+default-feature CLI, and `just release-cli` proves that by probing the binary
+and prints the provenance record to retain. Repeat this preflight for each
+batch when the binary, target directory, feature set, source format, or
+required command changes.
 
 When refreshing an earlier evaluation for a newer AnimSmith version, rerun the
 baseline, every selected contract, every adopted or recommended remediation,

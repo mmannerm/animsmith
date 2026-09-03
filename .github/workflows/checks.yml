@@ -34,16 +34,17 @@ jobs:
       - run: cargo test --workspace
       - name: Golden skip marker
         run: bash scripts/check-golden-skip-marker.sh
-      # The published binary must also build without the C dependency.
-      - run: cargo build -p animsmith --no-default-features
+      # The published binary must also build without the C dependency. Every
+      # feature-variant build redirects CARGO_TARGET_DIR, so the conventional
+      # target/debug and target/release paths keep the default-feature
+      # artifacts the retained-CLI check below probes.
+      - run: CARGO_TARGET_DIR=target/no-default-features cargo build -p animsmith --no-default-features
       - name: Build release binary
         run: cargo build -p animsmith --release
-      - name: Smoke release binary
-        run: cargo run -p animsmith --release -- --version
       - name: Build release binary without default features
-        run: cargo build -p animsmith --release --no-default-features
-      - name: Smoke release binary without default features
-        run: cargo run -p animsmith --release --no-default-features -- --version
+        run: CARGO_TARGET_DIR=target/no-default-features cargo build -p animsmith --release --no-default-features
+      - name: Prove the retained release CLI is the default-feature build
+        run: bash scripts/check-release-cli.sh
 
   animation-pack:
     name: animation-pack
@@ -152,19 +153,19 @@ jobs:
       - name: Rustdoc warnings and missing docs are errors without default CLI features
         env:
           RUSTDOCFLAGS: -D warnings -D missing_docs
-        run: cargo doc -p animsmith --no-default-features --no-deps
+        run: CARGO_TARGET_DIR=target/no-default-features cargo doc -p animsmith --no-default-features --no-deps
 
       - name: CLI contract tests without default features
-        run: cargo test -p animsmith --test cli_contract --no-default-features
+        run: CARGO_TARGET_DIR=target/no-default-features cargo test -p animsmith --test cli_contract --no-default-features
 
       - name: Foot-cycle producer CLI tests without default features
-        run: cargo test -p animsmith --test foot_cycle_cli --no-default-features
+        run: CARGO_TARGET_DIR=target/no-default-features cargo test -p animsmith --test foot_cycle_cli --no-default-features
 
       - name: Mesh measurement tests without default features
-        run: cargo test -p animsmith --test measure_mesh --no-default-features
+        run: CARGO_TARGET_DIR=target/no-default-features cargo test -p animsmith --test measure_mesh --no-default-features
 
       - name: Scale producer CLI tests without default features
-        run: cargo test -p animsmith --test scale_cli --no-default-features
+        run: CARGO_TARGET_DIR=target/no-default-features cargo test -p animsmith --test scale_cli --no-default-features
 
       - name: Check publishable crate package readiness
         run: bash scripts/check-package-inventory.sh

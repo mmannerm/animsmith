@@ -172,6 +172,7 @@ require_match DEVELOPMENT.md '^## Documentation Builds$' "documentation-builds s
 require_literal DEVELOPMENT.md "just golden" "golden test command"
 require_literal DEVELOPMENT.md "sccache" "sccache notes"
 require_literal DEVELOPMENT.md "--no-default-features" "no-default-features path"
+require_literal DEVELOPMENT.md "just release-cli" "retained release CLI proof"
 require_literal DEVELOPMENT.md "just package-inventory" "package readiness check"
 require_match DEVELOPMENT.md '^## Package Readiness$' "package-readiness section"
 
