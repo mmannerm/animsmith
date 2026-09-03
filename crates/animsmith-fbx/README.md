@@ -164,8 +164,8 @@ vertex identity are preserved.
 
 ```toml
 [dependencies]
-animsmith-core = "0.11"
-animsmith-fbx = "0.11"
+animsmith-core = "0.12"
+animsmith-fbx = "0.12"
 ```
 
 The compiling load/check example lives in the crate-level API documentation.
