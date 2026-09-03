@@ -275,6 +275,47 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
+
+// A frame loop with exactly one owner, for the transports both documents
+// carry. Playback in either is nothing but advancing one number per frame,
+// and both had the same defect: pausing left the callback it had scheduled
+// alive, and playing scheduled another, so every pause-then-play added a
+// redraw chain that ran for as long as the document stayed open.
+//
+// `stop` cancels the frame in flight, and the run number retires a callback
+// the browser hands back anyway — a browser that ignores the cancellation
+// still ends up with one loop, whether it was stopped or restarted.
+function animsmithFrameLoop(advance) {
+  const loop = { running: false, handle: 0, run: 0 };
+  function chain(mine) {
+    return function frame(now) {
+      // Stopped, or retired by a later start: this chain ends here rather
+      // than scheduling a successor.
+      if (!loop.running || mine !== loop.run) return;
+      advance(now);
+      loop.handle = requestAnimationFrame(frame);
+    };
+  }
+  return {
+    get running() { return loop.running; },
+    start() {
+      loop.running = true;
+      loop.run += 1;
+      loop.handle = requestAnimationFrame(chain(loop.run));
+    },
+    // Returns false when it was already stopped, so a caller can tell a real
+    // pause from a redundant one.
+    stop() {
+      if (!loop.running) return false;
+      loop.running = false;
+      if (loop.handle) {
+        cancelAnimationFrame(loop.handle);
+        loop.handle = 0;
+      }
+      return true;
+    },
+  };
+}
 </script>
 <script type="application/json" id="report-data">{"bones":[{"name":"pelvis","parent":-1},{"name":"foot_l","parent":0},{"name":"foot_r","parent":0},{"name":"weapon_socket","parent":0}],"clips":[{"duration":1.0,"frames":33,"name":"walk_scaled","positions":"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","trails":{"hips":0,"left_foot":1,"right_foot":2}}],"evidence_only":false,"file":"walk-scaled.glb","findings":[{"bone":"pelvis","check":"scale-keys","clip":"walk_scaled","message":"scale animation present — verify it is intentional; many rigs and retargeters mishandle animated scale","node":null,"severity":"warning","time":null},{"bone":"pelvis","check":"non-uniform-scale","clip":"walk_scaled","message":"non-uniform scale present — verify it is intentional; many rigs and retargeters mishandle non-uniform scale","node":null,"severity":"warning","time":0.5},{"bone":"weapon_socket","check":"constant-track","clip":"walk_scaled","message":"translation track has 5 keys but never moves — export bloat","node":null,"severity":"note","time":null}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"walk_scaled"}}],"prediction_provenance":null,"predictions":[],"profile":"ue-mannequin"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
@@ -375,7 +416,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -532,40 +572,30 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
-// One owner for the frame loop. Pausing cancels the frame it scheduled and
-// takes the next run number, so a callback already in flight returns instead
-// of rescheduling: without both, every pause-then-play left the old chain
-// alive beside the new one and the clip advanced once more per frame for as
-// long as the document stayed open.
-let last = 0, playHandle = 0, playRun = 0;
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
+let last = 0;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
+  const dt = (now - last) / 1000;
+  last = now;
+  const fps = (clip.frames - 1) / clip.duration;
+  let f = frame + dt * fps;
+  if (f > clip.frames - 1) f = 0; // wrap like the runtime does
+  setFrame(f);
+});
 function pausePlayback() {
-  playing = false;
-  playRun++;
-  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
+  if (!playLoop.stop()) return;
   playBtn.textContent = "▶";
   playBtn.setAttribute("aria-label", "Play the clip");
 }
-function frameLoop(run) {
-  return function tick(now) {
-    if (!playing || run !== playRun || !clip) return;
-    const dt = (now - last) / 1000;
-    last = now;
-    const fps = (clip.frames - 1) / clip.duration;
-    let f = frame + dt * fps;
-    if (f > clip.frames - 1) f = 0; // wrap like the runtime does
-    setFrame(f);
-    playHandle = requestAnimationFrame(tick);
-  };
-}
 playBtn.addEventListener("click", () => {
   if (!canvas) return;
-  if (playing) { pausePlayback(); return; }
-  playing = true;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
   playBtn.textContent = "⏸";
   playBtn.setAttribute("aria-label", "Pause the clip");
-  last = performance.now();
-  playRun++;
-  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
 
 // orbit controls
@@ -603,6 +633,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -685,6 +716,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

@@ -240,9 +240,10 @@ for (const [id, phrase] of [
   ["comparison-root-path", "the two root paths overlaid so their shapes can be compared"],
   ["comparison-root-path", "before solid, after dashed and translucent"],
   ["comparison-root-path", "fitted to this panel"],
-  ["before-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
-  ["after-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
+  ["before-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails mean the root, hips and feet moved the same way on both sides; what the trails do not draw is not compared here"],
+  ["after-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails mean the root, hips and feet moved the same way on both sides; what the trails do not draw is not compared here"],
   ["before-path", "each trail starts at the hollow circle and ends at the square; the root's trail is the path magnified in the panel above"],
+  ["before-path", "what the trails do not draw is not compared here"],
   ["after-path", "each trail starts at the hollow circle and ends at the square; the root's trail is the path magnified in the panel above"],
   ["before-path", "shared scale across both inputs"],
   ["after-path", "shared scale across both inputs"],
@@ -317,7 +318,9 @@ for (const side of ["before", "after"]) {
 const rootPaths = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-side"]);
 if (rootPaths.length !== 2) throw new Error("the shared root chart plots both sides");
 if (rootPaths.filter((path) => path.attrs["stroke-dasharray"]).length !== 1) throw new Error("two coincident root paths are drawn identically, so one hides the other");
-if (nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]).length !== 1) throw new Error("an identical pair draws one shared-phase dot; a second on the same coordinate says nothing");
+const rootDots = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]);
+if (rootDots.length !== 2) throw new Error("both sides' shared-phase dots are drawn, even where the two tracks coincide");
+if (new Set(rootDots.map((dot) => dot.attrs.r)).size !== 2) throw new Error("two coincident shared-phase dots are drawn identically");
 
 // A coincident `after` is also thinner and translucent, so the `before` it
 // sits on stays visible through it rather than only around its gaps.
@@ -453,12 +456,18 @@ const finiteTrail = (payload, side, role) => payloadTrail(payload, side, role).f
 // before one: it is drawn as the dashed overlay alone, because a second dot
 // and a second pair of marks on the same coordinates say nothing, and the
 // caption says the same thing in words.
-assertEndMarks(nodes["comparison-root-path"].children, "data-root-marker", "data-root-dot", "before", beforeRootMetres, rootMap, "the before root track");
-for (const kind of ["start", "end"]) {
-  if (nodes["comparison-root-path"].children.some((child) => child.attrs["data-root-marker"] === `after-${kind}`)) throw new Error(`the after root track repeats its ${kind} mark on top of the identical before one`);
+// Every track carries its own marks, including an after track the repair
+// left identical to the before one: its ring is narrower and its square
+// takes a second lane, so neither hides under a mark already drawn.
+for (const side of ["before", "after"]) {
+  assertEndMarks(nodes["comparison-root-path"].children, "data-root-marker", "data-root-dot", side, finiteTrail(data, side, "root"), rootMap, `the ${side} root track`);
 }
-if (nodes["comparison-root-path"].children.some((child) => child.attrs["data-root-dot"] === "after")) throw new Error("the after root track repeats its phase dot on top of the identical before one");
-if (!rootCaptionOf(nodes).includes("identical, the after path lies under the before path and is drawn only as the dashed overlay")) throw new Error(`the caption does not say the after path is the overlay: ${rootCaptionOf(nodes)}`);
+const rootMarkerOf = (side, kind) => nodes["comparison-root-path"].children.find((child) => child.attrs["data-root-marker"] === `${side}-${kind}`);
+const ringRadii = ["before", "after"].map((side) => Number(rootMarkerOf(side, "start").attrs.r));
+if (ringRadii[0] === ringRadii[1]) throw new Error(`two coincident start rings are drawn at the same radius (${ringRadii[0]}), so one hides the other`);
+const squareCentres = ["before", "after"].map((side) => [Number(rootMarkerOf(side, "end").attrs.x), Number(rootMarkerOf(side, "end").attrs.y)]);
+if (Math.hypot(squareCentres[0][0] - squareCentres[1][0], squareCentres[0][1] - squareCentres[1][1]) < 7) throw new Error("two coincident end squares are drawn on top of each other, and a filled square hides what is under it");
+if (!rootCaptionOf(nodes).includes("identical, the after path lies under the before path")) throw new Error(`the caption does not say the two coincide: ${rootCaptionOf(nodes)}`);
 
 // The heading is where a reader meets this panel, and it is one of three
 // drawings of the same two paths, so it carries the factor too.
@@ -1331,6 +1340,36 @@ singlePlay.nodes.scrub.value = "1";
 singlePlay.nodes.scrub.listeners.input();
 if (singlePlay.nodes.play.textContent !== "▶" || singlePlay.clock.pending.size !== 0) throw new Error("scrubbing the single-clip viewer did not stop and cancel its frame loop");
 assertNoHashWrites(singlePlay, "restarting single-clip playback");
+
+// A deep link is a reader asking for one position, and the single-clip
+// viewer's transport would have overwritten it on the very next frame. Each
+// selector pauses, and the frame it asked for survives a frame callback.
+for (const [what, fragment, expected] of [
+  ["a frame", `#frame=${Math.min(3, lastFrame)}`, Math.min(3, lastFrame)],
+  ["a finding", `#finding=${findingIndex}`, null],
+]) {
+  const deepLinked = runSingle(single, singleHtml, singlePayload);
+  deepLinked.nodes.play.listeners.click();
+  if (!deepLinked.clock.pending.size) throw new Error(`the ${what} fixture never started playing`);
+  navigate(deepLinked, fragment);
+  if (deepLinked.nodes.play.textContent !== "▶") throw new Error(`navigating to ${what} did not pause the single-clip viewer`);
+  const landed = Number(deepLinked.nodes.scrub.value);
+  if (expected !== null && landed !== expected) throw new Error(`navigating to ${what} landed on frame ${landed}, not ${expected}`);
+  stepFrame(deepLinked, 1);
+  stepFrame(deepLinked, 1);
+  if (Number(deepLinked.nodes.scrub.value) !== landed) throw new Error(`a frame callback overwrote the frame ${what} selected: ${deepLinked.nodes.scrub.value} against ${landed}`);
+  if (expected === null && !deepLinked.nodes.findings.children[findingIndex].classes.has("selected")) throw new Error("a frame callback cleared the deep-linked finding");
+  assertNoHashWrites(deepLinked, `deep-linking ${what} while playing`);
+}
+// Clicking a finding in a running report is the same ask.
+const clickedWhilePlaying = runSingle(single, singleHtml, singlePayload);
+clickedWhilePlaying.nodes.play.listeners.click();
+clickedWhilePlaying.nodes.findings.children[findingIndex].listeners.click();
+if (clickedWhilePlaying.nodes.play.textContent !== "▶") throw new Error("clicking a finding did not pause the single-clip viewer");
+const clickedFrame = Number(clickedWhilePlaying.nodes.scrub.value);
+stepFrame(clickedWhilePlaying, 1);
+if (Number(clickedWhilePlaying.nodes.scrub.value) !== clickedFrame) throw new Error("a frame callback overwrote the frame a clicked finding selected");
+assertNoHashWrites(clickedWhilePlaying, "clicking a finding while playing");
 if (!/<button id="play"[^>]*aria-label="[^"]+"/.test(singleHtml)) throw new Error("the single-clip play control has no accessible name");
 if (singlePlay.nodes.play.attrs["aria-label"] !== "Play the clip") throw new Error(`a paused single-clip control is named ${JSON.stringify(singlePlay.nodes.play.attrs["aria-label"])}`);
 
@@ -1340,6 +1379,18 @@ for (const [what, parts, id, document_, payload, options] of [
   ["comparison", generated, "comparison-report-data", html, data, {ignoreCancel: true}],
   ["single-clip", single, "report-data", singleHtml, singlePayload, {ignoreCancel: true}],
 ]) {
+  // A pause the browser did not act on still stops the phase: the callback
+  // it kept comes back, sees the loop stopped, and ends there.
+  const ignored = run(parts, id, document_, payload, options);
+  ignored.nodes.play.listeners.click();
+  stepFrame(ignored, 0.01);
+  ignored.nodes.play.listeners.click();
+  const parked = Number(ignored.nodes.scrub.value);
+  stepFrame(ignored, 1);
+  stepFrame(ignored, 1);
+  if (Number(ignored.nodes.scrub.value) !== parked) throw new Error(`the ${what} viewer kept advancing after a pause its browser ignored: ${ignored.nodes.scrub.value} against ${parked}`);
+  if (ignored.clock.pending.size) throw new Error(`a stopped ${what} loop scheduled ${ignored.clock.pending.size} more frame(s)`);
+
   const uncancelled = run(parts, id, document_, payload, options);
   uncancelled.nodes.play.listeners.click();
   for (const cycle of [1, 2, 3, 4]) {

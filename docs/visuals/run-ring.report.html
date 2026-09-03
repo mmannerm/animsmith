@@ -275,6 +275,47 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
+
+// A frame loop with exactly one owner, for the transports both documents
+// carry. Playback in either is nothing but advancing one number per frame,
+// and both had the same defect: pausing left the callback it had scheduled
+// alive, and playing scheduled another, so every pause-then-play added a
+// redraw chain that ran for as long as the document stayed open.
+//
+// `stop` cancels the frame in flight, and the run number retires a callback
+// the browser hands back anyway — a browser that ignores the cancellation
+// still ends up with one loop, whether it was stopped or restarted.
+function animsmithFrameLoop(advance) {
+  const loop = { running: false, handle: 0, run: 0 };
+  function chain(mine) {
+    return function frame(now) {
+      // Stopped, or retired by a later start: this chain ends here rather
+      // than scheduling a successor.
+      if (!loop.running || mine !== loop.run) return;
+      advance(now);
+      loop.handle = requestAnimationFrame(frame);
+    };
+  }
+  return {
+    get running() { return loop.running; },
+    start() {
+      loop.running = true;
+      loop.run += 1;
+      loop.handle = requestAnimationFrame(chain(loop.run));
+    },
+    // Returns false when it was already stopped, so a caller can tell a real
+    // pause from a redundant one.
+    stop() {
+      if (!loop.running) return false;
+      loop.running = false;
+      if (loop.handle) {
+        cancelAnimationFrame(loop.handle);
+        loop.handle = 0;
+      }
+      return true;
+    },
+  };
+}
 </script>
 <script type="application/json" id="report-data">{"bones":[{"name":"pelvis","parent":-1},{"name":"foot_l","parent":0},{"name":"foot_r","parent":0}],"clips":[{"duration":1.0,"frames":33,"name":"run_forward","positions":"AAAAAAAAgD8AAAAAzczMPQAAAAAAAAAAzczMvQAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPdDMTD2amRk+zczMvcDMTL2amRm+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPQAAAAA8bqkjzczMvQAAAAA8bqmjAAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPcDMTL2amRm+zczMvdDMTD2amRk+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPQAAAAA8bimkzczMvQAAAAA8bikk","trails":{"hips":0,"left_foot":1,"right_foot":2}},{"duration":1.0,"frames":33,"name":"run_backward","positions":"AAAAAAAAgD8AAAAAzczMPQAAAAAAAAAAzczMvQAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPdDMTD2amRk+zczMvcDMTL2amRm+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPQAAAAA8bqkjzczMvQAAAAA8bqmjAAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPcDMTL2amRm+zczMvdDMTD2amRk+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPQAAAAA8bimkzczMvQAAAAA8bikk","trails":{"hips":0,"left_foot":1,"right_foot":2}},{"duration":1.0,"frames":33,"name":"run_left","positions":"AAAAAAAAgD8AAAAAzczMPdDMTD2amRk+zczMvcDMTL2amRm+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPQAAAAA8bqkjzczMvQAAAAA8bqmjAAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPcDMTL2amRm+zczMvdDMTD2amRk+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPQAAAAA8bimkzczMvQAAAAA8bikkAAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPdDMTD2amRk+zczMvcDMTL2amRm+","trails":{"hips":0,"left_foot":1,"right_foot":2}},{"duration":1.0,"frames":33,"name":"run_right","positions":"AAAAAAAAgD8AAAAAzczMPQAAAAAAAAAAzczMvQAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPdDMTD2amRk+zczMvcDMTL2amRm+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPfBIKj1vbf89zczMvQBJKr1vbf+9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPUC/nDznHms9zczMvUC/nLznHmu9AAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPQAAAAA8bqkjzczMvQAAAAA8bqmjAAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPcDMTL2amRm+zczMvdDMTD2amRk+AAAAAAAAgD8AAAAAzczMPWDdSL0Mpha+zczMvWDdSD0MphY+AAAAAAAAgD8AAAAAzczMPeA1Pb1s6A2+zczMveA1PT1s6A0+AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPcDQEL0kOdm9zczMvcDQED0kOdk9AAAAAAAAgD8AAAAAzczMPcCP47zTq6q9zczMvcCP4zzTq6o9AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPYDRH7wduu+8zczMvYDRHzwduu88AAAAAAAAgD8AAAAAzczMPQAAAAA8bimkzczMvQAAAAA8bikk","trails":{"hips":0,"left_foot":1,"right_foot":2}}],"evidence_only":false,"file":"run-ring.glb","findings":[{"bone":null,"check":"gait-group","clip":null,"message":"gait group 'run-ring': stride-anchor phases spread by 0.20 cycle (cap 0.15) — directional blends between these clips will skate or pop. Measured: [run_forward=0.75, run_backward=0.75, run_left=0.50, run_right=0.75]","node":null,"severity":"error","time":null}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"run_forward"}},{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"run_backward"}},{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"run_left"}},{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"run_right"}}],"prediction_provenance":null,"predictions":[],"profile":"ue-mannequin"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
@@ -375,7 +416,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -532,40 +572,30 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
-// One owner for the frame loop. Pausing cancels the frame it scheduled and
-// takes the next run number, so a callback already in flight returns instead
-// of rescheduling: without both, every pause-then-play left the old chain
-// alive beside the new one and the clip advanced once more per frame for as
-// long as the document stayed open.
-let last = 0, playHandle = 0, playRun = 0;
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
+let last = 0;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
+  const dt = (now - last) / 1000;
+  last = now;
+  const fps = (clip.frames - 1) / clip.duration;
+  let f = frame + dt * fps;
+  if (f > clip.frames - 1) f = 0; // wrap like the runtime does
+  setFrame(f);
+});
 function pausePlayback() {
-  playing = false;
-  playRun++;
-  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
+  if (!playLoop.stop()) return;
   playBtn.textContent = "▶";
   playBtn.setAttribute("aria-label", "Play the clip");
 }
-function frameLoop(run) {
-  return function tick(now) {
-    if (!playing || run !== playRun || !clip) return;
-    const dt = (now - last) / 1000;
-    last = now;
-    const fps = (clip.frames - 1) / clip.duration;
-    let f = frame + dt * fps;
-    if (f > clip.frames - 1) f = 0; // wrap like the runtime does
-    setFrame(f);
-    playHandle = requestAnimationFrame(tick);
-  };
-}
 playBtn.addEventListener("click", () => {
   if (!canvas) return;
-  if (playing) { pausePlayback(); return; }
-  playing = true;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
   playBtn.textContent = "⏸";
   playBtn.setAttribute("aria-label", "Pause the clip");
-  last = performance.now();
-  playRun++;
-  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
 
 // orbit controls
@@ -603,6 +633,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -685,6 +716,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

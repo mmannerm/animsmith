@@ -275,6 +275,47 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
+
+// A frame loop with exactly one owner, for the transports both documents
+// carry. Playback in either is nothing but advancing one number per frame,
+// and both had the same defect: pausing left the callback it had scheduled
+// alive, and playing scheduled another, so every pause-then-play added a
+// redraw chain that ran for as long as the document stayed open.
+//
+// `stop` cancels the frame in flight, and the run number retires a callback
+// the browser hands back anyway — a browser that ignores the cancellation
+// still ends up with one loop, whether it was stopped or restarted.
+function animsmithFrameLoop(advance) {
+  const loop = { running: false, handle: 0, run: 0 };
+  function chain(mine) {
+    return function frame(now) {
+      // Stopped, or retired by a later start: this chain ends here rather
+      // than scheduling a successor.
+      if (!loop.running || mine !== loop.run) return;
+      advance(now);
+      loop.handle = requestAnimationFrame(frame);
+    };
+  }
+  return {
+    get running() { return loop.running; },
+    start() {
+      loop.running = true;
+      loop.run += 1;
+      loop.handle = requestAnimationFrame(chain(loop.run));
+    },
+    // Returns false when it was already stopped, so a caller can tell a real
+    // pause from a redundant one.
+    stop() {
+      if (!loop.running) return false;
+      loop.running = false;
+      if (loop.handle) {
+        cancelAnimationFrame(loop.handle);
+        loop.handle = 0;
+      }
+      return true;
+    },
+  };
+}
 </script>
 <script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"clips":[{"duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}}],"evidence_only":false,"file":"report-comparison-before.glb","findings":[{"bone":"hand","check":"constant-track","clip":"acceptance-matrix","message":"rotation track has 5 keys but never moves — export bloat","node":null,"severity":"note","time":null},{"bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":0.25},{"bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"prediction_provenance":null,"predictions":[],"profile":"custom"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
@@ -375,7 +416,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -532,40 +572,30 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
-// One owner for the frame loop. Pausing cancels the frame it scheduled and
-// takes the next run number, so a callback already in flight returns instead
-// of rescheduling: without both, every pause-then-play left the old chain
-// alive beside the new one and the clip advanced once more per frame for as
-// long as the document stayed open.
-let last = 0, playHandle = 0, playRun = 0;
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
+let last = 0;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
+  const dt = (now - last) / 1000;
+  last = now;
+  const fps = (clip.frames - 1) / clip.duration;
+  let f = frame + dt * fps;
+  if (f > clip.frames - 1) f = 0; // wrap like the runtime does
+  setFrame(f);
+});
 function pausePlayback() {
-  playing = false;
-  playRun++;
-  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
+  if (!playLoop.stop()) return;
   playBtn.textContent = "▶";
   playBtn.setAttribute("aria-label", "Play the clip");
 }
-function frameLoop(run) {
-  return function tick(now) {
-    if (!playing || run !== playRun || !clip) return;
-    const dt = (now - last) / 1000;
-    last = now;
-    const fps = (clip.frames - 1) / clip.duration;
-    let f = frame + dt * fps;
-    if (f > clip.frames - 1) f = 0; // wrap like the runtime does
-    setFrame(f);
-    playHandle = requestAnimationFrame(tick);
-  };
-}
 playBtn.addEventListener("click", () => {
   if (!canvas) return;
-  if (playing) { pausePlayback(); return; }
-  playing = true;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
   playBtn.textContent = "⏸";
   playBtn.setAttribute("aria-label", "Pause the clip");
-  last = performance.now();
-  playRun++;
-  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
 
 // orbit controls
@@ -603,6 +633,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -685,6 +716,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

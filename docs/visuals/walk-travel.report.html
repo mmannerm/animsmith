@@ -275,6 +275,47 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
+
+// A frame loop with exactly one owner, for the transports both documents
+// carry. Playback in either is nothing but advancing one number per frame,
+// and both had the same defect: pausing left the callback it had scheduled
+// alive, and playing scheduled another, so every pause-then-play added a
+// redraw chain that ran for as long as the document stayed open.
+//
+// `stop` cancels the frame in flight, and the run number retires a callback
+// the browser hands back anyway — a browser that ignores the cancellation
+// still ends up with one loop, whether it was stopped or restarted.
+function animsmithFrameLoop(advance) {
+  const loop = { running: false, handle: 0, run: 0 };
+  function chain(mine) {
+    return function frame(now) {
+      // Stopped, or retired by a later start: this chain ends here rather
+      // than scheduling a successor.
+      if (!loop.running || mine !== loop.run) return;
+      advance(now);
+      loop.handle = requestAnimationFrame(frame);
+    };
+  }
+  return {
+    get running() { return loop.running; },
+    start() {
+      loop.running = true;
+      loop.run += 1;
+      loop.handle = requestAnimationFrame(chain(loop.run));
+    },
+    // Returns false when it was already stopped, so a caller can tell a real
+    // pause from a redundant one.
+    stop() {
+      if (!loop.running) return false;
+      loop.running = false;
+      if (loop.handle) {
+        cancelAnimationFrame(loop.handle);
+        loop.handle = 0;
+      }
+      return true;
+    },
+  };
+}
 </script>
 <script type="application/json" id="report-data">{"bones":[{"name":"pelvis","parent":-1},{"name":"foot_l","parent":0},{"name":"foot_r","parent":0}],"clips":[{"duration":1.0,"frames":33,"name":"walk_travel","positions":"AAAAAAAAgD8AAAAAzczMPQAAAAAAAAAAzczMvQAAAAAAAAAAAAAAAAAAgD+amRk9zczMPYDRHzxUu4g9zczMvYDRH7wu8gY8AAAAAAAAgD+amZk9zczMPUC/nDyHlAc+zczMvUC/nLyaKJA8AAAAAAAAgD9nZuY9zczMPcCP4zwdiUg+zczMvcCP47xQ6u48AAAAAAAAgD+amRk+zczMPcDQED0WG4M+zczMvcDQEL0g9DM9AAAAAAAAgD8AAEA+zczMPfBIKj1c258+zczMvQBJKr2RkoA9AAAAAAAAgD9nZmY+zczMPeA1PT1qJ7o+zczMveA1Pb32+7A9AAAAAAAAgD9nZoY+zczMPWDdSD1tudE+zczMvWDdSL2ETew9AAAAAAAAgD+amZk+zczMPdDMTD1nZuY+zczMvcDMTL2amRk+AAAAAAAAgD/NzKw+zczMPWDdSD3TH/g+zczMvWDdSL2O80I+AAAAAAAAgD8AAMA+zczMPeA1PT0begM/zczMveA1Pb2UF3I+AAAAAAAAgD80M9M+zczMPfBIKj1Ihwk/zczMvQBJKr3YV5M+AAAAAAAAgD9nZuY+zczMPcDQED1YWg4/zczMvcDQEL0eGLA+AAAAAAAAgD+amfk+zczMPcCP4zxHIhI/zczMvcCP47yl7s4+AAAAAAAAgD9nZgY/zczMPUC/nDxVGBU/zczMvUC/nLzxaO8+AAAAAAAAgD8AABA/zczMPYDRHzzRfRc/zczMvYDRH7wvggg/AAAAAAAAgD+amRk/zczMPQAAAACamRk/zczMvQAAAACamRk/AAAAAAAAgD80MyM/zczMPYDRH7xjtRs/zczMvYDRHzwFsSo/AAAAAAAAgD/NzCw/zczMPUC/nLzfGh4/zczMvUC/nDy7fjs/AAAAAAAAgD9nZjY/zczMPcCP47ztECE/zczMvcCP4zzhu0s/AAAAAAAAgD8AAEA/zczMPcDQEL3c2CQ/zczMvcDQED0kJ1s/AAAAAAAAgD+amUk/zczMPQBJKr3sqyk/zczMvfBIKj1Ih2k/AAAAAAAAgD80M1M/zczMPeA1Pb0ZuS8/zczMveA1PT1PrXY/AAAAAAAAgD/NzFw/zczMPWDdSL1KIzc/zczMvWDdSD0oO4E/AAAAAAAAgD9nZmY/zczMPcDMTL0AAEA/zczMvdDMTD1nZoY/AAAAAAAAgD8BAHA/zczMPWDdSL1+Vko/zczMvWDdSD3C1Io/AAAAAAAAgD+amXk/zczMPeA1Pb1/H1Y/zczMveA1PT3aiY4/AAAAAAAAgD+amYE/zczMPQBJKr2GRWM/zczMvfBIKj1xkJE/AAAAAAAAgD9nZoY/zczMPcDQEL2qpXE/zczMvcDQED35+ZM/AAAAAAAAgD80M4s/zczMPcCP47x3iIA/zczMvcCP4zzx3ZU/AAAAAAAAgD8AAJA/zczMPUC/nLwJp4g/zczMvUC/nDz3WJc/AAAAAAAAgD/NzJQ/zczMPYDRH7zlDZE/zczMvYDRHzy1i5g/AAAAAAAAgD+amZk/zczMPQAAAACamZk/zczMvQAAAACamZk/","trails":{"hips":0,"left_foot":1,"right_foot":2}}],"evidence_only":false,"file":"walk-travel.glb","findings":[{"bone":null,"check":"in-place","clip":"walk_travel","message":"declared in-place but the root travels at 1.20 m/s — the character will glide at runtime","node":null,"severity":"error","time":null}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"walk_travel"}}],"prediction_provenance":null,"predictions":[],"profile":"ue-mannequin"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
@@ -375,7 +416,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -532,40 +572,30 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
-// One owner for the frame loop. Pausing cancels the frame it scheduled and
-// takes the next run number, so a callback already in flight returns instead
-// of rescheduling: without both, every pause-then-play left the old chain
-// alive beside the new one and the clip advanced once more per frame for as
-// long as the document stayed open.
-let last = 0, playHandle = 0, playRun = 0;
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
+let last = 0;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
+  const dt = (now - last) / 1000;
+  last = now;
+  const fps = (clip.frames - 1) / clip.duration;
+  let f = frame + dt * fps;
+  if (f > clip.frames - 1) f = 0; // wrap like the runtime does
+  setFrame(f);
+});
 function pausePlayback() {
-  playing = false;
-  playRun++;
-  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
+  if (!playLoop.stop()) return;
   playBtn.textContent = "▶";
   playBtn.setAttribute("aria-label", "Play the clip");
 }
-function frameLoop(run) {
-  return function tick(now) {
-    if (!playing || run !== playRun || !clip) return;
-    const dt = (now - last) / 1000;
-    last = now;
-    const fps = (clip.frames - 1) / clip.duration;
-    let f = frame + dt * fps;
-    if (f > clip.frames - 1) f = 0; // wrap like the runtime does
-    setFrame(f);
-    playHandle = requestAnimationFrame(tick);
-  };
-}
 playBtn.addEventListener("click", () => {
   if (!canvas) return;
-  if (playing) { pausePlayback(); return; }
-  playing = true;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
   playBtn.textContent = "⏸";
   playBtn.setAttribute("aria-label", "Pause the clip");
-  last = performance.now();
-  playRun++;
-  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
 
 // orbit controls
@@ -603,6 +633,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -685,6 +716,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

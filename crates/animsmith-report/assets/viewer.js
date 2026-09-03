@@ -96,7 +96,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -253,40 +252,30 @@ function updateCharts() {
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
-// One owner for the frame loop. Pausing cancels the frame it scheduled and
-// takes the next run number, so a callback already in flight returns instead
-// of rescheduling: without both, every pause-then-play left the old chain
-// alive beside the new one and the clip advanced once more per frame for as
-// long as the document stayed open.
-let last = 0, playHandle = 0, playRun = 0;
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
+let last = 0;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
+  const dt = (now - last) / 1000;
+  last = now;
+  const fps = (clip.frames - 1) / clip.duration;
+  let f = frame + dt * fps;
+  if (f > clip.frames - 1) f = 0; // wrap like the runtime does
+  setFrame(f);
+});
 function pausePlayback() {
-  playing = false;
-  playRun++;
-  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
+  if (!playLoop.stop()) return;
   playBtn.textContent = "▶";
   playBtn.setAttribute("aria-label", "Play the clip");
 }
-function frameLoop(run) {
-  return function tick(now) {
-    if (!playing || run !== playRun || !clip) return;
-    const dt = (now - last) / 1000;
-    last = now;
-    const fps = (clip.frames - 1) / clip.duration;
-    let f = frame + dt * fps;
-    if (f > clip.frames - 1) f = 0; // wrap like the runtime does
-    setFrame(f);
-    playHandle = requestAnimationFrame(tick);
-  };
-}
 playBtn.addEventListener("click", () => {
   if (!canvas) return;
-  if (playing) { pausePlayback(); return; }
-  playing = true;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
   playBtn.textContent = "⏸";
   playBtn.setAttribute("aria-label", "Pause the clip");
-  last = performance.now();
-  playRun++;
-  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
 
 // orbit controls
@@ -324,6 +313,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -406,6 +396,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

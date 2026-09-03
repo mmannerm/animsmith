@@ -283,16 +283,14 @@ function drawRootComparison(palette, phase) {
     const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-root-side": name };
     if (style.dash) path["stroke-dasharray"] = style.dash;
     svg.append(svgElement("path", path));
-    // When the repair left the root alone the after track is exactly the
-    // before one, so its dot and its two end marks would stack on marks
-    // already drawn. It is then only the dashed overlay that says the two
-    // agree, and the caption says the same thing in words.
-    if (identical && name === "after") continue;
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
+    // Every track carries its own marks, including an after track the repair
+    // left identical: its ring is narrower than the before one and its
+    // square takes the second lane, so the pair reads as two.
     const ends = trackEnds(points);
-    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, ROOT_PANEL, palette, "data-root-marker", name);
+    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, ROOT_PANEL, palette, "data-root-marker", name, identical && name === "after");
   }
   const rootState = (side) => {
     const points = rootTrack(side);
@@ -344,7 +342,7 @@ function drawRootComparison(palette, phase) {
   const sameness = identical === null
     ? []
     : [identical
-      ? "identical, the after path lies under the before path and is drawn only as the dashed overlay"
+      ? "identical, the after path lies under the before path: its dot is the smaller one and its end mark steps out beside the before one"
       : "the before and after paths differ"];
   // One clip's contract, or both when the two sides declare different ones.
   const guidance = data.before.guidance.root_path === data.after.guidance.root_path
@@ -390,16 +388,23 @@ const MARK_CLEAR = 3, MARK_OFFSET = 11, MARK_SIDE = 7;
 // it cannot leave the picture — with a leader back to the point it marks.
 // The square also carries the panel's own ground as a stroke, so it reads as
 // a square wherever it lands on a line of its own colour.
-function appendTrackEnds(svg, ends, style, panel, palette, attribute, value) {
+function appendTrackEnds(svg, ends, style, panel, palette, attribute, value, crowded) {
   const [first, last] = ends;
   const ring = style.radius + 3;
+  // The ring is hollow and its radius follows the track's own dot, so two
+  // tracks that coincide draw two visible circles without moving anywhere.
   if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: ring, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, [attribute]: `${value}-start` }));
   if (!finitePoint(last)) return;
+  // The square is filled, so it cannot share a coordinate with anything.
+  // It steps aside when its own track's two ends meet, and into a second
+  // lane when another track has already marked this point — which is what a
+  // repair that left the root alone produces.
   const apart = finitePoint(first) ? Math.hypot(last[0] - first[0], last[1] - first[1]) : Infinity;
+  const lane = (apart < ring + MARK_CLEAR ? 1 : 0) + (crowded ? 1 : 0);
   let [markX, markY] = last;
-  if (apart < ring + MARK_CLEAR) {
-    markX += last[0] > panel.width / 2 ? -MARK_OFFSET : MARK_OFFSET;
-    markY += last[1] > panel.height / 2 ? -MARK_OFFSET : MARK_OFFSET;
+  if (lane) {
+    markX += (last[0] > panel.width / 2 ? -MARK_OFFSET : MARK_OFFSET) * lane;
+    markY += (last[1] > panel.height / 2 ? -MARK_OFFSET : MARK_OFFSET) * lane;
     svg.append(svgElement("line", { x1: last[0], y1: last[1], x2: markX, y2: markY, stroke: style.color, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-leader` }));
   }
   svg.append(svgElement("rect", { x: markX - MARK_SIDE / 2, y: markY - MARK_SIDE / 2, width: MARK_SIDE, height: MARK_SIDE, fill: style.color, stroke: palette.ground, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-end` }));
@@ -446,7 +451,8 @@ function drawTrails(name, palette, phase) {
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
   const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
   panelCaption(`${name}-path`, "what to look for: top-down trails of root, hips and feet over the whole clip; "
-    + "matching trails on both sides mean the repair changed only what it claims"
+    + "matching trails mean the root, hips and feet moved the same way on both sides; "
+    + "what the trails do not draw is not compared here"
     + " · each trail starts at the hollow circle and ends at the square; the root's trail is the path magnified in the panel above"
     + " · hips dashed and translucent over root, where the two run together"
     + ` · top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
@@ -604,45 +610,31 @@ const playRate = (() => {
   return sharedFrameMax / duration;
 })();
 if (!playRate) playButton.disabled = true;
-// `playRun` is the loop's owner: every start and every pause takes the next
-// number, and a frame callback that no longer holds it returns instead of
-// rescheduling. Without it a pause immediately followed by a play leaves the
-// old chain's pending callback alive beside the new one, and the phase then
-// advances twice per frame for as long as the document is open.
-let playing = false, playFrame = 0, playedAt = 0, playRun = 0, playHandle = 0;
+let playFrame = 0, playedAt = 0;
+const playLoop = animsmithFrameLoop((now) => {
+  const elapsed = Number.isFinite(now - playedAt) ? Math.max(0, (now - playedAt) / 1000) : 0;
+  playedAt = now;
+  playFrame += elapsed * playRate;
+  if (playFrame > sharedFrameMax) playFrame = 0;
+  selectedFrames = null; selectedContext = null;
+  q("scrub").value = Math.round(playFrame);
+  update();
+});
 function pausePlayback() {
-  if (!playing) return;
-  playing = false;
-  playRun++;
-  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
+  if (!playLoop.stop()) return;
   playButton.textContent = "▶";
   playButton.setAttribute("aria-label", "Play the shared phase");
 }
-function frameLoop(run) {
-  return function tick(now) {
-    if (!playing || run !== playRun) return;
-    const elapsed = Number.isFinite(now - playedAt) ? Math.max(0, (now - playedAt) / 1000) : 0;
-    playedAt = now;
-    playFrame += elapsed * playRate;
-    if (playFrame > sharedFrameMax) playFrame = 0;
-    selectedFrames = null; selectedContext = null;
-    q("scrub").value = Math.round(playFrame);
-    update();
-    playHandle = requestAnimationFrame(tick);
-  };
-}
 playButton.addEventListener("click", () => {
   if (!playRate) return;
-  if (playing) { pausePlayback(); return; }
-  playing = true;
-  playButton.textContent = "⏸";
-  playButton.setAttribute("aria-label", "Pause the shared phase");
+  if (playLoop.running) { pausePlayback(); return; }
   // Resume from wherever the reader left the phase, not from where playback
   // last stopped: a scrub between two presses is the position they chose.
   playFrame = Number(q("scrub").value) || 0;
   playedAt = performance.now();
-  playRun++;
-  playHandle = requestAnimationFrame(frameLoop(playRun));
+  playLoop.start();
+  playButton.textContent = "⏸";
+  playButton.setAttribute("aria-label", "Pause the shared phase");
 });
 q("scrub").addEventListener("input", () => { pausePlayback(); selectedFrames = null; selectedContext = null; update(); });
 window.addEventListener("resize", update);
