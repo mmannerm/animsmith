@@ -350,12 +350,19 @@ where
     D: Deserializer<'de>,
 {
     let value = f64::deserialize(deserializer)?;
-    if !value.is_finite() || !(0.0..=0.5).contains(&value) {
+    if !is_half_cycle(value) {
         return Err(serde::de::Error::custom(
             "must be a finite number in the range [0, 0.5] cycle",
         ));
     }
     Ok(value)
+}
+
+/// Whether a circular tolerance is a cycle fraction a spread can exceed.
+/// Half a cycle is the widest circular spread there is, so a larger cap
+/// admits every possible set.
+fn is_half_cycle(value: f64) -> bool {
+    value.is_finite() && (0.0..=0.5).contains(&value)
 }
 
 /// Thresholds for detecting a pair that is more phase-similar under reflected
@@ -605,6 +612,14 @@ pub enum ConfigValidationError {
         "cannot declare both \"runtime_nodes.selectors\" and \"checks.rest-world-scale.node_selectors\""
     )]
     ConflictingRuntimeNodeSelectors,
+    /// A gait-group tolerance was outside its finite declared domain.
+    #[error("gait group {group:?} field {field:?} must be finite and within its documented range")]
+    InvalidGaitGroupTolerance {
+        /// Declared gait group whose tolerance is invalid.
+        group: String,
+        /// Offending field name.
+        field: &'static str,
+    },
     /// A sync-group tolerance was negative or non-finite.
     #[error("sync group {group:?} field {field:?} must be a finite non-negative number")]
     InvalidSyncGroupTolerance {
@@ -680,6 +695,8 @@ impl Config {
     /// [`ConfigValidationError::ConflictingRuntimeNodeSelectors`] when shared
     /// runtime-node selectors and the rest-world-scale compatibility alias are
     /// both declared,
+    /// [`ConfigValidationError::InvalidGaitGroupTolerance`] when a declared
+    /// blend ring has an invalid phase cap or amplitude floor,
     /// [`ConfigValidationError::InvalidSyncGroupTolerance`] when a same-time
     /// group has an invalid timing tolerance, or
     /// [`ConfigValidationError::InvalidTimeComplementSetting`] when an
@@ -793,6 +810,31 @@ impl Config {
                 if value.is_some_and(|value| !is_nonnegative_finite(value)) {
                     return Err(ConfigValidationError::InvalidClipLoopCap {
                         selector: selector.clone(),
+                        field,
+                    });
+                }
+            }
+        }
+        // A gait group's tolerances have the same two homes as a
+        // time-complement setting's: the deserializer refuses them where a
+        // file declares them, and this refuses them where a pipeline builds
+        // the configuration itself. A cap that is not a number is not a
+        // tolerance — `spread > NaN` is false, so the check could never fail
+        // against it, and a presentation would draw a band around nothing.
+        for (group, gait) in &self.gait_groups {
+            for (field, valid) in [
+                (
+                    "max_gait_phase_spread",
+                    is_half_cycle(gait.max_gait_phase_spread),
+                ),
+                (
+                    "min_lr_amplitude_m",
+                    is_nonnegative_finite(gait.min_lr_amplitude_m),
+                ),
+            ] {
+                if !valid {
+                    return Err(ConfigValidationError::InvalidGaitGroupTolerance {
+                        group: group.clone(),
                         field,
                     });
                 }

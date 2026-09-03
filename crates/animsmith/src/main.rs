@@ -4097,6 +4097,37 @@ min_lr_amplitude_m = 0.03
         assert_eq!(config.gait_groups["ring"].max_gait_phase_spread, 0.15);
         assert_eq!(config.sync_groups["ring"].max_frame_count_delta, 0);
         assert!(toml::from_str::<Config>("[clips.walk]\nunknown = true\n").is_err());
+        // A gait group's phase cap is a cycle fraction a spread can exceed,
+        // and TOML can spell the non-finite floats JSON cannot. Each of
+        // these is refused where the file declares it, so a run never
+        // reaches a check that cannot fail against its own tolerance.
+        for cap in ["nan", "inf", "-inf", "-0.1", "0.6"] {
+            let document = format!(
+                "[gait_groups.ring]\nclips = [\"a\", \"b\"]\nmax_gait_phase_spread = {cap}\n"
+            );
+            assert!(
+                toml::from_str::<Config>(&document).is_err(),
+                "a {cap} cycle cap is not a tolerance: {document}"
+            );
+        }
+        for floor in ["nan", "-inf", "-0.1"] {
+            let document = format!(
+                "[gait_groups.ring]\nclips = [\"a\"]\nmax_gait_phase_spread = 0.15\nmin_lr_amplitude_m = {floor}\n"
+            );
+            assert!(
+                toml::from_str::<Config>(&document).is_err(),
+                "a {floor} m amplitude floor is refused: {document}"
+            );
+        }
+        assert_eq!(
+            toml::from_str::<Config>(
+                "[gait_groups.ring]\nclips = [\"a\", \"b\"]\nmax_gait_phase_spread = 0.5\n"
+            )
+            .expect("half a cycle is the widest cap there is")
+            .gait_groups["ring"]
+                .max_gait_phase_spread,
+            0.5
+        );
         parse_config(document_transition_family().as_bytes())
             .expect("transition-family reference shape parses");
 

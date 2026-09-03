@@ -1276,17 +1276,26 @@ fn circular_centre_is_where_the_spread_is_measured_from() {
     assert!((circular_phase_distance(0.0, 0.5) - 0.5).abs() < 1e-12);
 }
 
-/// A gait group's tolerances are ranges, and the config boundary is where a
-/// value outside them is refused.
+/// A gait group's tolerances are ranges, refused at both boundaries a
+/// configuration can arrive through.
 ///
 /// A circular spread cannot exceed half a cycle, so a larger cap admits every
 /// possible set, and a negative or non-finite cap is not a tolerance at all —
-/// `spread > NaN` is false, so such a group silently never failed. The
-/// declared-generation boundary in `foot_cycle.rs` has always held the same
-/// range; this brings the parsed configuration to it.
+/// `spread > NaN` is false, so such a group could never fail. The declared
+/// generation boundary in `foot_cycle.rs` has always held the same range;
+/// this brings both configuration boundaries to it.
+///
+/// The two boundaries matter separately. Deserialization guards a file, and
+/// `validate` guards the pipeline that builds a `Config` in memory, which is
+/// the embedding path this crate exists for. JSON cannot spell a non-finite
+/// float — `f64::NAN` encodes as `null` and is refused as a type error, not a
+/// range one — so the non-finite cases are driven through the programmatic
+/// path here and through TOML in the CLI's own configuration test.
 #[test]
-fn a_gait_group_tolerance_outside_its_range_is_refused_at_the_config_boundary() {
-    let parse = |cap: serde_json::Value, floor: serde_json::Value| {
+fn a_gait_group_tolerance_outside_its_range_is_refused_at_both_config_boundaries() {
+    use animsmith_core::{ConfigValidationError, GaitGroup};
+
+    let parse = |cap: f64, floor: f64| {
         serde_json::from_value::<Config>(serde_json::json!({
             "gait_groups": { "ring": {
                 "clips": ["a", "b"],
@@ -1295,32 +1304,80 @@ fn a_gait_group_tolerance_outside_its_range_is_refused_at_the_config_boundary() 
             }}
         }))
     };
-    let ok = |cap: f64, floor: f64| {
-        let config = parse(serde_json::json!(cap), serde_json::json!(floor))
-            .unwrap_or_else(|error| panic!("cap {cap} floor {floor} must parse: {error}"));
-        let group = config.gait_groups.get("ring").expect("the declared group");
-        assert_eq!(group.max_gait_phase_spread, cap);
-        assert_eq!(group.min_lr_amplitude_m, floor);
+    let built = |cap: f64, floor: f64| {
+        let mut config = Config::default();
+        config.gait_groups.insert(
+            "ring".to_owned(),
+            GaitGroup {
+                clips: vec!["a".to_owned(), "b".to_owned()],
+                max_gait_phase_spread: cap,
+                min_lr_amplitude_m: floor,
+            },
+        );
+        config
     };
-    // The inclusive ends of both ranges, and a value inside them.
-    ok(0.0, 0.0);
-    ok(0.5, 0.03);
-    ok(0.15, 1.0);
 
-    for cap in [-0.001_f64, 0.500_1, f64::INFINITY, f64::NAN] {
-        let refused = parse(serde_json::json!(cap), serde_json::json!(0.03));
+    // The inclusive ends of both ranges, and a value inside them, through
+    // both boundaries.
+    for (cap, floor) in [(0.0, 0.0), (0.5, 0.03), (0.15, 1.0)] {
+        let parsed = parse(cap, floor)
+            .unwrap_or_else(|error| panic!("cap {cap} floor {floor} must parse: {error}"));
+        assert_eq!(parsed.gait_groups["ring"].max_gait_phase_spread, cap);
+        assert_eq!(parsed.gait_groups["ring"].min_lr_amplitude_m, floor);
+        parsed
+            .validate()
+            .unwrap_or_else(|error| panic!("cap {cap} floor {floor} must validate: {error}"));
+        built(cap, floor)
+            .validate()
+            .unwrap_or_else(|error| panic!("a built cap {cap} floor {floor} validates: {error}"));
+    }
+
+    // Out of range, at both boundaries. The non-finite values reach only the
+    // programmatic one, for the reason above.
+    let invalid_cap = |cap: f64| {
+        let error = built(cap, 0.03)
+            .validate()
+            .expect_err(&format!("a {cap} cycle cap is not a tolerance"));
         assert!(
-            refused.is_err(),
-            "a {cap} cycle cap is not a tolerance and must be refused"
+            matches!(
+                error,
+                ConfigValidationError::InvalidGaitGroupTolerance { ref group, field }
+                    if group == "ring" && field == "max_gait_phase_spread"
+            ),
+            "a {cap} cap is refused as a gait-group tolerance, got {error}"
+        );
+    };
+    for cap in [f64::NAN, -0.1, 0.6, f64::INFINITY, f64::NEG_INFINITY] {
+        invalid_cap(cap);
+    }
+    for cap in [-0.001_f64, 0.500_1] {
+        assert!(
+            parse(cap, 0.03).is_err(),
+            "a {cap} cycle cap is refused where a file declares it"
         );
     }
-    for floor in [-0.001_f64, f64::NEG_INFINITY, f64::NAN] {
-        let refused = parse(serde_json::json!(0.15), serde_json::json!(floor));
+
+    let invalid_floor = |floor: f64| {
+        let error = built(0.15, floor)
+            .validate()
+            .expect_err(&format!("a {floor} m amplitude floor is not a floor"));
         assert!(
-            refused.is_err(),
-            "a {floor} m amplitude floor must be refused"
+            matches!(
+                error,
+                ConfigValidationError::InvalidGaitGroupTolerance { ref group, field }
+                    if group == "ring" && field == "min_lr_amplitude_m"
+            ),
+            "a {floor} m floor is refused as a gait-group tolerance, got {error}"
         );
+    };
+    for floor in [f64::NAN, -0.1, f64::NEG_INFINITY, f64::INFINITY] {
+        invalid_floor(floor);
     }
+    assert!(
+        parse(0.15, -0.001).is_err(),
+        "a negative floor is refused where a file declares it"
+    );
+
     // The floor stays optional and defaults to admitting every swing.
     let defaulted = serde_json::from_value::<Config>(serde_json::json!({
         "gait_groups": { "ring": { "clips": ["a"], "max_gait_phase_spread": 0.15 }}
@@ -1330,4 +1387,5 @@ fn a_gait_group_tolerance_outside_its_range_is_refused_at_the_config_boundary() 
         defaulted.gait_groups["ring"].min_lr_amplitude_m, 0.0,
         "an omitted floor excludes nothing"
     );
+    defaulted.validate().expect("and validates");
 }

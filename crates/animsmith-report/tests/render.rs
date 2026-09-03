@@ -2107,16 +2107,22 @@ fn assert_figure_describes_itself(figure: &str, subject: &str) {
         assert_eq!(fill, "none", "{kind}: the only fill attribute is none");
     }
 
-    // Every label sits inside the box it describes, and the legend
-    // inside the plot it labels.
+    // Every drawn coordinate sits inside the box it is drawn in, on both
+    // axes: a figure that reserves a `viewBox` and then draws past it is
+    // simply not showing the reader part of its own evidence.
     for tag in tags(figure) {
-        for name in ["x", "x2", "cx"] {
-            for value in attribute_values(&tag, name) {
-                if let Ok(at) = value.parse::<f64>() {
-                    assert!(
-                        (0.0..=width).contains(&at),
-                        "{kind}: {name}={at} escapes the {width}-wide viewBox"
-                    );
+        for (names, extent, axis) in [
+            (["x", "x1", "x2", "cx"], width, "wide"),
+            (["y", "y1", "y2", "cy"], height, "tall"),
+        ] {
+            for name in names {
+                for value in attribute_values(&tag, name) {
+                    if let Ok(at) = value.parse::<f64>() {
+                        assert!(
+                            (0.0..=extent).contains(&at),
+                            "{kind}: {name}={at} escapes the {extent}-unit {axis} viewBox"
+                        );
+                    }
                 }
             }
         }
