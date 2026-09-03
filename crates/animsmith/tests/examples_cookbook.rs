@@ -303,25 +303,44 @@ fn one_moved_keyframe_fails_the_pin_although_the_stamp_and_json_are_intact() {
         TrackValues::Quats(_) => unreachable!("the search selected a Vec3 track"),
     }
 
-    let tmp = unique_temp_dir("mutated");
-    let path = tmp.path().join(name);
-    animsmith_gltf::write::write(&doc, &path).expect("writes the mutated document");
-    let bytes = std::fs::read(&path).expect("reads the mutated asset");
-    let identity = glb_identity::payload_identity(&bytes).expect("mutated asset is a readable GLB");
+    let mutated = written_identity(&doc, name);
+    // The control: the same document, unmoved, through the same writer.
+    let control = written_identity(&animsmith_testkit::comparison_report_before_doc(), name);
+    assert_eq!(
+        (control.json_sha256.as_str(), control.bin_sha256.as_str()),
+        (json_sha256, bin_sha256),
+        "the unmutated document must reproduce the pin, or the comparison below proves nothing"
+    );
 
     assert_eq!(
-        identity.generator.as_deref(),
-        Some(release_stamp().as_str()),
+        mutated.generator, control.generator,
         "the mutation is invisible to the release stamp"
     );
     assert_eq!(
-        identity.json_sha256, json_sha256,
+        mutated.generator.as_deref(),
+        Some(release_stamp().as_str()),
+        "and both carry this release's stamp"
+    );
+    assert_eq!(
+        mutated.json_sha256, json_sha256,
         "the mutation is invisible to the JSON chunk"
     );
     assert_ne!(
-        identity.bin_sha256, bin_sha256,
+        mutated.bin_sha256, bin_sha256,
         "a moved key must fail the pin: that is the whole point of the BIN half"
     );
+}
+
+/// `doc` written out as `name` and read back as a payload identity.
+fn written_identity(
+    doc: &animsmith_core::model::Document,
+    name: &str,
+) -> glb_identity::GlbPayloadIdentity {
+    let tmp = unique_temp_dir("written");
+    let path = tmp.path().join(name);
+    animsmith_gltf::write::write(doc, &path).expect("writes the document");
+    let bytes = std::fs::read(&path).expect("reads the written asset");
+    glb_identity::payload_identity(&bytes).expect("the written asset is a readable GLB")
 }
 
 #[test]
