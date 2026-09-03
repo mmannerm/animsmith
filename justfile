@@ -158,7 +158,8 @@ report-browser:
     report="$(mktemp)"
     report_evidence="$(mktemp)"
     report_multi="$(mktemp)"
-    trap 'rm -f "${comparison}" "${comparison_evidence}" "${report}" "${report_evidence}" "${report_multi}"' EXIT
+    report_group="$(mktemp)"
+    trap 'rm -f "${comparison}" "${comparison_evidence}" "${report}" "${report_evidence}" "${report_multi}" "${report_group}"' EXIT
     compare() {
       target/debug/animsmith --config examples/report-comparison.animsmith.toml report \
         examples/assets/report-comparison-before.glb \
@@ -175,8 +176,12 @@ report-browser:
     single --output "${report_evidence}" --evidence-only
     # A two-clip document, so clip selection is exercised on a real report.
     target/debug/animsmith report crates/animsmith-report/testdata/rig.gltf --output "${report_multi}"
+    # A four-member declared gait group, so the cross-clip figure is exercised
+    # on a real report rather than on a hand-built one.
+    target/debug/animsmith --config examples/run-ring.animsmith.toml report \
+      examples/assets/run-ring.glb --output "${report_group}"
     node scripts/test-report-viewers.js "${comparison}" "${comparison_evidence}" \
-      "${report}" "${report_evidence}" "${report_multi}"
+      "${report}" "${report_evidence}" "${report_multi}" "${report_group}"
     # The documentation site's theme bridge drives those same viewers through
     # their fragment, so its rewrite rule is executed in the same harness step.
     node scripts/test-theme-bridge.js

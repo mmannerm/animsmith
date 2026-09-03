@@ -103,20 +103,59 @@ pub struct FootCycleMetrics {
     pub lr_amplitude_m: f64,
 }
 
+/// Why a clip does or does not carry a stride anchor.
+///
+/// This is the vocabulary the gait checks report coverage in, and the one a
+/// presentation reads to say why a member of a declared group has no anchor.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum GaitPhaseOutcome {
+#[non_exhaustive]
+pub enum GaitPhaseOutcome {
+    /// One side's foot roles did not resolve, so there is no left-minus-right
+    /// signal to fit a phase to.
     MissingBilateralFootRoles,
+    /// The left-minus-right signal has exactly zero peak-to-peak swing, so
+    /// its phase would be noise rather than a stride.
     NoFootHeightSwing,
+    /// The stride anchor, in cycle fraction `[0, 1)`.
     Measured(f64),
+    /// The harmonic fit yielded no finite phase.
     Unavailable,
 }
 
 impl FootCycleMetrics {
-    pub(crate) fn gait_phase_outcome(&self, roles: &ResolvedRoles) -> GaitPhaseOutcome {
-        let has_left = roles.get(Role::LeftFoot).is_some() || roles.get(Role::LeftToe).is_some();
-        let has_right = roles.get(Role::RightFoot).is_some() || roles.get(Role::RightToe).is_some();
-        GaitPhaseOutcome::classify(self.gait_phase, self.lr_amplitude_m, has_left && has_right)
+    /// Why this clip does or does not carry a stride anchor.
+    pub fn gait_phase_outcome(&self, roles: &ResolvedRoles) -> GaitPhaseOutcome {
+        GaitPhaseOutcome::classify(
+            self.gait_phase,
+            self.lr_amplitude_m,
+            bilateral_foot_roles(roles),
+        )
     }
+}
+
+/// Whether both sides resolve a foot or toe role, which is what a
+/// left-minus-right signal needs.
+fn bilateral_foot_roles(roles: &ResolvedRoles) -> bool {
+    let side = |foot, toe| roles.get(foot).is_some() || roles.get(toe).is_some();
+    side(Role::LeftFoot, Role::LeftToe) && side(Role::RightFoot, Role::RightToe)
+}
+
+/// Whether the rig resolves the roles any gait measurement needs: hips plus
+/// at least one foot.
+///
+/// This is the prerequisite the gait checks report as a coverage gap when it
+/// fails; [`gait_member_phase`] applies it, so a consumer reads the outcome
+/// rather than the predicate.
+pub(crate) fn gait_roles_resolved(roles: &ResolvedRoles) -> bool {
+    let has_foot = [
+        Role::LeftFoot,
+        Role::LeftToe,
+        Role::RightFoot,
+        Role::RightToe,
+    ]
+    .iter()
+    .any(|&role| roles.get(role).is_some());
+    roles.get(Role::Hips).is_some() && has_foot
 }
 
 impl GaitPhaseOutcome {
@@ -557,35 +596,14 @@ pub fn foot_cycle_metrics(
     roles: &ResolvedRoles,
     min_stride_step_m: f64,
 ) -> Option<FootCycleMetrics> {
-    if grid.frame_count() < 3 {
-        return None;
-    }
-    let hips = roles.get(Role::Hips)?;
-    let left: Vec<usize> = [Role::LeftFoot, Role::LeftToe]
-        .iter()
-        .filter_map(|&r| roles.get(r))
-        .collect();
-    let right: Vec<usize> = [Role::RightFoot, Role::RightToe]
-        .iter()
-        .filter_map(|&r| roles.get(r))
-        .collect();
+    let GaitBones { hips, left, right } = gait_bones(grid, roles)?;
     let feet: Vec<usize> = left.iter().chain(right.iter()).copied().collect();
-    if feet.is_empty() {
-        return None;
-    }
-
     let frames = grid.frame_count();
     // Feet relative to hips: cancels the in-place root so we measure
     // the leg cycle, not body travel.
     let rel = |frame: usize, bone: usize| -> Vec3 {
         grid.model_position(frame, bone) - grid.model_position(frame, hips)
     };
-    if (0..frames).any(|frame| {
-        !grid.model_position(frame, hips).is_finite()
-            || feet.iter().any(|&foot| !rel(frame, foot).is_finite())
-    }) {
-        return None;
-    }
 
     // Loop seam: the wrap chord vs its NEIGHBOURING in-clip steps (the
     // step into the last frame and the step out of the first) — local
@@ -612,31 +630,221 @@ pub fn foot_cycle_metrics(
     // Gait phase: fundamental-harmonic trough of the L−R foot-height
     // signal over one cycle (the duplicate wrap frame excluded). The
     // difference cancels common-mode pelvis bob and encodes handedness
-    // plus a stable cycle anchor.
-    let cycle = if frames > 3 { frames - 1 } else { frames };
-    let mut gait_phase = None;
-    let mut lr_amplitude_m = 0.0f64;
-    if !left.is_empty() && !right.is_empty() {
-        let avg_height = |frame: usize, bones: &[usize]| -> f64 {
-            bones.iter().map(|&b| rel(frame, b).y as f64).sum::<f64>() / bones.len() as f64
-        };
-        let diff: Vec<f64> = (0..cycle)
-            .map(|f| avg_height(f, &left) - avg_height(f, &right))
-            .collect();
-        let max = diff.iter().copied().fold(f64::MIN, f64::max);
-        let min = diff.iter().copied().fold(f64::MAX, f64::min);
-        lr_amplitude_m = max - min;
-        if lr_amplitude_m > 0.0 {
-            gait_phase = fundamental_trough_phase(&diff);
-        }
-    }
-
+    // plus a stable cycle anchor. One function forms that signal and fits
+    // it, so a caller that draws the curve draws what was measured.
+    let evidence = lr_evidence(grid, hips, &left, &right);
     Some(FootCycleMetrics {
         loop_seam_ratio,
         has_real_stride,
-        gait_phase,
-        lr_amplitude_m,
+        gait_phase: match evidence.outcome {
+            GaitPhaseOutcome::Measured(phase) => Some(phase),
+            _ => None,
+        },
+        lr_amplitude_m: evidence.lr_amplitude_m,
     })
+}
+
+/// The bones a gait measurement reads, once the grid is known to carry a
+/// cycle it can be read from.
+struct GaitBones {
+    hips: usize,
+    left: Vec<usize>,
+    right: Vec<usize>,
+}
+
+/// Resolve the bones a gait measurement needs from `grid` and `roles`, or
+/// `None` where the clip carries no readable foot cycle at all: under three
+/// frames, no hips, no foot on either side, or a non-finite sample anywhere
+/// in the hips-relative feet.
+///
+/// This is the single gate [`foot_cycle_metrics`] and [`gait_phase_evidence`]
+/// share, so a caller cannot see a phase the other would refuse to measure.
+fn gait_bones(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<GaitBones> {
+    if grid.frame_count() < 3 {
+        return None;
+    }
+    let hips = roles.get(Role::Hips)?;
+    let side =
+        |foot, toe| -> Vec<usize> { [foot, toe].iter().filter_map(|&r| roles.get(r)).collect() };
+    let left = side(Role::LeftFoot, Role::LeftToe);
+    let right = side(Role::RightFoot, Role::RightToe);
+    let feet: Vec<usize> = left.iter().chain(right.iter()).copied().collect();
+    if feet.is_empty() {
+        return None;
+    }
+    let finite = (0..grid.frame_count()).all(|frame| {
+        let hips_position = grid.model_position(frame, hips);
+        hips_position.is_finite()
+            && feet
+                .iter()
+                .all(|&foot| (grid.model_position(frame, foot) - hips_position).is_finite())
+    });
+    finite.then_some(GaitBones { hips, left, right })
+}
+
+/// The stride-anchor evidence one clip yields.
+///
+/// The signal, the samples a cycle spans, the fit's outcome and the swing an
+/// amplitude floor is judged against all come from one measurement, so a
+/// drawn curve, a drawn anchor and a reported coverage gap describe the same
+/// thing rather than three re-derivations of it.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct GaitPhaseEvidence {
+    /// Left-minus-right foot height relative to the hips, in metres, one
+    /// value per sampled frame of the clip's metric grid. Empty when the rig
+    /// resolves a foot on one side only, which is a left-minus-right signal
+    /// with no right-hand term.
+    pub lr_foot_height_m: Vec<f64>,
+    /// Samples one stride cycle spans, so sample `k` of
+    /// [`Self::lr_foot_height_m`] sits at cycle position `k / cycle_samples`
+    /// and a phase `p` sits at sample `p * cycle_samples`. A grid over three
+    /// frames excludes its duplicate wrap sample from the cycle; a
+    /// three-frame grid has no duplicate to exclude.
+    pub cycle_samples: usize,
+    /// Why this clip does or does not carry a stride anchor.
+    pub outcome: GaitPhaseOutcome,
+    /// Peak-to-peak swing of the signal over one cycle (metres).
+    pub lr_amplitude_m: f64,
+}
+
+/// Measure one clip's stride-anchor evidence from its metric grid.
+///
+/// `None` where the clip carries no readable foot cycle at all — the same
+/// refusal [`foot_cycle_metrics`] makes, through the same gate.
+///
+/// # Panics
+///
+/// Panics if `roles` contains bone indices outside `grid`, exactly as
+/// [`foot_cycle_metrics`] does.
+pub fn gait_phase_evidence(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<GaitPhaseEvidence> {
+    let GaitBones { hips, left, right } = gait_bones(grid, roles)?;
+    Some(lr_evidence(grid, hips, &left, &right))
+}
+
+/// Samples one stride cycle spans on a `frames`-sample metric grid.
+///
+/// A grid of more than three frames ends on a repeat of its first sample —
+/// the wrap — and that duplicate is not part of the cycle, so the cycle is
+/// `frames - 1`. A three-frame grid carries no such duplicate, and all three
+/// of its samples are the cycle. Sample `k` therefore sits at cycle position
+/// `k / cycle`, which is where a phase measured on that cycle is drawn
+/// against it.
+pub fn gait_cycle_samples(frames: usize) -> usize {
+    if frames > 3 { frames - 1 } else { frames }
+}
+
+/// Form the left-minus-right foot-height signal and fit its stride anchor.
+fn lr_evidence(grid: &PoseGrid, hips: usize, left: &[usize], right: &[usize]) -> GaitPhaseEvidence {
+    let frames = grid.frame_count();
+    let cycle_samples = gait_cycle_samples(frames);
+    if left.is_empty() || right.is_empty() {
+        return GaitPhaseEvidence {
+            lr_foot_height_m: Vec::new(),
+            cycle_samples,
+            outcome: GaitPhaseOutcome::MissingBilateralFootRoles,
+            lr_amplitude_m: 0.0,
+        };
+    }
+    let mean_height = |frame: usize, bones: &[usize]| -> f64 {
+        let hips_position = grid.model_position(frame, hips);
+        bones
+            .iter()
+            .map(|&bone| (grid.model_position(frame, bone) - hips_position).y as f64)
+            .sum::<f64>()
+            / bones.len() as f64
+    };
+    let lr_foot_height_m: Vec<f64> = (0..frames)
+        .map(|frame| mean_height(frame, left) - mean_height(frame, right))
+        .collect();
+    // The amplitude and the fit read one cycle; the series keeps every
+    // sampled frame, because a caller drawing the curve draws the clip.
+    let cycle = &lr_foot_height_m[..cycle_samples];
+    let max = cycle.iter().copied().fold(f64::MIN, f64::max);
+    let min = cycle.iter().copied().fold(f64::MAX, f64::min);
+    let lr_amplitude_m = max - min;
+    let phase = (lr_amplitude_m > 0.0)
+        .then(|| fundamental_trough_phase(cycle))
+        .flatten();
+    GaitPhaseEvidence {
+        lr_foot_height_m,
+        cycle_samples,
+        outcome: GaitPhaseOutcome::classify(phase, lr_amplitude_m, true),
+        lr_amplitude_m,
+    }
+}
+
+/// How one declared member of a gait group stands, classified once for every
+/// consumer.
+///
+/// The `gait-group` check turns these into findings and coverage gaps; a
+/// report draws the measured ones and names the rest. Deriving them twice is
+/// what lets a picture claim a member was measured where the check recorded
+/// a gap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum GaitMemberPhase {
+    /// The document holds no clip of this member's name.
+    Absent,
+    /// The rig did not resolve hips together with a foot role on at least
+    /// one side — either prerequisite being absent is enough — so no member
+    /// of any group has a phase to measure.
+    RolesUnresolved,
+    /// The clip is present but carries no readable foot cycle.
+    NoFootCycle,
+    /// The foot cycle was read and yielded no anchor, with the reason.
+    NoAnchor(GaitPhaseOutcome),
+    /// The swing is under the group's evidence floor, where a phase is noise.
+    BelowFloor {
+        /// Peak-to-peak swing measured (metres).
+        amplitude_m: f64,
+        /// The floor it is under (metres).
+        floor_m: f64,
+    },
+    /// The measured stride anchor, in cycle fraction `[0, 1)`.
+    Measured(f64),
+}
+
+impl GaitMemberPhase {
+    /// The anchor a member contributes to its group's spread, if any.
+    pub fn anchor(self) -> Option<f64> {
+        match self {
+            GaitMemberPhase::Measured(phase) => Some(phase),
+            _ => None,
+        }
+    }
+}
+
+/// Classify one declared gait-group member.
+///
+/// `evidence` is what [`gait_phase_evidence`] returned for the member's clip,
+/// or `None` where the document holds no such clip (`present` is `false`) or
+/// the clip carries no readable foot cycle.
+pub fn gait_member_phase(
+    roles: &ResolvedRoles,
+    present: bool,
+    evidence: Option<&GaitPhaseEvidence>,
+    min_lr_amplitude_m: f64,
+) -> GaitMemberPhase {
+    if !present {
+        return GaitMemberPhase::Absent;
+    }
+    if !gait_roles_resolved(roles) {
+        return GaitMemberPhase::RolesUnresolved;
+    }
+    let Some(evidence) = evidence else {
+        return GaitMemberPhase::NoFootCycle;
+    };
+    match evidence.outcome {
+        GaitPhaseOutcome::Measured(_) if evidence.lr_amplitude_m < min_lr_amplitude_m => {
+            GaitMemberPhase::BelowFloor {
+                amplitude_m: evidence.lr_amplitude_m,
+                floor_m: min_lr_amplitude_m,
+            }
+        }
+        GaitPhaseOutcome::Measured(phase) => GaitMemberPhase::Measured(phase),
+        outcome => GaitMemberPhase::NoAnchor(outcome),
+    }
 }
 
 /// Normalized cycle position `[0,1)` of the minimum of the signal's
@@ -709,11 +917,40 @@ pub fn rotation_range_deg(track: &Track) -> Option<f64> {
     Some(max_deg)
 }
 
-/// Maximum circular distance (in cycle fraction, `[0, 0.5]`) of a set of
-/// normalized phases from their circular mean. Phases live on a ring, so
-/// a naive max−min would over-report a cluster straddling the 0/1 wrap.
-pub fn circular_phase_spread(phases: &[f64]) -> f64 {
+/// A cycle position folded into `[0, 1)`.
+///
+/// `rem_euclid` rounds a hair-negative input's wrap up to exactly one, and
+/// the cycle position of a full turn is zero.
+pub fn wrap_unit_phase(phase: f64) -> f64 {
+    let wrapped = phase.rem_euclid(1.0);
+    if wrapped < 1.0 { wrapped } else { 0.0 }
+}
+
+/// Circular distance between two normalized phases, in cycle fraction
+/// `[0, 0.5]`. Phases live on a ring, so the distance is the shorter of the
+/// two arcs between them.
+pub fn circular_phase_distance(phase: f64, other: f64) -> f64 {
+    let distance = (phase - other).abs() % 1.0;
+    distance.min(1.0 - distance)
+}
+
+/// The circular mean of a set of normalized phases and the maximum deviation
+/// from it, in one pass; `None` for an empty set, which has no mean
+/// direction.
+///
+/// The mean is a cycle position in `[0, 1)` and the deviation a cycle
+/// fraction in `[0, 0.5]`. A caller drawing a tolerance around a group of
+/// phases needs the centre as well as the spread, and taking them separately
+/// computed the resultant twice.
+///
+/// A set whose vectors cancel keeps whatever direction `atan2` derives from
+/// the residual sums — the same direction the spread has always been
+/// measured from.
+pub fn circular_phase_center_spread(phases: &[f64]) -> Option<(f64, f64)> {
     use std::f64::consts::{PI, TAU};
+    if phases.is_empty() {
+        return None;
+    }
     let (mut sin_sum, mut cos_sum) = (0.0f64, 0.0f64);
     for p in phases {
         sin_sum += (p * TAU).sin();
@@ -728,7 +965,14 @@ pub fn circular_phase_spread(phases: &[f64]) -> f64 {
         }
         max_dev = max_dev.max(d / TAU);
     }
-    max_dev
+    Some((wrap_unit_phase(mean / TAU), max_dev))
+}
+
+/// Maximum circular distance (in cycle fraction, `[0, 0.5]`) of a set of
+/// normalized phases from their circular mean. Phases live on a ring, so
+/// a naive max−min would over-report a cluster straddling the 0/1 wrap.
+pub fn circular_phase_spread(phases: &[f64]) -> f64 {
+    circular_phase_center_spread(phases).map_or(0.0, |(_, spread)| spread)
 }
 
 /// The metric sampling grid for a clip: uniform, resolution = max key

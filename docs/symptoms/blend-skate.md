@@ -25,9 +25,19 @@ The synthetic ring below holds four clips built from one analytic gait, with
 measured from the left-minus-right foot height relative to the hips, so the
 shift is visible as the same curve starting at a different point.
 
-| Coherent member: `run_forward` | Shifted member: `run_left` |
-|---|---|
-| <img src="../visuals/run-ring.run-forward.foot-height.svg" alt="Foot height of run_forward, whose stride anchor is at 0.75" width="360"> | <img src="../visuals/run-ring.run-left.foot-height.svg" alt="Foot height of run_left, whose stride anchor is a quarter cycle earlier at 0.50" width="360"> |
+<img src="../visuals/run-ring.gait-group.svg" alt="The four run-ring members' left-minus-right foot height on one phase axis: three curves coincide with their stride anchors at 0.75, and run_left runs a quarter cycle earlier with its anchor at 0.50, outside the tolerance band" width="720">
+
+The report draws one figure per declared gait group. Every member is on the
+same normalized source-phase axis and none of them is shifted onto another:
+aligning them would draw one curve four times and hide the very thing the
+group is checked for. `run_forward`, `run_backward` and `run_right` share one
+gait, so their curves coincide and their stride-anchor marks land together at
+0.75; `run_left` runs a quarter cycle earlier and its mark sits at 0.50. The
+shaded band is the declared 0.15 cap either side of the circular mean of the
+measured anchors, and `run_left` is the anchor outside it. No member is
+nominated as the reference: the check judges the set's spread, so the figure
+names the members whose anchors fall outside the band and leaves the choice of
+which one to re-anchor to the project.
 
 <iframe src="../visuals/run-ring.report.html#embed=1&finding=0" title="AnimSmith report for the four-member run-ring, scrubbed to the judged frame" width="100%" height="520" loading="lazy"></iframe>
 

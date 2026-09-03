@@ -24,6 +24,12 @@ fn comparison_fixture(name: &str) -> PathBuf {
 }
 
 /// A full report: sampled poses embedded, the historical default.
+/// A configuration that declares no gait group, so a render exercises only
+/// the per-clip figures. The group figures have their own fixtures.
+fn no_groups() -> animsmith_core::Config {
+    animsmith_core::Config::default()
+}
+
 fn full() -> animsmith_report::ReportOptions {
     animsmith_report::ReportOptions::default()
 }
@@ -1302,7 +1308,15 @@ fn render_embeds_pose_grid_and_uses_no_external_urls() {
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     assert_self_contained(&html);
     let data = report_data(&html);
     let clips = data["clips"].as_array().expect("clips array");
@@ -1348,7 +1362,15 @@ fn render_self_contained_with_roles_findings_and_charts() {
             .time(0.5),
     ]);
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     assert_self_contained(&html);
     assert!(
         html.contains(r#"data-kind="gait""#),
@@ -1388,7 +1410,15 @@ fn render_respects_clip_filter() {
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
-    let html = animsmith_report::render(&grids, &roles, &checks, None, Some("missing"), full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: Some("missing"),
+        options: full(),
+    });
     assert_self_contained(&html);
     let data = report_data(&html);
     assert_eq!(
@@ -1398,7 +1428,15 @@ fn render_respects_clip_filter() {
     );
 
     for name in ["walk", "idle"] {
-        let html = animsmith_report::render(&grids, &roles, &checks, None, Some(name), full());
+        let html = animsmith_report::render(animsmith_report::ReportInputs {
+            grids: &grids,
+            roles: &roles,
+            checks: &checks,
+            config: &no_groups(),
+            prediction_provenance: None,
+            clip: Some(name),
+            options: full(),
+        });
         let data = report_data(&html);
         let clips = data["clips"].as_array().expect("clips array");
         assert_eq!(clips.len(), 1);
@@ -1443,8 +1481,15 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
             prediction_check(&provenance, available, unavailable),
             gap_check,
         ];
-        let html =
-            animsmith_report::render(&grids, &roles, &checks, Some(&provenance), None, full());
+        let html = animsmith_report::render(animsmith_report::ReportInputs {
+            grids: &grids,
+            roles: &roles,
+            checks: &checks,
+            config: &no_groups(),
+            prediction_provenance: Some(&provenance),
+            clip: None,
+            options: full(),
+        });
         let data = report_data(&html);
         let states = data["predictions"][0]["prediction"]["facets"]
             .as_array()
@@ -1618,7 +1663,15 @@ fn themed_documents() -> Vec<(&'static str, String)> {
     vec![
         (
             "single-clip",
-            animsmith_report::render(&grids, &roles, &[], None, None, full()),
+            animsmith_report::render(animsmith_report::ReportInputs {
+                grids: &grids,
+                roles: &roles,
+                checks: &[],
+                config: &no_groups(),
+                prediction_provenance: None,
+                clip: None,
+                options: full(),
+            }),
         ),
         ("comparison", comparison_documents(full())),
     ]
@@ -1970,7 +2023,12 @@ fn legend_bounds(figure: &str) -> (f64, f64, f64, f64) {
         let Some(class) = attribute_values(&tag, "class").into_iter().next() else {
             continue;
         };
-        if class != "legend" && !(tag.starts_with("line") && class != "playhead") {
+        // A legend is its label text plus the swatch line beside it. The
+        // playhead and a gait group's stride-anchor marks are lines the
+        // chart draws inside its plot, not legend entries.
+        let swatch =
+            tag.starts_with("line") && class != "playhead" && !class.starts_with("anchor-member-");
+        if class != "legend" && !swatch {
             continue;
         }
         for name in ["x", "x1", "x2"] {
@@ -2000,12 +2058,100 @@ fn number(source: &str, name: &str) -> f64 {
         .unwrap_or_else(|_| panic!("{name} is numeric"))
 }
 
+/// Every figure is legible on its own: it says what it is, states its unit,
+/// keeps its paint in classes, and draws nothing outside the box it
+/// publishes. A clip figure and a gait-group figure are held to the same bar,
+/// because either one can be lifted out of the report and inlined in a page.
+fn assert_figure_describes_itself(figure: &str, subject: &str) {
+    let kind = attribute(figure, "data-kind");
+    assert_eq!(attribute(figure, "role"), "img", "{kind}");
+    let view_box: Vec<f64> = attribute(figure, "viewBox")
+        .split_whitespace()
+        .map(|part| part.parse().expect("viewBox number"))
+        .collect();
+    assert_eq!(view_box.len(), 4, "{kind}: a scalable viewBox");
+    let (width, height) = (view_box[2], view_box[3]);
+    assert!(width > 0.0 && height > 0.0, "{kind}");
+
+    let described = attribute(figure, "aria-label");
+    assert!(
+        described.starts_with(&format!("{subject} — ")) && described.contains(" m"),
+        "{kind}: the label names its subject and states its unit: {described}"
+    );
+    assert!(
+        figure.contains(&format!("<title>{subject} — ")),
+        "{kind}: titled"
+    );
+    let axis = class_texts(figure, "axis");
+    assert!(
+        axis.iter().all(|label| !label.trim().is_empty()),
+        "{kind}: every axis label says something"
+    );
+    assert!(
+        axis.iter().filter(|label| label.ends_with(" m")).count() >= 2,
+        "{kind}: the unit is in the label a reader sees, not only in the \
+         aria description: {axis:?}"
+    );
+
+    // Colour comes from the classes alone, so an extracted figure keeps
+    // its meaning under an injected style block.
+    assert!(
+        !figure.contains("style="),
+        "{kind}: no inline style overrides the classes"
+    );
+    assert!(
+        !figure.contains("stroke=\""),
+        "{kind}: stroke comes from a class"
+    );
+    for fill in attribute_values(figure, "fill") {
+        assert_eq!(fill, "none", "{kind}: the only fill attribute is none");
+    }
+
+    // Every drawn coordinate sits inside the box it is drawn in, on both
+    // axes: a figure that reserves a `viewBox` and then draws past it is
+    // simply not showing the reader part of its own evidence.
+    for tag in tags(figure) {
+        for (names, extent, axis) in [
+            (["x", "x1", "x2", "cx"], width, "wide"),
+            (["y", "y1", "y2", "cy"], height, "tall"),
+        ] {
+            for name in names {
+                for value in attribute_values(&tag, name) {
+                    if let Ok(at) = value.parse::<f64>() {
+                        assert!(
+                            (0.0..=extent).contains(&at),
+                            "{kind}: {name}={at} escapes the {extent}-unit {axis} viewBox"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    let (legend_min_x, legend_max_x, legend_min_y, legend_max_y) = legend_bounds(figure);
+    assert!(
+        legend_min_x >= 0.0
+            && legend_max_x <= width
+            && legend_min_y >= 0.0
+            && legend_max_y <= height,
+        "{kind}: the legend stays inside the {width}x{height} chart on every side: \
+         x {legend_min_x}..{legend_max_x}, y {legend_min_y}..{legend_max_y}"
+    );
+}
+
 #[test]
 fn charts_keep_their_sync_hooks_and_describe_themselves() {
     let doc = chart_roles_fixture();
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"), full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: Some("walk"),
+        options: full(),
+    });
     assert_self_contained(&html);
 
     let figures = chart_figures(&html);
@@ -2016,71 +2162,8 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
     assert_eq!(kinds, vec!["gait", "rootpath"]);
 
     for figure in &figures {
-        let kind = attribute(figure, "data-kind");
-        assert_eq!(attribute(figure, "data-clip"), "walk", "{kind}");
-        assert_eq!(attribute(figure, "role"), "img", "{kind}");
-        let view_box: Vec<f64> = attribute(figure, "viewBox")
-            .split_whitespace()
-            .map(|part| part.parse().expect("viewBox number"))
-            .collect();
-        assert_eq!(view_box.len(), 4, "{kind}: a scalable viewBox");
-        let (width, height) = (view_box[2], view_box[3]);
-        assert!(width > 0.0 && height > 0.0, "{kind}");
-
-        let described = attribute(figure, "aria-label");
-        assert!(
-            described.starts_with("walk — ") && described.contains(" m"),
-            "{kind}: the label names the clip and states its unit: {described}"
-        );
-        assert!(figure.contains("<title>walk — "), "{kind}: titled");
-        let axis = class_texts(figure, "axis");
-        assert!(
-            axis.iter().all(|label| !label.trim().is_empty()),
-            "{kind}: every axis label says something"
-        );
-        assert!(
-            axis.iter().filter(|label| label.ends_with(" m")).count() >= 2,
-            "{kind}: the unit is in the label a reader sees, not only in the \
-             aria description: {axis:?}"
-        );
-
-        // Colour comes from the classes alone, so an extracted figure keeps
-        // its meaning under an injected style block.
-        assert!(
-            !figure.contains("style="),
-            "{kind}: no inline style overrides the classes"
-        );
-        assert!(
-            !figure.contains("stroke=\""),
-            "{kind}: stroke comes from a class"
-        );
-        for fill in attribute_values(figure, "fill") {
-            assert_eq!(fill, "none", "{kind}: the only fill attribute is none");
-        }
-
-        // Every label sits inside the box it describes, and the legend
-        // inside the plot it labels.
-        for tag in tags(figure) {
-            for name in ["x", "x2", "cx"] {
-                for value in attribute_values(&tag, name) {
-                    if let Ok(at) = value.parse::<f64>() {
-                        assert!(
-                            (0.0..=width).contains(&at),
-                            "{kind}: {name}={at} escapes the {width}-wide viewBox"
-                        );
-                    }
-                }
-            }
-        }
-        let (legend_min_x, legend_max_x, legend_min_y, legend_max_y) = legend_bounds(figure);
-        assert!(
-            legend_min_x >= 0.0
-                && legend_max_x <= width
-                && legend_min_y >= 0.0
-                && legend_max_y <= height,
-            "{kind}: the legend stays inside the {width}x{height} chart on every side: \
-             x {legend_min_x}..{legend_max_x}, y {legend_min_y}..{legend_max_y}"
-        );
+        assert_eq!(attribute(figure, "data-clip"), "walk");
+        assert_figure_describes_itself(figure, "walk");
     }
 
     let gait = &figures[0];
@@ -2229,7 +2312,15 @@ fn the_gait_chart_scales_its_two_value_axes_independently() {
     let doc = squashed_gait_fixture();
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -2318,7 +2409,15 @@ fn non_finite_samples_are_reported_as_unavailable_rather_than_plotted() {
     };
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     let path = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2386,7 +2485,15 @@ fn root_path_figure(values: Vec<animsmith_core::glam::Vec3>) -> String {
     let doc = root_path_document(values);
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2736,7 +2843,15 @@ fn an_all_non_finite_series_is_named_rather_than_plotted_as_nan() {
         ]);
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -2787,7 +2902,15 @@ fn a_flat_series_is_centred_and_labelled_once() {
     );
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -2823,7 +2946,15 @@ fn a_stationary_root_path_says_so_in_words() {
     let doc = squashed_gait_fixture();
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "hips".to_string())]);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     let path = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2850,14 +2981,15 @@ fn a_stationary_root_path_says_so_in_words() {
     // A root that stands still somewhere other than the origin says where.
     let mut parked = squashed_gait_fixture();
     parked.skeleton.bones[0].rest.translation = animsmith_core::glam::Vec3::new(2.0, 1.0, -3.5);
-    let parked_html = animsmith_report::render(
-        &MetricGrids::new(&parked),
-        &ResolvedRoles::from_names(&parked.skeleton, [(Role::Root, "hips".to_string())]),
-        &[],
-        None,
-        None,
-        full(),
-    );
+    let parked_html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &MetricGrids::new(&parked),
+        roles: &ResolvedRoles::from_names(&parked.skeleton, [(Role::Root, "hips".to_string())]),
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     let parked_path = chart_figures(&parked_html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2880,14 +3012,15 @@ fn a_stationary_root_path_says_so_in_words() {
     );
 
     // A root that travels keeps the plotted ranges and gains no sentence.
-    let travelled = animsmith_report::render(
-        &MetricGrids::new(&chart_roles_fixture()),
-        &chart_roles(&chart_roles_fixture()),
-        &[],
-        None,
-        None,
-        full(),
-    );
+    let travelled = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &MetricGrids::new(&chart_roles_fixture()),
+        roles: &chart_roles(&chart_roles_fixture()),
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     let moving = chart_figures(&travelled)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2938,7 +3071,15 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
     };
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
 
     let figure = chart_figures(&html)
         .into_iter()
@@ -3094,8 +3235,24 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
             .time(0.5),
     ]);
 
-    let full_html = animsmith_report::render(&grids, &roles, &checks, None, None, full());
-    let html = animsmith_report::render(&grids, &roles, &checks, None, None, evidence_only());
+    let full_html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: evidence_only(),
+    });
     assert_self_contained(&html);
 
     let full_data = report_data(&full_html);
@@ -3215,8 +3372,24 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
     };
     let grids = MetricGrids::new(&doc);
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
-    let full_html = animsmith_report::render(&grids, &roles, &[], None, None, full());
-    let html = animsmith_report::render(&grids, &roles, &[], None, None, evidence_only());
+    let full_html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: evidence_only(),
+    });
 
     // Every payload the document carries, not only the field the pose grid
     // used to occupy.
@@ -3634,7 +3807,15 @@ fn every_single_clip_chart_caption_says_what_to_look_for() {
     let doc = chart_roles_fixture();
     let grids = MetricGrids::new(&doc);
     let roles = chart_roles(&doc);
-    let html = animsmith_report::render(&grids, &roles, &[], None, Some("walk"), full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: Some("walk"),
+        options: full(),
+    });
     let figures = chart_figures(&html);
     let caption = |kind: &str| {
         figcaption(
@@ -3731,7 +3912,15 @@ fn the_root_path_marks_where_the_track_starts_and_ends() {
     let render_document = |doc: &Document| {
         let grids = MetricGrids::new(doc);
         let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
-        animsmith_report::render(&grids, &roles, &[], None, None, full())
+        animsmith_report::render(animsmith_report::ReportInputs {
+            grids: &grids,
+            roles: &roles,
+            checks: &[],
+            config: &no_groups(),
+            prediction_provenance: None,
+            clip: None,
+            options: full(),
+        })
     };
     let render = |doc: &Document| {
         let html = render_document(doc);
@@ -4123,7 +4312,15 @@ fn contract_captions(
         roles.iter().map(|(role, name)| (*role, (*name).to_owned())),
     );
     let checks = matrix_evaluations(&grids, &resolved, &config);
-    let html = animsmith_report::render(&grids, &resolved, &checks, None, None, full());
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &resolved,
+        checks: &checks,
+        config: &config,
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
     chart_figures(&html)
         .into_iter()
         .map(|figure| (attribute(&figure, "data-kind"), figcaption(&figure)))
@@ -4383,6 +4580,1291 @@ fn the_comparison_viewer_maps_into_the_panels_this_document_emits() {
             box_of(id),
             declared("TRAIL_PANEL"),
             "{id} and the box its viewer maps into"
+        );
+    }
+}
+
+/// A directional ring: several clips built from one analytic gait, each
+/// entering it at its own declared offset.
+///
+/// Frame `i` of the `CYCLE`-sample cycle puts the left foot
+/// `AMPLITUDE·sin(2π(i/CYCLE + offset))` above its rest height and the right
+/// foot the same distance below, so the left-minus-right signal is a pure
+/// fundamental. Its trough — the stride anchor — is at `0.75 − offset` of a
+/// cycle, which is what makes every anchor in these tests a number the test
+/// knows before the renderer measures it.
+fn ring_fixture(members: &[(&str, f64)], amplitude: f64) -> animsmith_core::Document {
+    ring_fixture_sampled(members, amplitude, 16)
+}
+
+/// The same ring with an explicit cycle length, so a member sampled at a
+/// different rate — or one short enough that its grid has no duplicate wrap
+/// sample — can be drawn beside the others.
+fn ring_fixture_sampled(
+    members: &[(&str, f64)],
+    amplitude: f64,
+    cycle: usize,
+) -> animsmith_core::Document {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    // Samples in one cycle, plus the duplicated wrap key the metric grid
+    // drops before fitting the fundamental.
+    let cycle_len = cycle;
+    let keys = cycle_len + 1;
+    let bone = |name: &str, parent: Option<usize>| Bone {
+        name: name.into(),
+        parent,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    };
+    let times: Vec<f32> = (0..keys).map(|key| key as f32 / cycle_len as f32).collect();
+    let foot = |offset: f64, side: f64| {
+        TrackValues::Vec3s(
+            (0..keys)
+                .map(|key| {
+                    let phase = (key % cycle_len) as f64 / cycle_len as f64 + offset;
+                    let height = -0.5 + side * amplitude * (phase * std::f64::consts::TAU).sin();
+                    Vec3::new(0.0, height as f32, 0.0)
+                })
+                .collect(),
+        )
+    };
+    let track = |bone: usize, values: TrackValues| Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: times.clone(),
+        values,
+    };
+    Document {
+        skeleton: Skeleton {
+            bones: vec![
+                bone("root", None),
+                bone("hips", Some(0)),
+                bone("left_foot", Some(1)),
+                bone("right_foot", Some(1)),
+            ],
+        },
+        clips: members
+            .iter()
+            .map(|(name, offset)| Clip {
+                name: (*name).to_owned(),
+                duration_s: 1.0,
+                tracks: vec![
+                    track(1, TrackValues::Vec3s(vec![Vec3::new(0.0, 1.0, 0.0); keys])),
+                    track(2, foot(*offset, 1.0)),
+                    track(3, foot(*offset, -1.0)),
+                ],
+            })
+            .collect(),
+        ..Document::default()
+    }
+}
+
+/// A configuration whose rig resolves the walking roles and which declares
+/// no gait group yet.
+fn walking_config() -> animsmith_core::Config {
+    let mut config = animsmith_core::Config::default();
+    config.rig.roles = walking_roles()
+        .into_iter()
+        .map(|(role, bone)| (role, bone.to_owned()))
+        .collect();
+    config
+}
+
+/// One declared gait group over the named members.
+fn gait_group(members: &[&str], cap: f64, floor_m: f64) -> animsmith_core::GaitGroup {
+    animsmith_core::GaitGroup {
+        clips: members.iter().map(|member| (*member).to_owned()).collect(),
+        max_gait_phase_spread: cap,
+        min_lr_amplitude_m: floor_m,
+    }
+}
+
+/// A configuration declaring one gait group over the named members.
+fn ring_config(name: &str, members: &[&str], cap: f64, floor_m: f64) -> animsmith_core::Config {
+    let mut config = walking_config();
+    config
+        .gait_groups
+        .insert(name.to_owned(), gait_group(members, cap, floor_m));
+    config
+}
+
+/// Resolve `walking_roles` against a document, minus the root the ring
+/// fixture does not animate.
+fn ring_roles(doc: &animsmith_core::Document) -> ResolvedRoles {
+    ResolvedRoles::from_names(
+        &doc.skeleton,
+        walking_roles()
+            .into_iter()
+            .map(|(role, bone)| (role, bone.to_owned())),
+    )
+}
+
+/// Render a document under a configuration and return the group figures it
+/// carries, in document order.
+fn group_figures(
+    doc: &animsmith_core::Document,
+    roles: &ResolvedRoles,
+    config: &animsmith_core::Config,
+    clip_filter: Option<&str>,
+) -> (String, Vec<String>) {
+    let grids = MetricGrids::new(doc);
+    let checks = matrix_evaluations(&grids, roles, config);
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles,
+        checks: &checks,
+        config,
+        prediction_provenance: None,
+        clip: clip_filter,
+        options: full(),
+    });
+    let figures = chart_figures(&html)
+        .into_iter()
+        .filter(|figure| attribute(figure, "data-kind") == "gait-group")
+        .collect();
+    (html, figures)
+}
+
+/// The one group figure a render carries.
+fn group_figure(
+    doc: &animsmith_core::Document,
+    roles: &ResolvedRoles,
+    config: &animsmith_core::Config,
+) -> String {
+    let (_, figures) = group_figures(doc, roles, config, None);
+    assert_eq!(figures.len(), 1, "one figure per declared group");
+    figures.into_iter().next().expect("the group figure")
+}
+
+/// A declared gait group is drawn as one figure of every member, on one
+/// unshifted phase axis, with each measured stride anchor marked and the
+/// declared cap drawn as a band around their circular mean.
+///
+/// A group whose members agree says so; the members are named, no member is
+/// named as lying outside the band, and the figure carries the hooks the
+/// viewer and the documentation extractor select it by.
+#[test]
+fn a_coherent_gait_group_is_drawn_as_one_figure_within_its_cap() {
+    let doc = ring_fixture(&[("run_forward", 0.0), ("run_backward", 0.0)], 0.05);
+    let roles = ring_roles(&doc);
+    let config = ring_config("run-ring", &["run_forward", "run_backward"], 0.15, 0.03);
+    let figure = group_figure(&doc, &roles, &config);
+
+    assert_eq!(attribute(&figure, "data-group"), "run-ring");
+    assert_eq!(attribute(&figure, "data-kind"), "gait-group");
+    assert_eq!(
+        attribute_values(&figure, "data-clip"),
+        Vec::<String>::new(),
+        "a group figure carries no clip, so the viewer keeps it visible: {figure}"
+    );
+    assert_eq!(attribute(&figure, "data-pad"), "34");
+    assert_eq!(attribute(&figure, "data-plotw"), "292");
+
+    let caption = figcaption(&figure);
+    assert!(
+        caption.starts_with("run-ring — L−R foot height by stride phase · what to look for: "),
+        "{caption}"
+    );
+    assert!(
+        caption.contains("anchors run_forward=0.75, run_backward=0.75"),
+        "the caption names every member with its measured anchor: {caption}"
+    );
+    assert!(
+        caption.contains("they spread 0.00 cycle, within the 0.15 cap"),
+        "an agreeing group is reported as within its cap: {caption}"
+    );
+    assert!(
+        caption.contains("no member's anchor lies outside it"),
+        "no member is named as out of phase: {caption}"
+    );
+
+    // Both members are drawn, each with its own colour and its own mark, and
+    // the tolerance is drawn once.
+    for class in ["series-member-0", "series-member-1", "anchor-member-0"] {
+        assert!(
+            figure.contains(&format!("class=\"{class}\"")),
+            "the figure draws {class}: {figure}"
+        );
+    }
+    assert_eq!(
+        figure.matches("class=\"phase-band\"").count(),
+        1,
+        "a band inside the cycle is one rectangle: {figure}"
+    );
+    // The report presents measured evidence; an agreeing group is not a
+    // verdict on the clips.
+    for word in ["acceptable", "looks good", "correct", "approved", "quality"] {
+        assert!(
+            !caption.to_lowercase().contains(word),
+            "the caption promises acceptance with {word:?}: {caption}"
+        );
+    }
+
+    // The figure is drawn on the Rust side out of two scalar series per
+    // member, so an evidence-only report keeps it whole, the way it keeps
+    // the per-clip charts.
+    let grids = MetricGrids::new(&doc);
+    let checks = matrix_evaluations(&grids, &roles, &config);
+    let evidence = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &config,
+        prediction_provenance: None,
+        clip: None,
+        options: evidence_only(),
+    });
+    let evidence_figure = chart_figures(&evidence)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait-group")
+        .expect("an evidence-only report keeps the group figure");
+    assert_eq!(
+        figcaption(&evidence_figure),
+        caption,
+        "the group figure says the same thing without the sampled poses"
+    );
+
+    // A band centred near the 0/1 seam is the same tolerance drawn in two
+    // pieces rather than one that runs off the plot.
+    let seam = ring_fixture(&[("run_late", 0.8), ("run_early", 0.7)], 0.05);
+    let seam_figure = group_figure(
+        &seam,
+        &ring_roles(&seam),
+        &ring_config("seam-ring", &["run_late", "run_early"], 0.15, 0.03),
+    );
+    assert!(
+        figcaption(&seam_figure).contains("anchors run_late=0.95, run_early=0.05"),
+        "{}",
+        figcaption(&seam_figure)
+    );
+    assert_eq!(
+        seam_figure.matches("class=\"phase-band\"").count(),
+        2,
+        "a band across the wrap is drawn as the two pieces it is: {seam_figure}"
+    );
+    assert!(
+        figcaption(&seam_figure).contains("no member's anchor lies outside it"),
+        "the wrap does not make a coherent pair look out of phase: {}",
+        figcaption(&seam_figure)
+    );
+}
+
+/// The members are drawn on one unshifted axis.
+///
+/// Aligning each member to its own stride anchor would draw one curve
+/// several times over and erase the disagreement, so two members entering
+/// the same gait at the same point must draw the same curve and a member
+/// entering it a quarter cycle later must not. The axis is the member's own
+/// normalized source phase, so a member sampled at twice the frame count
+/// still spans the plot exactly once.
+#[test]
+fn every_member_keeps_its_own_source_phase_rather_than_being_aligned() {
+    let doc = ring_fixture(
+        &[
+            ("run_forward", 0.0),
+            ("run_backward", 0.0),
+            ("run_left", 0.25),
+        ],
+        0.05,
+    );
+    let roles = ring_roles(&doc);
+    let config = ring_config(
+        "run-ring",
+        &["run_forward", "run_backward", "run_left"],
+        0.15,
+        0.03,
+    );
+    let figure = group_figure(&doc, &roles, &config);
+    let path = |class: &str| {
+        let key = format!("<path class=\"{class}\" d=\"");
+        let at = figure
+            .find(&key)
+            .unwrap_or_else(|| panic!("{class} is plotted: {figure}"))
+            + key.len();
+        figure[at..][..figure[at..].find('"').expect("the path closes")].to_owned()
+    };
+    assert_eq!(
+        path("series-member-0"),
+        path("series-member-1"),
+        "two members entering the gait at the same point draw the same curve"
+    );
+    assert_ne!(
+        path("series-member-0"),
+        path("series-member-2"),
+        "a member a quarter cycle out draws a shifted curve, not the same one"
+    );
+
+    // Each anchor is marked at its own phase on the shared axis: 34 is the
+    // plot's left edge and 292 its width, both published as the figure's
+    // own hooks.
+    let anchor_x = |class: &str| {
+        let key = format!("<line class=\"{class}\" x1=\"");
+        let at = figure
+            .find(&key)
+            .unwrap_or_else(|| panic!("{class} is marked: {figure}"))
+            + key.len();
+        figure[at..][..figure[at..].find('"').expect("the mark closes")].to_owned()
+    };
+    assert_eq!(anchor_x("anchor-member-0"), "253.0", "0.75 of 34..326");
+    assert_eq!(anchor_x("anchor-member-2"), "180.0", "0.50 of 34..326");
+
+    // The band is the declared cap either side of the members' circular
+    // mean, on that same axis. Two members at 0.75 and one at 0.50 sum to
+    // the unit vector (-1, -2), so the mean is atan2(-2, -1) / TAU folded
+    // into [0, 1) = 0.676208 — an analytic number, not one this renderer
+    // produced. Three members fit one legend row, so the plot keeps the top
+    // gutter and the full height every other figure draws in.
+    let expected = format!(
+        "<rect class=\"phase-band\" x=\"{:.1}\" y=\"18.0\" width=\"{:.1}\" height=\"116\"/>",
+        34.0 + 292.0 * (0.676_208 - 0.15),
+        292.0 * 0.3
+    );
+    assert!(
+        figure.contains(&expected),
+        "the band is drawn at the mean ± cap, full plot height ({expected}): {figure}"
+    );
+
+    // A member sampled at a different frame count is read against the others
+    // on the same normalized axis rather than on its own frame index.
+    let mut mixed = ring_fixture(&[("run_short", 0.0)], 0.05);
+    let long = ring_fixture(&[("run_long", 0.0)], 0.05);
+    let mut long_clip = long.clips.into_iter().next().expect("one clip");
+    for track in &mut long_clip.tracks {
+        let doubled: Vec<f32> = (0..track.times.len() * 2 - 1)
+            .map(|key| key as f32 / (track.times.len() * 2 - 2) as f32)
+            .collect();
+        let animsmith_core::model::TrackValues::Vec3s(values) = &track.values else {
+            panic!("the ring fixture animates translation");
+        };
+        let resampled: Vec<animsmith_core::glam::Vec3> =
+            (0..doubled.len()).map(|key| values[key / 2]).collect();
+        track.times = doubled;
+        track.values = animsmith_core::model::TrackValues::Vec3s(resampled);
+    }
+    mixed.clips.push(long_clip);
+    let mixed_roles = ring_roles(&mixed);
+    let mixed_figure = group_figure(
+        &mixed,
+        &mixed_roles,
+        &ring_config("mixed-ring", &["run_short", "run_long"], 0.15, 0.03),
+    );
+    for class in ["series-member-0", "series-member-1"] {
+        let key = format!("<path class=\"{class}\" d=\"");
+        let at = mixed_figure.find(&key).expect("both members plot") + key.len();
+        let d = &mixed_figure[at..][..mixed_figure[at..].find('"').expect("closes")];
+        assert!(
+            d.starts_with("M34.0,"),
+            "{class} starts at the plot's left edge: {d}"
+        );
+        assert!(
+            d.split('L')
+                .next_back()
+                .expect("a last point")
+                .starts_with("326.0,"),
+            "{class} ends at the plot's right edge whatever its frame count: {d}"
+        );
+    }
+}
+
+/// A member that enters the gait a quarter of a cycle late is the defect the
+/// figure exists to show: its anchor is marked a quarter cycle away from the
+/// others, it is the member the caption names as outside the band, and the
+/// spread and cap the caption states are the ones `gait-group` measured on
+/// the same document under the same configuration.
+#[test]
+fn a_shifted_member_is_named_outside_the_band_with_the_check_s_own_numbers() {
+    let doc = ring_fixture(
+        &[
+            ("run_forward", 0.0),
+            ("run_backward", 0.0),
+            ("run_left", 0.25),
+            ("run_right", 0.0),
+        ],
+        0.05,
+    );
+    let roles = ring_roles(&doc);
+    let config = ring_config(
+        "run-ring",
+        &["run_forward", "run_backward", "run_left", "run_right"],
+        0.15,
+        0.03,
+    );
+    let caption = figcaption(&group_figure(&doc, &roles, &config));
+
+    assert!(
+        caption
+            .contains("anchors run_forward=0.75, run_backward=0.75, run_left=0.50, run_right=0.75"),
+        "the caption names every member's anchor in declared order: {caption}"
+    );
+    assert!(
+        caption.contains("run_left lies outside it"),
+        "the member a quarter cycle away is the one named: {caption}"
+    );
+    for coherent in ["run_forward lies", "run_backward lies", "run_right lies"] {
+        assert!(
+            !caption.contains(coherent),
+            "a member inside the band is not named as outside it: {caption}"
+        );
+    }
+
+    // The same document through the check itself: the caption may only state
+    // the numbers `gait-group` measured.
+    let grids = MetricGrids::new(&doc);
+    let checks = matrix_evaluations(&grids, &roles, &config);
+    let finding = checks
+        .iter()
+        .flat_map(CheckEvaluation::findings)
+        .find(|finding| finding.check_id == "gait-group")
+        .expect("the shifted ring fails gait-group");
+    let number = |value: Option<&animsmith_core::Value>| match value {
+        Some(animsmith_core::Value::Number(number)) => *number,
+        other => panic!("the finding carries a numeric value, not {other:?}"),
+    };
+    let measured = number(finding.measured.as_ref());
+    let expected = number(finding.expected.as_ref());
+    assert!(
+        caption.contains(&format!(
+            "they spread {measured:.2} cycle against the {expected:.2} cap"
+        )),
+        "the caption states the check's own spread and cap ({measured}, {expected}): {caption}"
+    );
+    assert!(
+        finding.message.contains("run_left=0.50"),
+        "the check and the caption name the same measured anchors: {}",
+        finding.message
+    );
+}
+
+/// A member the run could not measure is named with the reason rather than
+/// left out, carries no anchor mark, and — where fewer than two anchors
+/// remain — leaves the figure with no band and says so.
+#[test]
+fn unmeasurable_members_are_named_with_their_state_and_carry_no_anchor() {
+    // One member is absent from the file, one alternates too little for its
+    // phase to be evidence, and one is measured: one anchor is left.
+    let doc = ring_fixture(&[("run_forward", 0.0), ("run_flat", 0.0)], 0.05);
+    let mut doc = doc;
+    let flat = doc
+        .clips
+        .iter_mut()
+        .find(|clip| clip.name == "run_flat")
+        .expect("the quiet member");
+    for track in &mut flat.tracks {
+        if let animsmith_core::model::TrackValues::Vec3s(values) = &mut track.values {
+            for value in values.iter_mut() {
+                value.y = if track.bone == 1 { 1.0 } else { -0.5 };
+            }
+        }
+    }
+    let roles = ring_roles(&doc);
+    let config = ring_config(
+        "run-ring",
+        &["run_forward", "run_flat", "run_absent"],
+        0.15,
+        0.03,
+    );
+    let figure = group_figure(&doc, &roles, &config);
+    let caption = figcaption(&figure);
+
+    assert!(
+        caption.contains(
+            "anchors run_forward=0.75, run_flat=no left/right swing, run_absent=not in file"
+        ),
+        "each member is named with its anchor or the reason it has none: {caption}"
+    );
+    assert!(
+        caption.contains(
+            "fewer than two members have a measured anchor, so no tolerance band is drawn \
+             and the 0.15 cap is not evaluated here"
+        ),
+        "one anchor is not a spread: {caption}"
+    );
+    assert!(
+        !figure.contains("class=\"phase-band\""),
+        "no band is drawn where none can be centred: {figure}"
+    );
+    assert!(
+        figure.contains("class=\"anchor-member-0\""),
+        "the measured member keeps its mark: {figure}"
+    );
+    assert!(
+        !figure.contains("class=\"anchor-member-1\""),
+        "an unmeasured member carries no mark: {figure}"
+    );
+    assert!(
+        figure.contains("class=\"series-member-1\""),
+        "an unmeasured member that is in the file is still drawn: {figure}"
+    );
+
+    // The same members under a floor the quiet one now fails on amplitude
+    // rather than on the fit: the reason changes, the absence does not.
+    let loud = ring_fixture(&[("run_forward", 0.0), ("run_quiet", 0.0)], 0.05);
+    let mut loud = loud;
+    for track in &mut loud
+        .clips
+        .iter_mut()
+        .find(|clip| clip.name == "run_quiet")
+        .expect("the quiet member")
+        .tracks
+    {
+        if track.bone == 1 {
+            continue;
+        }
+        if let animsmith_core::model::TrackValues::Vec3s(values) = &mut track.values {
+            for value in values.iter_mut() {
+                value.y = -0.5 + (value.y + 0.5) * 0.02;
+            }
+        }
+    }
+    let quiet_config = ring_config("run-ring", &["run_forward", "run_quiet"], 0.15, 0.03);
+    let quiet = figcaption(&group_figure(&loud, &ring_roles(&loud), &quiet_config));
+    assert!(
+        quiet.contains("run_quiet=below the 0.030 m amplitude floor"),
+        "a member under the evidence floor says which floor: {quiet}"
+    );
+
+    // With no foot roles resolved there is no difference to take at all, so
+    // every member is named as unresolved and nothing is plotted.
+    let unresolved = ResolvedRoles::from_names(
+        &doc.skeleton,
+        [
+            (Role::Hips, "hips".to_owned()),
+            (Role::Root, "root".to_owned()),
+        ],
+    );
+    let bare = figcaption(&group_figure(&doc, &unresolved, &config));
+    assert!(
+        bare.contains("run_forward=roles unresolved") && bare.contains("run_flat=roles unresolved"),
+        "an unresolved rig names every member's state: {bare}"
+    );
+
+    // Hips plus one side only: the rig resolves a gait subject, so the check
+    // measures the clip and finds no bilateral signal to fit. The figure
+    // names that rather than calling the whole rig unresolved.
+    let one_sided = ResolvedRoles::from_names(
+        &doc.skeleton,
+        [
+            (Role::Hips, "hips".to_owned()),
+            (Role::LeftFoot, "left_foot".to_owned()),
+        ],
+    );
+    let sided = figcaption(&group_figure(&doc, &one_sided, &config));
+    assert!(
+        sided.contains("run_forward=no bilateral foot roles"),
+        "a rig with one foot side names that, not an unresolved rig: {sided}"
+    );
+}
+
+/// The figure is the configuration's, not the document's: nothing is drawn
+/// where no group is declared, and a clip filter keeps only the groups the
+/// selected clip belongs to.
+#[test]
+fn group_figures_follow_the_declared_groups_and_the_clip_filter() {
+    let doc = ring_fixture(&[("run_forward", 0.0), ("walk_forward", 0.0)], 0.05);
+    let roles = ring_roles(&doc);
+
+    let mut undeclared = animsmith_core::Config::default();
+    undeclared.rig.roles = walking_roles()
+        .into_iter()
+        .map(|(role, bone)| (role, bone.to_owned()))
+        .collect();
+    let (_, none) = group_figures(&doc, &roles, &undeclared, None);
+    assert!(
+        none.is_empty(),
+        "a blend ring is a declaration, so an undeclared document draws none: {none:?}"
+    );
+
+    let mut config = ring_config("run-ring", &["run_forward"], 0.15, 0.03);
+    config.gait_groups.insert(
+        "walk-ring".to_owned(),
+        animsmith_core::GaitGroup {
+            clips: vec!["walk_forward".to_owned()],
+            max_gait_phase_spread: 0.15,
+            min_lr_amplitude_m: 0.03,
+        },
+    );
+    config.gait_groups.insert(
+        "absent-ring".to_owned(),
+        animsmith_core::GaitGroup {
+            clips: vec!["sprint_forward".to_owned()],
+            max_gait_phase_spread: 0.15,
+            min_lr_amplitude_m: 0.03,
+        },
+    );
+
+    let (_, all) = group_figures(&doc, &roles, &config, None);
+    let groups: Vec<String> = all
+        .iter()
+        .map(|figure| attribute(figure, "data-group"))
+        .collect();
+    assert_eq!(
+        groups,
+        vec!["run-ring", "walk-ring"],
+        "a group with no member in this file is not drawn"
+    );
+
+    let (_, filtered) = group_figures(&doc, &roles, &config, Some("walk_forward"));
+    let filtered_groups: Vec<String> = filtered
+        .iter()
+        .map(|figure| attribute(figure, "data-group"))
+        .collect();
+    assert_eq!(
+        filtered_groups,
+        vec!["walk-ring"],
+        "a clip filter keeps the groups the selected clip belongs to"
+    );
+}
+
+/// A figure draws at most the six members it has colours for, and its
+/// caption still accounts for every declared one — including their anchors,
+/// which the spread is measured over whether a member is drawn or not.
+#[test]
+fn a_figure_draws_six_members_and_measures_every_declared_one() {
+    // Six coherent members and two a quarter cycle out, so a spread taken
+    // over the drawn six alone would read 0.00 rather than the check's.
+    let members: Vec<(String, f64)> = (0..8)
+        .map(|index| (format!("run_{index}"), if index < 6 { 0.0 } else { 0.25 }))
+        .collect();
+    let borrowed: Vec<(&str, f64)> = members
+        .iter()
+        .map(|(name, offset)| (name.as_str(), *offset))
+        .collect();
+    let doc = ring_fixture(&borrowed, 0.05);
+    let roles = ring_roles(&doc);
+    let names: Vec<&str> = borrowed.iter().map(|(name, _)| *name).collect();
+    let config = ring_config("run-ring", &names, 0.15, 0.03);
+    let figure = group_figure(&doc, &roles, &config);
+    let caption = figcaption(&figure);
+
+    for index in 0..6 {
+        assert!(
+            figure.contains(&format!("class=\"series-member-{index}\"")),
+            "member {index} is drawn: {figure}"
+        );
+    }
+    assert!(
+        !figure.contains("series-member-6"),
+        "the seventh member has no colour and is not drawn: {figure}"
+    );
+    assert!(
+        caption.contains("run_6=0.50") && caption.contains("run_7=0.50"),
+        "an undrawn member is still measured and named: {caption}"
+    );
+    assert!(
+        caption.contains("2 declared member(s) past the first 6 are named here but not drawn"),
+        "the caption counts what the colour bound left out: {caption}"
+    );
+
+    // The spread the caption states is the one `gait-group` measured over
+    // the same eight anchors, not over the six that got a curve.
+    let grids = MetricGrids::new(&doc);
+    let checks = matrix_evaluations(&grids, &roles, &config);
+    let finding = checks
+        .iter()
+        .flat_map(CheckEvaluation::findings)
+        .find(|finding| finding.check_id == "gait-group")
+        .expect("two members a quarter cycle out fail the cap");
+    let number = |value: Option<&animsmith_core::Value>| match value {
+        Some(animsmith_core::Value::Number(number)) => *number,
+        other => panic!("the finding carries a numeric value, not {other:?}"),
+    };
+    let measured = number(finding.measured.as_ref());
+    assert!(
+        measured > 0.15,
+        "the eight-member spread really exceeds the cap: {measured}"
+    );
+    assert!(
+        caption.contains(&format!(
+            "they spread {measured:.2} cycle against the 0.15 cap"
+        )),
+        "the caption states the check's spread over every declared member \
+         ({measured}): {caption}"
+    );
+
+    // Every declared group with a member here is drawn: the figure count
+    // follows the configuration its author wrote, and what the file supplies
+    // reaches a figure only through the six members it draws.
+    let mut many = walking_config();
+    for index in 0..40 {
+        many.gait_groups.insert(
+            format!("ring-{index:02}"),
+            gait_group(&["run_0", "run_1"], 0.15, 0.03),
+        );
+    }
+    let (_, figures) = group_figures(&doc, &roles, &many, None);
+    assert_eq!(figures.len(), 40, "one figure per declared group");
+}
+
+/// A member's colour is its declared position in the group, so a member the
+/// figure cannot draw does not shuffle the colours of the ones after it.
+#[test]
+fn a_member_keeps_the_colour_of_its_declared_position() {
+    // Declared order: an absent member, one whose swing is under the floor,
+    // then two measured ones a quarter cycle apart.
+    let mut doc = ring_fixture(
+        &[("run_quiet", 0.0), ("run_forward", 0.0), ("run_left", 0.25)],
+        0.05,
+    );
+    for track in &mut doc
+        .clips
+        .iter_mut()
+        .find(|clip| clip.name == "run_quiet")
+        .expect("the quiet member")
+        .tracks
+    {
+        if track.bone == 1 {
+            continue;
+        }
+        if let animsmith_core::model::TrackValues::Vec3s(values) = &mut track.values {
+            for value in values.iter_mut() {
+                value.y = -0.5 + (value.y + 0.5) * 0.02;
+            }
+        }
+    }
+    let roles = ring_roles(&doc);
+    let config = ring_config(
+        "run-ring",
+        &["run_absent", "run_quiet", "run_forward", "run_left"],
+        0.15,
+        0.03,
+    );
+    let figure = group_figure(&doc, &roles, &config);
+
+    assert!(
+        !figure.contains("series-member-0") && !figure.contains("anchor-member-0"),
+        "the absent member is neither drawn nor marked: {figure}"
+    );
+    assert!(
+        figure.contains("<path class=\"series-member-1\"") && !figure.contains("anchor-member-1"),
+        "the member under the floor is drawn and carries no anchor: {figure}"
+    );
+    let anchor_x = |class: &str| {
+        let key = format!("<line class=\"{class}\" x1=\"");
+        let at = figure
+            .find(&key)
+            .unwrap_or_else(|| panic!("{class} is marked: {figure}"))
+            + key.len();
+        figure[at..][..figure[at..].find('"').expect("the mark closes")].to_owned()
+    };
+    // Declared member 2 is at 0.75 and member 3 a quarter cycle earlier, on
+    // the 34..326 plot. Indexing the marks by position among the drawn
+    // members would put these two classes on each other's phases.
+    assert_eq!(anchor_x("anchor-member-2"), "253.0", "run_forward at 0.75");
+    assert_eq!(anchor_x("anchor-member-3"), "180.0", "run_left at 0.50");
+}
+
+/// A member sampled too short to repeat its first frame at the wrap has a
+/// cycle of every frame it has, and both its curve and its anchor are drawn
+/// on that cycle.
+///
+/// The measurement normalizes a three-frame grid over three samples. An axis
+/// that assumed a duplicated wrap sample would divide by two instead, and the
+/// curve would then be stretched half a sample past the anchor that names it.
+#[test]
+fn a_short_members_cycle_is_the_axis_its_anchor_was_measured_on() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::metrics::{GaitPhaseOutcome, gait_phase_evidence};
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    // Three keys, so the metric grid is three frames with no duplicate wrap
+    // sample. The left-minus-right heights are 0, +a, −a, whose first
+    // harmonic troughs at exactly 0.75 of the three-sample cycle.
+    let bone = |name: &str, parent: Option<usize>| Bone {
+        name: name.into(),
+        parent,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    };
+    let track = |bone: usize, ys: [f32; 3]| Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 0.5, 1.0],
+        values: TrackValues::Vec3s(ys.iter().map(|&y| Vec3::new(0.0, y, 0.0)).collect()),
+    };
+    let clip = |name: &str| Clip {
+        name: name.to_owned(),
+        duration_s: 1.0,
+        tracks: vec![
+            track(1, [1.0, 1.0, 1.0]),
+            track(2, [-0.5, -0.45, -0.55]),
+            track(3, [-0.5, -0.55, -0.45]),
+        ],
+    };
+    let doc = Document {
+        skeleton: Skeleton {
+            bones: vec![
+                bone("root", None),
+                bone("hips", Some(0)),
+                bone("left_foot", Some(1)),
+                bone("right_foot", Some(1)),
+            ],
+        },
+        clips: vec![clip("run_short"), clip("run_also")],
+        ..Document::default()
+    };
+    let roles = ring_roles(&doc);
+    let grids = MetricGrids::new(&doc);
+    let grid = grids.grid(0).expect("a three-key clip has a grid");
+    assert_eq!(grid.frame_count(), 3, "the fixture really is three frames");
+    let evidence = gait_phase_evidence(&grid, &roles).expect("it carries a cycle");
+    assert_eq!(
+        evidence.cycle_samples, 3,
+        "a three-frame grid has no duplicate wrap sample to drop"
+    );
+    let GaitPhaseOutcome::Measured(anchor) = evidence.outcome else {
+        panic!("the short clip has an anchor: {:?}", evidence.outcome);
+    };
+    assert!(
+        (anchor - 0.75).abs() < 1e-9,
+        "the 0, +a, −a signal troughs at 0.75 of its cycle: {anchor}"
+    );
+
+    let figure = group_figure(
+        &doc,
+        &roles,
+        &ring_config("short-ring", &["run_short", "run_also"], 0.15, 0.03),
+    );
+    let value_of = |key: &str| {
+        let at = figure
+            .find(key)
+            .unwrap_or_else(|| panic!("{key} is present: {figure}"))
+            + key.len();
+        figure[at..][..figure[at..].find('"').expect("closes")].to_owned()
+    };
+    // The plot runs 34..326, so the anchor is marked at 34 + 292 * 0.75.
+    assert_eq!(
+        value_of("<line class=\"anchor-member-0\" x1=\""),
+        "253.0",
+        "the mark sits at the measured anchor of the drawn cycle"
+    );
+    // And the curve is drawn on that same three-sample cycle: 0, 1/3, 2/3.
+    // Over `frames - 1` they would be 0, 1/2 and 1 instead.
+    assert_eq!(
+        value_of("<path class=\"series-member-0\" d=\"")
+            .split(['M', 'L'])
+            .filter(|part| !part.is_empty())
+            .map(|point| point.split(',').next().expect("an x").to_owned())
+            .collect::<Vec<_>>(),
+        vec!["34.0", "131.3", "228.7"],
+        "the three samples sit at 0, 1/3 and 2/3 of the cycle"
+    );
+}
+
+/// A member whose samples are not finite is left out of the plot without
+/// taking the rest of the figure with it.
+#[test]
+fn a_non_finite_member_is_not_plotted_and_the_others_are() {
+    let mut doc = ring_fixture(&[("run_forward", 0.0), ("run_broken", 0.0)], 0.05);
+    let broken = doc
+        .clips
+        .iter_mut()
+        .find(|clip| clip.name == "run_broken")
+        .expect("the broken member");
+    for track in &mut broken.tracks {
+        if let animsmith_core::model::TrackValues::Vec3s(values) = &mut track.values {
+            for value in values.iter_mut() {
+                value.y = f32::NAN;
+            }
+        }
+    }
+    let roles = ring_roles(&doc);
+    let config = ring_config("run-ring", &["run_forward", "run_broken"], 0.15, 0.03);
+    let figure = group_figure(&doc, &roles, &config);
+
+    assert!(
+        figure.contains("<path class=\"series-member-0\""),
+        "the finite member is still plotted: {figure}"
+    );
+    assert!(
+        !figure.contains("<path class=\"series-member-1\""),
+        "a member with no finite sample is not plotted: {figure}"
+    );
+    for label in class_texts(&figure, "axis") {
+        assert!(!label.contains("NaN"), "a gutter label reads {label:?}");
+    }
+    assert!(
+        !figure.contains("NaN"),
+        "no coordinate in the drawing is NaN: {figure}"
+    );
+    assert!(
+        figcaption(&figure).contains("run_broken=no sampled foot cycle"),
+        "the caption says why the broken member has no anchor: {}",
+        figcaption(&figure)
+    );
+}
+
+/// A group figure is held to the same structural bar as a clip figure, and a
+/// legend that needs a second row grows the figure rather than the plot.
+///
+/// The plot a member's curve is drawn in stays the height every other chart
+/// draws in; the extra legend row is added above it and the `viewBox` grows
+/// by exactly that. A figure that grew its plot instead would scale every
+/// member's curve differently from the single-clip charts beside it.
+#[test]
+fn a_group_figure_describes_itself_and_grows_only_for_its_legend() {
+    let three = ring_fixture(
+        &[
+            ("run_forward", 0.0),
+            ("run_backward", 0.0),
+            ("run_left", 0.25),
+        ],
+        0.05,
+    );
+    let three_roles = ring_roles(&three);
+    let one_row = group_figure(
+        &three,
+        &three_roles,
+        &ring_config(
+            "run-ring",
+            &["run_forward", "run_backward", "run_left"],
+            0.15,
+            0.03,
+        ),
+    );
+    let four = ring_fixture(
+        &[
+            ("run_forward", 0.0),
+            ("run_backward", 0.0),
+            ("run_left", 0.25),
+            ("run_right", 0.0),
+        ],
+        0.05,
+    );
+    let four_roles = ring_roles(&four);
+    let two_rows = group_figure(
+        &four,
+        &four_roles,
+        &ring_config(
+            "run-ring",
+            &["run_forward", "run_backward", "run_left", "run_right"],
+            0.15,
+            0.03,
+        ),
+    );
+
+    for figure in [&one_row, &two_rows] {
+        assert_figure_describes_itself(figure, "run-ring");
+    }
+
+    let height = |figure: &str| -> f64 {
+        attribute(figure, "viewBox")
+            .split_whitespace()
+            .nth(3)
+            .expect("a viewBox height")
+            .parse()
+            .expect("a number")
+    };
+    let playhead = |figure: &str| {
+        let at = figure
+            .split_once("class=\"playhead\"")
+            .expect("a playhead")
+            .1;
+        (number(at, "y1"), number(at, "y2"))
+    };
+    // Three entries fill one legend row; a fourth opens a second, which is
+    // one 11-unit row of extra figure.
+    assert_eq!(height(&one_row), 150.0, "one legend row is the base height");
+    assert_eq!(height(&two_rows), 161.0, "a second legend row adds one row");
+    let (one_top, one_bottom) = playhead(&one_row);
+    let (two_top, two_bottom) = playhead(&two_rows);
+    assert_eq!((one_top, one_bottom), (18.0, 134.0));
+    assert_eq!(
+        (two_top, two_bottom),
+        (29.0, 145.0),
+        "the plot moves down under the second legend row"
+    );
+    assert_eq!(
+        two_bottom - two_top,
+        one_bottom - one_top,
+        "the plotted rectangle keeps its height whatever the legend needs"
+    );
+    for figure in [&one_row, &two_rows] {
+        assert!(
+            figure.contains("class=\"phase-band\"") && figure.contains("height=\"116\""),
+            "the band fills the plot rectangle: {figure}"
+        );
+    }
+    // Every legend entry sits above the plot it labels.
+    let (_, _, _, legend_bottom) = legend_bounds(&two_rows);
+    assert!(
+        legend_bottom <= two_top,
+        "the legend clears the plot: {legend_bottom} against {two_top}"
+    );
+
+    // A member named longer than its column is cut with an ellipsis rather
+    // than drawn past the edge of the picture.
+    let long = "run_forward_diagonal_left_variant_b";
+    let wide = ring_fixture(&[(long, 0.0), ("run_left", 0.25)], 0.05);
+    let wide_figure = group_figure(
+        &wide,
+        &ring_roles(&wide),
+        &ring_config("run-ring", &[long, "run_left"], 0.15, 0.03),
+    );
+    let labels = class_texts(&wide_figure, "legend");
+    assert!(
+        labels.iter().any(|label| label.ends_with('…')),
+        "a name too long for its column is cut: {labels:?}"
+    );
+    assert!(
+        figcaption(&wide_figure).contains(long),
+        "and the caption still carries it in full: {}",
+        figcaption(&wide_figure)
+    );
+    assert_figure_describes_itself(&wide_figure, "run-ring");
+}
+
+/// The document names each group's members, because a group figure is
+/// evidence about them and not about whichever clip is selected.
+///
+/// The membership is embedded data rather than a delimited attribute: a
+/// member's name is arbitrary authored text, and any separator that packs
+/// several names into one attribute is a name a document may legitimately
+/// contain. `data-group` is the key that joins the figure to its members.
+#[test]
+fn the_document_names_each_groups_members_and_no_figure_names_a_clip() {
+    let awkward = "run,left & \"quoted\"";
+    let doc = ring_fixture(
+        &[("run_forward", 0.0), (awkward, 0.25), ("idle", 0.0)],
+        0.05,
+    );
+    let roles = ring_roles(&doc);
+    let config = ring_config("run-ring", &["run_forward", awkward], 0.15, 0.03);
+    let grids = MetricGrids::new(&doc);
+    let checks = matrix_evaluations(&grids, &roles, &config);
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &config,
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
+
+    let figure = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait-group")
+        .expect("the declared group is drawn");
+    assert_eq!(attribute(&figure, "data-group"), "run-ring");
+    assert_eq!(
+        attribute_values(&figure, "data-clip"),
+        Vec::<String>::new(),
+        "a group figure belongs to no single clip: {figure}"
+    );
+    assert_eq!(
+        attribute_values(&figure, "data-members"),
+        Vec::<String>::new(),
+        "membership is data, not a delimited attribute: {figure}"
+    );
+
+    // The payload carries the declared membership, each name whole.
+    let data = report_data(&html);
+    let groups = data["groups"].as_array().expect("a groups array");
+    assert_eq!(groups.len(), 1, "one entry per drawn group");
+    assert_eq!(groups[0]["name"], "run-ring");
+    assert_eq!(
+        groups[0]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .map(|member| member.as_str().expect("a name").to_owned())
+            .collect::<Vec<_>>(),
+        vec!["run_forward".to_owned(), awkward.to_owned()],
+        "a member's name survives whole, separators and all"
+    );
+    // And the clip that is not a member appears in no membership.
+    assert!(
+        !groups[0]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .any(|member| member == "idle"),
+        "the non-member is not claimed by the group"
+    );
+    // The awkward name reaches the document as text, not as markup.
+    assert!(
+        !html.contains("run,left & \"quoted\""),
+        "an authored name is escaped wherever it is written"
+    );
+    assert_eq!(
+        figcaption(&figure)
+            .matches("run,left &amp; &quot;quoted&quot;")
+            .count(),
+        1,
+        "the caption names it once, escaped: {}",
+        figcaption(&figure)
+    );
+}
+
+/// Under `--clip NAME` the report is scoped to that clip, and the groups it
+/// belongs to are still drawn from every member.
+///
+/// A group compared against one of its own members is not a comparison, so
+/// the figure keeps naming and plotting the others. What that publishes is
+/// one left-minus-right foot-height series per member, which is the
+/// single-series metric evidence the licensed-asset policy allows.
+#[test]
+fn a_clip_filtered_report_still_draws_the_whole_group() {
+    let doc = ring_fixture(
+        &[("run_forward", 0.0), ("run_left", 0.25), ("run_right", 0.0)],
+        0.05,
+    );
+    let roles = ring_roles(&doc);
+    let config = ring_config(
+        "run-ring",
+        &["run_forward", "run_left", "run_right"],
+        0.15,
+        0.03,
+    );
+    let grids = MetricGrids::new(&doc);
+    let checks = matrix_evaluations(&grids, &roles, &config);
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &config,
+        prediction_provenance: None,
+        clip: Some("run_left"),
+        options: full(),
+    });
+
+    // The document itself is scoped to the selected clip.
+    let data = report_data(&html);
+    let clips = data["clips"].as_array().expect("clips array");
+    assert_eq!(clips.len(), 1, "one pose grid, the selected clip's");
+    assert_eq!(clips[0]["name"], "run_left");
+    let per_clip: Vec<String> = chart_figures(&html)
+        .iter()
+        .filter(|figure| attribute(figure, "data-kind") != "gait-group")
+        .flat_map(|figure| attribute_values(figure, "data-clip"))
+        .collect();
+    assert!(
+        per_clip.iter().all(|clip| clip == "run_left"),
+        "the per-clip charts are the selected clip's: {per_clip:?}"
+    );
+
+    // The group figure is not: it draws and names every declared member,
+    // because that is what the selected clip is judged against.
+    let group = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait-group")
+        .expect("the selected clip's group is drawn");
+    let data_groups = report_data(&html)["groups"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(
+        data_groups[0]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .map(|member| member.as_str().expect("a name").to_owned())
+            .collect::<Vec<_>>(),
+        vec![
+            "run_forward".to_owned(),
+            "run_left".to_owned(),
+            "run_right".to_owned()
+        ],
+        "the membership a clip filter does not narrow"
+    );
+    for class in ["series-member-0", "series-member-1", "series-member-2"] {
+        assert!(
+            group.contains(&format!("class=\"{class}\"")),
+            "every member is plotted under a clip filter: {group}"
+        );
+    }
+    let caption = figcaption(&group);
+    assert!(
+        caption.contains("anchors run_forward=0.75, run_left=0.50, run_right=0.75"),
+        "every member is named under a clip filter: {caption}"
+    );
+}
+
+/// The widest cap a gait group can declare is half a cycle, which contains
+/// every phase, so its band is the whole axis.
+#[test]
+fn a_half_cycle_cap_bands_the_whole_axis() {
+    let doc = ring_fixture(&[("run_forward", 0.0), ("run_left", 0.25)], 0.05);
+    let roles = ring_roles(&doc);
+    let figure = group_figure(
+        &doc,
+        &roles,
+        &ring_config("run-ring", &["run_forward", "run_left"], 0.5, 0.03),
+    );
+    assert!(
+        figure.contains("<rect class=\"phase-band\" x=\"34.0\" y=\"18.0\" width=\"292.0\""),
+        "half a cycle either side of the mean is the whole plot: {figure}"
+    );
+    let caption = figcaption(&figure);
+    assert!(
+        caption.contains("within the 0.50 cap") && caption.contains("no member's anchor lies"),
+        "every phase is inside the widest cap: {caption}"
+    );
+}
+
+/// The dash patterns an extracted chart is styled with are the report's own.
+///
+/// A standalone picture is the report's figure with a stylesheet injected in
+/// place of the one it was rendered under. If the two drift, the committed
+/// documentation drawing reads differently from the report it was cut out
+/// of — different members coinciding, or none of them distinguishable.
+#[test]
+fn the_extractors_member_dashes_are_the_stylesheets_own() {
+    let stylesheet = document_code(&animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &MetricGrids::new(&chart_roles_fixture()),
+        roles: &chart_roles(&chart_roles_fixture()),
+        checks: &[],
+        config: &no_groups(),
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    }));
+    let style = animsmith_testkit::docs_visuals::chart_style("chart-one");
+    for (member, dashes) in animsmith_testkit::docs_visuals::GROUP_MEMBER_DASHES
+        .iter()
+        .enumerate()
+    {
+        let rule = format!("path.series-member-{member} {{ stroke-dasharray: {dashes}; }}");
+        if dashes.is_empty() {
+            assert!(
+                !stylesheet.contains(&format!("path.series-member-{member} {{")),
+                "member {member} is solid in the report's stylesheet"
+            );
+            assert!(
+                !style.contains(&format!("path.series-member-{member}{{")),
+                "member {member} is solid in the injected style too"
+            );
+            continue;
+        }
+        assert!(
+            stylesheet.contains(&rule),
+            "the report's stylesheet writes {rule:?}"
+        );
+        assert!(
+            style.contains(&format!(
+                "#chart-one path.series-member-{member}{{stroke-dasharray:{dashes}}}"
+            )),
+            "the injected style carries the same pattern for member {member}: {style}"
+        );
+    }
+    // The marks and the legend swatches stay solid, so a 14-unit tick is a
+    // tick and a 10-unit swatch still names its colour.
+    for member in 0..animsmith_testkit::docs_visuals::GROUP_MEMBERS {
+        assert!(
+            !stylesheet.contains(&format!(".anchor-member-{member} {{ stroke-dasharray")),
+            "anchor {member} is solid"
+        );
+        assert!(
+            !style.contains(&format!(".anchor-member-{member}{{stroke-dasharray")),
+            "the injected anchor {member} is solid: {style}"
         );
     }
 }

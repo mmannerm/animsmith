@@ -15,10 +15,11 @@
 //! doc: &animsmith_core::Document,
 //! roles: &animsmith_core::ResolvedRoles,
 //! checks: &[animsmith_core::CheckEvaluation],
+//! config: &animsmith_core::Config,
 //! ) -> std::io::Result<()> {
 //! let grids = animsmith_core::MetricGrids::new(doc);
-//! let options = animsmith_report::ReportOptions::default();
-//! let html = animsmith_report::render(&grids, roles, checks, None, None, options);
+//! let inputs = animsmith_report::ReportInputs::new(&grids, roles, checks, config);
+//! let html = animsmith_report::render(inputs);
 //! std::fs::write("report.html", html)
 //! }
 //! ```
@@ -38,9 +39,14 @@
 //!
 //! The boundary is the pose grid, and it is worth stating exactly. [`render`]
 //! draws its charts here, on the Rust side, so an evidence-only single-clip
-//! report keeps them: they retain the root's X/Z path and the two foot-height
-//! series relative to the hips plus their difference, and nothing else per
-//! bone. [`render_comparison`]'s panels are viewer drawings made from the pose
+//! report keeps them: they retain the root's X/Z path, the two foot-height
+//! series relative to the hips plus their difference, and — for each declared
+//! gait group the document holds a member of — one left-minus-right
+//! foot-height series per member with its measured stride anchor, and nothing
+//! else per bone. A [`ReportInputs::clip`] filter scopes the pose grid and the
+//! per-clip charts to that clip; a group figure it belongs to still draws
+//! every member, because a group compared against one of its own members is
+//! not a comparison. [`render_comparison`]'s panels are viewer drawings made from the pose
 //! grid, so an evidence-only comparison replaces every one of them — both
 //! trajectory panels, both gait panels, and the shared root chart — with the
 //! omission notice, and disables the controls that would drive them: the
@@ -88,18 +94,23 @@
 //!
 #![warn(missing_docs)]
 
-use animsmith_core::metrics::{MetricGrids, metric_frame_count};
+use animsmith_core::metrics::{
+    GaitMemberPhase, GaitPhaseEvidence, GaitPhaseOutcome, MetricGrids,
+    circular_phase_center_spread, circular_phase_distance, gait_cycle_samples, gait_member_phase,
+    gait_phase_evidence, metric_frame_count, wrap_unit_phase,
+};
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::PoseGrid;
 use animsmith_core::stance_support::{StanceSideV1, resolve_stance_support_v1};
 use animsmith_core::{
-    CheckEvaluation, Config, LoadedSource, PredictionProvenanceV1, SourceObservationStateV1,
-    SourceSetCoverageStateV1,
+    CheckEvaluation, Config, GaitGroup, LoadedSource, PredictionProvenanceV1,
+    SourceObservationStateV1, SourceSetCoverageStateV1,
 };
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Write};
+use std::rc::Rc;
 
 /// The colour authority both generated documents resolve through — every
 /// colour literal either one carries belongs to this set: dark by default,
@@ -1597,22 +1608,76 @@ fn pose_panel(id: &str, view_box: &str, evidence_only: bool) -> String {
     }
 }
 
+/// Everything [`render`] reads, in one value.
+///
+/// The single-clip report grew a configuration and a clip selection beside
+/// its grids, roles, checks and provenance, and seven positional arguments
+/// is a call nobody can read. This mirrors [`ComparisonSide`], which the
+/// comparison has always taken for the same reason.
+#[derive(Debug, Clone, Copy)]
+pub struct ReportInputs<'a> {
+    /// Metric pose grids computed from the loaded document.
+    pub grids: &'a MetricGrids<'a>,
+    /// Resolved rig roles.
+    pub roles: &'a ResolvedRoles,
+    /// Typed check evaluations for this document.
+    pub checks: &'a [CheckEvaluation],
+    /// Exact configuration the checks were evaluated under.
+    ///
+    /// A clean gait group emits no finding carrying its membership or its
+    /// cap, so the declarations themselves are what lets the report draw a
+    /// group's members against each other; the report reads nothing else
+    /// out of it.
+    pub config: &'a Config,
+    /// Optional engine-prediction provenance.
+    pub prediction_provenance: Option<&'a PredictionProvenanceV1>,
+    /// Restricts the report to one clip name when present. The gait-group
+    /// figures a selected clip belongs to are still drawn from every member,
+    /// because the group is what that clip is judged against.
+    pub clip: Option<&'a str>,
+    /// Presentation choices — see [`ReportOptions::evidence_only`] for a
+    /// report that omits the sampled motion.
+    pub options: ReportOptions,
+}
+
+impl<'a> ReportInputs<'a> {
+    /// The inputs a report of every clip in `grids` needs, with no
+    /// configuration, provenance or clip selection.
+    pub fn new(
+        grids: &'a MetricGrids<'a>,
+        roles: &'a ResolvedRoles,
+        checks: &'a [CheckEvaluation],
+        config: &'a Config,
+    ) -> Self {
+        Self {
+            grids,
+            roles,
+            checks,
+            config,
+            prediction_provenance: None,
+            clip: None,
+            options: ReportOptions {
+                evidence_only: false,
+            },
+        }
+    }
+}
+
 /// Render report HTML from shared metric pose grids.
 ///
-/// `clip_filter` restricts the report to one clip name when present, and
-/// `options` carries the presentation choices — see
-/// [`ReportOptions::evidence_only`] for a report that omits the sampled
-/// motion. The function performs no filesystem I/O and cannot report write
-/// errors; callers choose where to store or serve the returned
-/// self-contained HTML string.
-pub fn render(
-    grids: &MetricGrids<'_>,
-    roles: &ResolvedRoles,
-    checks: &[CheckEvaluation],
-    prediction_provenance: Option<&PredictionProvenanceV1>,
-    clip_filter: Option<&str>,
-    options: ReportOptions,
-) -> String {
+/// The function performs no filesystem I/O and cannot report write errors;
+/// callers choose where to store or serve the returned self-contained HTML
+/// string.
+pub fn render(inputs: ReportInputs<'_>) -> String {
+    let ReportInputs {
+        grids,
+        roles,
+        checks,
+        config,
+        prediction_provenance,
+        clip: clip_filter,
+        options,
+    } = inputs;
     let doc = grids.document();
     let bones: Vec<Value> = doc
         .skeleton
@@ -1629,7 +1694,10 @@ pub fn render(
     ];
 
     let mut clips_json: Vec<Value> = Vec::new();
-    let mut charts_html = String::new();
+    // The cross-clip figures come first: a group figure is evidence about
+    // its members rather than about one clip, so it opens the Charts column
+    // rather than sitting under whichever clip happens to be shown.
+    let (mut charts_html, group_members) = gait_group_charts(grids, roles, config, clip_filter);
     for (clip_index, clip) in doc.clips.iter().enumerate() {
         if clip_filter.is_some_and(|f| f != clip.name) {
             continue;
@@ -1660,6 +1728,11 @@ pub fn render(
             "name": clip.name,
             "duration": clip.duration_s,
             "frames": frames,
+            // Samples one stride cycle spans, which is the axis a gait-group
+            // figure draws its members on. Equal to `frames - 1` for every
+            // grid that repeats its first sample at the wrap, and to
+            // `frames` for a three-frame grid that has no duplicate.
+            "cycle": gait_cycle_samples(frames),
             "trails": trails,
         });
         if let Some(encoded) = encoded_positions(options, sampled_positions) {
@@ -1722,6 +1795,10 @@ pub fn render(
         "profile": roles.profile,
         "evidence_only": options.evidence_only,
         "bones": bones,
+        // The declared membership of every group this document draws, joined
+        // to its figure by `data-group`. The viewer shows a group figure only
+        // while one of these clips is selected.
+        "groups": group_members,
         "clips": clips_json,
         "findings": findings_json,
         "gaps": gaps_json,
@@ -1906,6 +1983,445 @@ fn clip_charts(
     out
 }
 
+/// Colour classes a group figure's members cycle through, in declared order.
+///
+/// Six is the whole set of series colours the design tokens define, so it is
+/// also how many members one figure can tell apart — and therefore the bound
+/// on the sampled series it allocates. The caption still names every declared
+/// member, drawn or not.
+const GROUP_SERIES_CLASSES: [&str; 6] = [
+    "series-member-0",
+    "series-member-1",
+    "series-member-2",
+    "series-member-3",
+    "series-member-4",
+    "series-member-5",
+];
+/// The stride-anchor mark belonging to each member's series, in the same
+/// colour, so a mark is read against its own curve.
+const GROUP_ANCHOR_CLASSES: [&str; 6] = [
+    "anchor-member-0",
+    "anchor-member-1",
+    "anchor-member-2",
+    "anchor-member-3",
+    "anchor-member-4",
+    "anchor-member-5",
+];
+/// Height of a stride-anchor mark, measured up from the plot floor.
+const ANCHOR_MARK_H: f64 = 14.0;
+/// `data-kind` of a gait-group figure, which is also the id of the check the
+/// figure is evidence for.
+const GAIT_GROUP_KIND: &str = "gait-group";
+/// Title of a gait-group figure.
+const GAIT_GROUP_TITLE: &str = "L−R foot height by stride phase";
+
+/// One declared member of a gait group, as this document has it.
+struct GroupMember<'a> {
+    name: &'a str,
+    phase: GaitMemberPhase,
+    /// The member's left-minus-right foot height, sampled on its own metric
+    /// grid, and the samples one cycle of it spans. Empty for a member this
+    /// figure does not draw.
+    series: Vec<f64>,
+    cycle_samples: usize,
+}
+
+/// What the caption puts after a member's `name=`.
+fn member_caption(phase: GaitMemberPhase) -> String {
+    match phase {
+        GaitMemberPhase::Absent => "not in file".to_owned(),
+        GaitMemberPhase::RolesUnresolved => "roles unresolved".to_owned(),
+        GaitMemberPhase::NoFootCycle => "no sampled foot cycle".to_owned(),
+        GaitMemberPhase::NoAnchor(GaitPhaseOutcome::MissingBilateralFootRoles) => {
+            "no bilateral foot roles".to_owned()
+        }
+        GaitMemberPhase::NoAnchor(GaitPhaseOutcome::NoFootHeightSwing) => {
+            "no left/right swing".to_owned()
+        }
+        GaitMemberPhase::NoAnchor(_) => "phase not measurable".to_owned(),
+        GaitMemberPhase::BelowFloor { floor_m, .. } => {
+            format!("below the {floor_m:.3} m amplitude floor")
+        }
+        GaitMemberPhase::Measured(phase) => format!("{phase:.2}"),
+        // The classification is `#[non_exhaustive]`: a state this figure has
+        // not been taught to name is still named as unmeasured rather than
+        // presented as an anchor.
+        _ => "phase not measurable".to_owned(),
+    }
+}
+
+/// One figure per declared gait group this document holds a member of.
+///
+/// Under a clip filter only the groups containing that clip are drawn, since
+/// those are the ones the selected clip is judged against; every member of
+/// such a group is still drawn, because a group compared against one of its
+/// own members is not a comparison.
+///
+/// The number of figures follows the configuration, which the run's author
+/// wrote. What the file supplies — the clips, their frame counts, their
+/// samples — reaches a figure only through the six members it draws.
+fn gait_group_charts(
+    grids: &MetricGrids<'_>,
+    roles: &ResolvedRoles,
+    config: &Config,
+    clip_filter: Option<&str>,
+) -> (String, Vec<Value>) {
+    let doc = grids.document();
+    let drawable = |group: &GaitGroup| {
+        group.clips.iter().any(|name| {
+            clip_filter.is_none_or(|selected| selected == name)
+                && doc.clips.iter().any(|clip| &clip.name == name)
+        })
+    };
+    // Groups overlap, so one clip can be a member of several. Its evidence
+    // is a property of the clip, not of the group reading it, and is
+    // measured once here.
+    let mut evidence: BTreeMap<usize, Option<Rc<GaitPhaseEvidence>>> = BTreeMap::new();
+    let mut html = String::new();
+    let mut membership = Vec::new();
+    for (name, group) in config
+        .gait_groups
+        .iter()
+        .filter(|(_, group)| drawable(group))
+    {
+        html.push_str(&gait_group_chart(name, group, grids, roles, &mut evidence));
+        membership.push(json!({ "name": name, "members": group.clips }));
+    }
+    (html, membership)
+}
+
+/// One declared gait group's members on a single figure.
+///
+/// Every member is drawn against one unshifted normalized source-phase axis:
+/// sample `k` of an `n`-sample cycle sits at `k / n`, which is where the
+/// stride anchor measured on that same cycle is marked. Shifting each member
+/// to its own anchor would draw one curve several times over and erase the
+/// disagreement the figure exists to show, so the anchors are marked where
+/// they were measured instead, and the group's cap is drawn as a band around
+/// their circular mean.
+///
+/// No member is named as the offender against an invented reference. The
+/// check judges a set's circular spread and names no canonical member, so
+/// this figure states the same fact its band draws: which measured anchors
+/// lie outside the cap either side of the mean.
+fn gait_group_chart<'a>(
+    group_name: &str,
+    group: &'a GaitGroup,
+    grids: &MetricGrids<'_>,
+    roles: &ResolvedRoles,
+    evidence: &mut BTreeMap<usize, Option<Rc<GaitPhaseEvidence>>>,
+) -> String {
+    let doc = grids.document();
+    let mut members: Vec<GroupMember<'a>> = Vec::with_capacity(group.clips.len());
+    for clip_name in &group.clips {
+        // The member bound is applied here, before a sampled series is
+        // cloned for it: a member's state is a handful of numbers, its
+        // series is one per judged frame.
+        let has_colour = members.len() < GROUP_SERIES_CLASSES.len();
+        let index = doc.clips.iter().position(|clip| &clip.name == clip_name);
+        let measured = index.and_then(|index| {
+            evidence
+                .entry(index)
+                .or_insert_with(|| {
+                    grids
+                        .grid(index)
+                        .and_then(|grid| gait_phase_evidence(&grid, roles))
+                        .map(Rc::new)
+                })
+                .clone()
+        });
+        // One classifier serves this figure and the `gait-group` check, so
+        // the caption cannot present a member as measured where the check
+        // recorded a coverage gap.
+        let phase = gait_member_phase(
+            roles,
+            index.is_some(),
+            measured.as_deref(),
+            group.min_lr_amplitude_m,
+        );
+        let (series, cycle_samples) = match measured.filter(|_| has_colour) {
+            Some(measured) => (measured.lr_foot_height_m.clone(), measured.cycle_samples),
+            None => (Vec::new(), 0),
+        };
+        members.push(GroupMember {
+            name: clip_name,
+            phase,
+            series,
+            cycle_samples,
+        });
+    }
+
+    // The spread and the centre come from every measured member — exactly
+    // the set `gait-group` measures — and from one pass over them.
+    let anchors: Vec<f64> = members
+        .iter()
+        .filter_map(|member| member.phase.anchor())
+        .collect();
+    let band = (anchors.len() >= 2)
+        .then(|| circular_phase_center_spread(&anchors))
+        .flatten();
+    let guidance = gait_group_guidance(&members, group, band);
+
+    let drawn: Vec<(usize, &GroupMember<'_>)> = members
+        .iter()
+        .take(GROUP_SERIES_CLASSES.len())
+        .enumerate()
+        .filter(|(_, member)| !member.series.is_empty())
+        .collect();
+    let series: Vec<Series<'_>> = drawn
+        .iter()
+        .map(|(index, member)| Series {
+            class: GROUP_SERIES_CLASSES[*index],
+            label: member.name,
+            axis: Side::Left,
+            values: &member.series,
+        })
+        .collect();
+    let legend: Vec<(Swatch, &'static str, String)> = series
+        .iter()
+        .map(|entry| (Swatch::Line, entry.class, entry.label.to_owned()))
+        .collect();
+    let subject = Subject::Group(group_name);
+
+    let Some(range) = axis_range(&series, Side::Left) else {
+        // Every member is absent, unsampled, or non-finite throughout. The
+        // caption still names each one and its state, the way the root path
+        // reports a trajectory it cannot plot.
+        return Chart {
+            subject,
+            kind: GAIT_GROUP_KIND,
+            title: GAIT_GROUP_TITLE,
+            description: format!(
+                "{GAIT_GROUP_TITLE}: unavailable — no member of this group has a finite \
+                 sampled foot height; findings and coverage remain listed"
+            ),
+            guidance,
+            legend,
+            axis: vec![AxisLabel {
+                x: W / 2.0,
+                y: PAD_TOP + PLOT_H / 2.0,
+                anchor: Anchor::Middle,
+                text: "no member has a plottable foot-height sample".to_owned(),
+            }],
+            plot_hooks: false,
+            body: String::new(),
+            trailer: String::new(),
+        }
+        .render();
+    };
+
+    let plot = Plot::for_legend(legend.len());
+    let (min, max) = range;
+    let x = |phase: f64| PAD_LEFT + PLOT_W * phase;
+    let y = |value: f64| {
+        if is_flat(range) {
+            plot.top + PLOT_H / 2.0
+        } else {
+            plot.bottom - PLOT_H * (value - min) / (max - min)
+        }
+    };
+
+    let mut body = String::new();
+    // The tolerance goes down first, so every curve and every mark reads on
+    // top of it rather than under it.
+    if let Some((centre, _)) = band {
+        body.push_str(&phase_band(centre, group.max_gait_phase_spread, plot));
+    }
+    for (entry, (_, member)) in series.iter().zip(&drawn) {
+        let d = polyline(entry.values.len(), |sample| {
+            let value = entry.values[sample];
+            value
+                .is_finite()
+                .then(|| (x(source_phase(sample, member.cycle_samples)), y(value)))
+        });
+        if d.is_empty() {
+            continue;
+        }
+        body.push_str(&format!(
+            "<path class=\"{}\" d=\"{d}\" fill=\"none\"/>",
+            entry.class
+        ));
+    }
+    body.push_str(&format!(
+        "<line class=\"playhead\" x1=\"{PAD_LEFT}\" x2=\"{PAD_LEFT}\" y1=\"{:.1}\" y2=\"{:.1}\"/>",
+        plot.top, plot.bottom
+    ));
+    // The anchors last: a mark a curve crossed would be the one thing in the
+    // picture a reader could not check the caption against.
+    for (index, member) in &drawn {
+        let Some(phase) = member.phase.anchor() else {
+            continue;
+        };
+        let at = x(phase);
+        body.push_str(&format!(
+            "<line class=\"{}\" x1=\"{at:.1}\" x2=\"{at:.1}\" y1=\"{:.1}\" y2=\"{:.1}\"/>",
+            GROUP_ANCHOR_CLASSES[*index],
+            plot.bottom,
+            plot.bottom - ANCHOR_MARK_H
+        ));
+    }
+
+    let mut axis = Vec::with_capacity(4);
+    if is_flat(range) {
+        axis.push(AxisLabel {
+            x: 2.0,
+            y: plot.top + PLOT_H / 2.0 + 3.0,
+            anchor: Anchor::Start,
+            text: format!("flat {min:.2} {UNIT}"),
+        });
+    } else {
+        axis.push(AxisLabel {
+            x: 2.0,
+            y: plot.top + 3.0,
+            anchor: Anchor::Start,
+            text: format!("{max:.2} {UNIT}"),
+        });
+        axis.push(AxisLabel {
+            x: 2.0,
+            y: plot.bottom,
+            anchor: Anchor::Start,
+            text: format!("{min:.2} {UNIT}"),
+        });
+    }
+    axis.push(AxisLabel {
+        x: PAD_LEFT,
+        y: plot.height - 4.0,
+        anchor: Anchor::Start,
+        text: "phase 0".to_owned(),
+    });
+    axis.push(AxisLabel {
+        x: W - PAD_RIGHT,
+        y: plot.height - 4.0,
+        anchor: Anchor::End,
+        text: "phase 1".to_owned(),
+    });
+
+    let names = series
+        .iter()
+        .map(|entry| entry.label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let described = if is_flat(range) {
+        format!("{names} flat at {min:.2} {UNIT}")
+    } else {
+        format!("{names} {min:.2} to {max:.2} {UNIT}")
+    };
+    Chart {
+        subject,
+        kind: GAIT_GROUP_KIND,
+        title: GAIT_GROUP_TITLE,
+        description: format!(
+            "{GAIT_GROUP_TITLE} over one normalized stride cycle, phase 0 to 1: {described}"
+        ),
+        guidance,
+        legend,
+        axis,
+        plot_hooks: true,
+        body,
+        trailer: String::new(),
+    }
+    .render()
+}
+
+/// Where a member's sample sits on the shared source-phase axis: sample `k`
+/// of a `cycle`-sample stride cycle at `k / cycle`, which is exactly where a
+/// phase measured on that cycle is marked. Members sampled at different
+/// frame counts are therefore read against each other without any of them
+/// moving, and a member whose grid repeats its first sample at the wrap
+/// closes on the right-hand edge.
+fn source_phase(sample: usize, cycle_samples: usize) -> f64 {
+    sample as f64 / cycle_samples.max(1) as f64
+}
+
+/// The tolerance band: the group's cap either side of the circular mean of
+/// its measured anchors, as one rectangle or two where it crosses the 0/1
+/// seam of the cycle.
+fn phase_band(centre: f64, cap: f64, plot: Plot) -> String {
+    let rect = |from: f64, to: f64| {
+        format!(
+            "<rect class=\"phase-band\" x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" \
+             height=\"{PLOT_H}\"/>",
+            PAD_LEFT + PLOT_W * from,
+            plot.top,
+            PLOT_W * (to - from)
+        )
+    };
+    // Half a cycle either side is the whole ring: every phase is inside. The
+    // configuration boundary refuses a cap outside `[0, 0.5]`.
+    if cap >= 0.5 {
+        return rect(0.0, 1.0);
+    }
+    let low = wrap_unit_phase(centre - cap);
+    let high = wrap_unit_phase(centre + cap);
+    if low <= high {
+        rect(low, high)
+    } else {
+        format!("{}{}", rect(0.0, high), rect(low, 1.0))
+    }
+}
+
+/// What to look for in a gait-group figure: every declared member with its
+/// anchor or the state that stopped one being measured, the measured spread
+/// against the declared cap, and which anchors the drawn band leaves out.
+fn gait_group_guidance(
+    members: &[GroupMember<'_>],
+    group: &GaitGroup,
+    band: Option<(f64, f64)>,
+) -> String {
+    let cap = group.max_gait_phase_spread;
+    let listing = members
+        .iter()
+        .map(|member| format!("{}={}", member.name, member_caption(member.phase)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut clauses = vec![
+        "every member is drawn on one unshifted phase axis, so a member that enters the \
+         stride elsewhere is the same curve moved along it"
+            .to_owned(),
+        format!("anchors {listing}"),
+    ];
+    match band {
+        Some((centre, spread)) => {
+            clauses.push(if spread > cap {
+                format!("they spread {spread:.2} cycle against the {cap:.2} cap")
+            } else {
+                format!("they spread {spread:.2} cycle, within the {cap:.2} cap")
+            });
+            let outside: Vec<&str> = members
+                .iter()
+                .filter(|member| {
+                    member
+                        .phase
+                        .anchor()
+                        .is_some_and(|phase| circular_phase_distance(phase, centre) > cap)
+                })
+                .map(|member| member.name)
+                .collect();
+            clauses.push(format!(
+                "the band is that cap either side of the circular mean of the measured \
+                 anchors, and {}",
+                match outside.as_slice() {
+                    [] => "no member's anchor lies outside it".to_owned(),
+                    [one] => format!("{one} lies outside it"),
+                    many => format!("{} lie outside it", many.join(", ")),
+                }
+            ));
+        }
+        None => clauses.push(format!(
+            "fewer than two members have a measured anchor, so no tolerance band is drawn \
+             and the {cap:.2} cap is not evaluated here"
+        )),
+    }
+    let beyond = members.len().saturating_sub(GROUP_SERIES_CLASSES.len());
+    if beyond > 0 {
+        clauses.push(format!(
+            "{beyond} declared member(s) past the first {} are named here but not drawn",
+            GROUP_SERIES_CLASSES.len()
+        ));
+    }
+    format!("what to look for: {}", clauses.join("; "))
+}
+
 /// Which of a line chart's two value axes a series is plotted against,
 /// and which gutter a label is aligned to.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1919,7 +2435,7 @@ enum Side {
 /// against, and the samples.
 struct Series<'a> {
     class: &'static str,
-    label: &'static str,
+    label: &'a str,
     axis: Side,
     values: &'a [f64],
 }
@@ -1963,22 +2479,67 @@ struct AxisLabel {
     text: String,
 }
 
+/// What a figure is about.
+///
+/// A clip figure belongs to one clip of the document and is shown only while
+/// that clip is selected; a group figure belongs to a declared gait group and
+/// is shown whichever member the reader is scrubbing, because comparing the
+/// members is the whole of what it says. The subject names the figure in its
+/// caption and is the attribute the viewer and the documentation site's chart
+/// extractor select it by.
+#[derive(Clone, Copy)]
+enum Subject<'a> {
+    /// One clip of the rendered document.
+    Clip(&'a str),
+    /// One declared gait group, drawn from its members.
+    Group(&'a str),
+}
+
+impl<'a> Subject<'a> {
+    /// The name a caption and an `aria-label` open with.
+    fn name(self) -> &'a str {
+        match self {
+            Subject::Clip(name) | Subject::Group(name) => name,
+        }
+    }
+
+    /// The `data-*` attribute this figure is selected by.
+    ///
+    /// A group figure carries no `data-clip`, because it belongs to no single
+    /// clip. Its membership is not an attribute either: a group's members are
+    /// authored clip names, and any separator that packs several of them into
+    /// one attribute is a name a document may legitimately contain — a member
+    /// called `run,left` in a comma-separated list is read as two members,
+    /// neither of them itself, and its own figure disappears while it is
+    /// selected. The membership travels in the embedded JSON instead, where
+    /// a name is a string, and `data-group` is the key that joins the two.
+    fn attribute(self) -> String {
+        match self {
+            Subject::Clip(name) => format!("data-clip=\"{}\"", esc(name)),
+            Subject::Group(name) => format!("data-group=\"{}\"", esc(name)),
+        }
+    }
+}
+
 /// The shell every chart shares: the `<figure>` and its `<svg>`, the title,
 /// the legend, and the axis labels. A caller contributes only the geometry it
-/// plots and the words that describe it, so the two chart kinds cannot drift
+/// plots and the words that describe it, so the chart kinds cannot drift
 /// apart on the parts a reader — or the documentation site's extractor —
 /// depends on.
 struct Chart<'a> {
-    clip: &'a str,
+    subject: Subject<'a>,
     kind: &'static str,
     title: &'static str,
-    /// Tail of the `aria-label`, after the clip name.
+    /// Tail of the `aria-label`, after the subject name.
     description: String,
     /// What a reader should look for in this picture, appended to the
     /// visible caption. It is not repeated into the `aria-label`, which
     /// already states the measured ranges the drawing is evidence for.
     guidance: String,
-    legend: &'a [(Swatch, &'static str, &'a str)],
+    /// The legend's entries. [`Chart`] lays them out and derives the plot
+    /// rectangle from how many rows they need, so a caller cannot draw in a
+    /// rectangle the figure does not reserve.
+    legend: Vec<(Swatch, &'static str, String)>,
     axis: Vec<AxisLabel>,
     /// Publishes the plot rectangle the viewer's playhead is placed in.
     plot_hooks: bool,
@@ -1989,36 +2550,8 @@ struct Chart<'a> {
 
 impl Chart<'_> {
     fn render(&self) -> String {
-        let clip = esc(self.clip);
-        let caption = format!("{clip} — {}", esc(self.title));
-        let mut legend = String::new();
-        let mut cursor = PAD_LEFT;
-        for (swatch, class, label) in self.legend {
-            let text_x = cursor + 13.0;
-            legend.push_str(&match swatch {
-                Swatch::Line => format!(
-                    "<line class=\"{class}\" x1=\"{cursor:.1}\" x2=\"{:.1}\" y1=\"{LEGEND_Y}\" \
-                     y2=\"{LEGEND_Y}\"/>",
-                    cursor + 10.0
-                ),
-                Swatch::Start => format!(
-                    "<circle class=\"{class}\" cx=\"{:.1}\" cy=\"{LEGEND_Y}\" r=\"{PATH_START_R}\"/>",
-                    cursor + 5.0
-                ),
-                Swatch::End => format!(
-                    "<rect class=\"{class}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{PATH_END_SIDE}\" \
-                     height=\"{PATH_END_SIDE}\"/>",
-                    cursor + 5.0 - PATH_END_SIDE / 2.0,
-                    LEGEND_Y - PATH_END_SIDE / 2.0
-                ),
-            });
-            legend.push_str(&format!(
-                "<text class=\"legend\" x=\"{text_x:.1}\" y=\"{:.1}\">{}</text>",
-                LEGEND_Y + 3.0,
-                esc(label)
-            ));
-            cursor = text_x + label.chars().count() as f64 * LEGEND_CHAR_W + 10.0;
-        }
+        let subject = esc(self.subject.name());
+        let caption = format!("{subject} — {}", esc(self.title));
         let axis: String = self
             .axis
             .iter()
@@ -2037,6 +2570,7 @@ impl Chart<'_> {
         } else {
             String::new()
         };
+        let plot = Plot::for_legend(self.legend.len());
         // The caption a reader sees carries the guidance; the `<title>` stays
         // the figure's short name, so an assistive reader hears what the
         // picture is before the sentence about how to read it.
@@ -2046,16 +2580,114 @@ impl Chart<'_> {
             format!("{caption} · {}", esc(&self.guidance))
         };
         format!(
-            "<figure class=\"chart\" data-clip=\"{clip}\" data-kind=\"{}\"{hooks}>\
+            "<figure class=\"chart\" {} data-kind=\"{}\"{hooks}>\
              <figcaption>{figcaption}</figcaption>\
-             <svg viewBox=\"0 0 {W} {H}\" width=\"100%\" role=\"img\" \
-             aria-label=\"{clip} — {}\"><title>{caption}</title>{legend}{}{axis}</svg>{}</figure>",
+             <svg viewBox=\"0 0 {W} {}\" width=\"100%\" role=\"img\" \
+             aria-label=\"{subject} — {}\"><title>{caption}</title>{}{}{axis}</svg>{}</figure>",
+            self.subject.attribute(),
             self.kind,
+            plot.height,
             esc(&self.description),
+            legend_block(&self.legend),
             self.body,
             self.trailer,
         )
     }
+}
+
+/// One legend entry drawn at `(x, y)`: its swatch, then its label.
+fn legend_entry(swatch: Swatch, class: &str, label: &str, x: f64, y: f64) -> String {
+    let mark = match swatch {
+        Swatch::Line => format!(
+            "<line class=\"{class}\" x1=\"{x:.1}\" x2=\"{:.1}\" y1=\"{y}\" y2=\"{y}\"/>",
+            x + 10.0
+        ),
+        Swatch::Start => format!(
+            "<circle class=\"{class}\" cx=\"{:.1}\" cy=\"{y}\" r=\"{PATH_START_R}\"/>",
+            x + 5.0
+        ),
+        Swatch::End => format!(
+            "<rect class=\"{class}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{PATH_END_SIDE}\" \
+             height=\"{PATH_END_SIDE}\"/>",
+            x + 5.0 - PATH_END_SIDE / 2.0,
+            y - PATH_END_SIDE / 2.0
+        ),
+    };
+    format!(
+        "{mark}<text class=\"legend\" x=\"{:.1}\" y=\"{:.1}\">{}</text>",
+        x + 13.0,
+        y + 3.0,
+        esc(label)
+    )
+}
+
+/// Every chart's legend, laid out in fixed columns.
+///
+/// One row of six clip names is wider than the picture, and a legend entry
+/// that runs past the `viewBox` edge is simply not drawn — the reader loses
+/// the mapping from colour to series, which is the one thing a legend is
+/// for. Fixed columns keep every entry inside the plot width whatever names
+/// the document supplies, and a name too long for its column is cut with an
+/// ellipsis; a group figure's caption carries every member's full name
+/// either way. The two- and three-series charts fill one row of it.
+fn legend_block(entries: &[(Swatch, &'static str, String)]) -> String {
+    let column = PLOT_W / LEGEND_COLUMNS as f64;
+    entries
+        .iter()
+        .enumerate()
+        .map(|(index, (swatch, class, label))| {
+            legend_entry(
+                *swatch,
+                class,
+                &fit_label(label, column - LEGEND_ENTRY_MARGIN),
+                PAD_LEFT + (index % LEGEND_COLUMNS) as f64 * column,
+                LEGEND_Y + (index / LEGEND_COLUMNS) as f64 * LEGEND_ROW_H,
+            )
+        })
+        .collect()
+}
+
+/// The plot rectangle a chart draws in.
+///
+/// A legend of more than one row reserves its extra rows above the plot and
+/// pushes it down by exactly that, so the plotted rectangle stays [`PLOT_H`]
+/// tall in every figure and the figure itself grows instead. [`Chart`]
+/// derives this from the entries it was given and a caller derives it from
+/// the same count, so the drawing and the `viewBox` cannot disagree.
+#[derive(Clone, Copy)]
+struct Plot {
+    /// Top edge of the plotted rectangle.
+    top: f64,
+    /// Bottom edge of the plotted rectangle.
+    bottom: f64,
+    /// Height of the whole figure's `viewBox`.
+    height: f64,
+}
+
+impl Plot {
+    fn for_legend(entries: usize) -> Self {
+        let rows = entries.div_ceil(LEGEND_COLUMNS).max(1);
+        let reserved = (rows - 1) as f64 * LEGEND_ROW_H;
+        Self {
+            top: PAD_TOP + reserved,
+            bottom: H - PAD_BOTTOM + reserved,
+            height: H + reserved,
+        }
+    }
+}
+
+/// `label` cut to what fits `width` viewBox units at the shared chart type
+/// scale, with an ellipsis where it was cut.
+fn fit_label(label: &str, width: f64) -> String {
+    let fits = (width / LEGEND_CHAR_W).floor().max(1.0) as usize;
+    if label.chars().count() <= fits {
+        return label.to_owned();
+    }
+    label
+        .chars()
+        .take(fits.saturating_sub(1))
+        .chain(['…'])
+        .collect()
 }
 
 const W: f64 = 360.0;
@@ -2240,6 +2872,14 @@ const SINGLE_PATH_MARKS: &str = "the dot is the current frame, the hollow circle
 const SHARED_PATH_MARKS: &str = "the dot is the shared phase, the hollow circle where a track \
      starts and the square where it ends";
 const LEGEND_Y: f64 = 9.0;
+/// Columns [`grid_legend`] lays its entries out in, and with the six series
+/// colours a group figure paints, the two rows it can need.
+const LEGEND_COLUMNS: usize = 3;
+/// Height of one legend row, in viewBox units.
+const LEGEND_ROW_H: f64 = 11.0;
+/// Room a grid-legend entry gives its swatch and the gap to the next
+/// column, before the label may use what is left.
+const LEGEND_ENTRY_MARGIN: f64 = 16.0;
 /// Average glyph advance at the shared `--chart-type` scale the
 /// stylesheets set on chart labels, in viewBox units. Approximate on
 /// purpose — it only lays legend entries out left to right, and they have
@@ -2500,16 +3140,16 @@ fn line_chart(
         ),
     };
     Chart {
-        clip,
+        subject: Subject::Clip(clip),
         kind,
         title,
         description: format!("{title} over frames 0 to {last_frame}: {described}"),
         guidance: guidance.to_owned(),
-        legend: &series
+        legend: series
             .iter()
-            .zip(&legend_labels)
-            .map(|(entry, label)| (Swatch::Line, entry.class, label.as_str()))
-            .collect::<Vec<_>>(),
+            .zip(legend_labels)
+            .map(|(entry, label)| (Swatch::Line, entry.class, label))
+            .collect(),
         axis,
         plot_hooks: true,
         body,
@@ -2537,7 +3177,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance:
         .collect();
     let Some(((min_x, max_x), (min_z, max_z))) = joint_extent(&plotted) else {
         return Chart {
-            clip,
+            subject: Subject::Clip(clip),
             kind: "rootpath",
             title,
             description: format!(
@@ -2546,7 +3186,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance:
                 xs.len()
             ),
             guidance: guidance.to_owned(),
-            legend: &[(Swatch::Line, "root-path", "root")],
+            legend: vec![(Swatch::Line, "root-path", "root".to_owned())],
             axis: vec![AxisLabel {
                 x: W / 2.0,
                 y: PAD_TOP + PLOT_H / 2.0,
@@ -2671,7 +3311,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance:
     };
 
     Chart {
-        clip,
+        subject: Subject::Clip(clip),
         kind: "rootpath",
         title,
         description: if stationary {
@@ -2688,10 +3328,10 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance:
             )
         },
         guidance: format!("{guidance} · {extent} · {closure}"),
-        legend: &[
-            (Swatch::Line, "root-path", "root"),
-            (Swatch::Start, "pathstart", "start"),
-            (Swatch::End, "pathend", "end"),
+        legend: vec![
+            (Swatch::Line, "root-path", "root".to_owned()),
+            (Swatch::Start, "pathstart", "start".to_owned()),
+            (Swatch::End, "pathend", "end".to_owned()),
         ],
         axis,
         plot_hooks: false,
@@ -2798,18 +3438,18 @@ mod tests {
         let checks = Vec::new();
 
         let options = ReportOptions::default();
-        let fresh = render(
-            &MetricGrids::new(&doc),
-            &roles,
-            &checks,
-            None,
-            None,
+        let grids_once = MetricGrids::new(&doc);
+        let fresh = render(ReportInputs {
             options,
-        );
+            ..ReportInputs::new(&grids_once, &roles, &checks, &config)
+        });
         let grids = MetricGrids::new(&doc);
         let ctx = CheckCtx::new(&grids, &roles, &config);
         assert!(ctx.grid(0).is_some());
-        let shared = render(&grids, &roles, &checks, None, None, options);
+        let shared = render(ReportInputs {
+            options,
+            ..ReportInputs::new(&grids, &roles, &checks, &config)
+        });
 
         assert_eq!(fresh, shared);
         assert!(shared.contains(r#"data-kind="rootpath""#));

@@ -213,17 +213,34 @@ function setFrame(f) {
   draw();
 }
 
+// Declared gait-group membership, keyed by the name each figure carries as
+// `data-group`.
+const groupMembers = new Map((data.groups || []).map((g) => [g.name, g.members]));
+
 function updateCharts() {
   if (!clip) return;
   const u = clip.frames > 1 ? frame / (clip.frames - 1) : 0;
+  // A group figure's axis is the stride cycle its members were measured on,
+  // which excludes the duplicate wrap sample a longer grid repeats. The
+  // clip figures' axis is the clip's own frames.
+  const cycle = clip.cycle > 0 ? Math.min(1, frame / clip.cycle) : u;
   for (const fig of document.querySelectorAll(".chart")) {
-    const active = fig.dataset.clip === clip.name;
+    // A group figure draws every member of a declared gait group against the
+    // others, so it stays visible while any member is selected — but only
+    // then. Its caption describes its members' own source phase, so a clip
+    // outside the group must not drive its playhead, and a figure of a group
+    // the reader is not looking at is not evidence about the clip they are.
+    // The membership comes from the payload rather than the markup: a clip
+    // name is arbitrary text, so no separator can pack several into one
+    // attribute without a legitimate name splitting into pieces.
+    const members = "group" in fig.dataset ? (groupMembers.get(fig.dataset.group) || []) : null;
+    const active = members ? members.includes(clip.name) : fig.dataset.clip === clip.name;
     fig.style.display = active ? "" : "none";
     if (!active) continue;
     const playhead = fig.querySelector(".playhead");
     if (playhead) {
       const pad = parseFloat(fig.dataset.pad);
-      const x = pad + parseFloat(fig.dataset.plotw) * u;
+      const x = pad + parseFloat(fig.dataset.plotw) * (members ? cycle : u);
       playhead.setAttribute("x1", x);
       playhead.setAttribute("x2", x);
     }
