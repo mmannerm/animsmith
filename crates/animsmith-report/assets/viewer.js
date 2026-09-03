@@ -251,25 +251,43 @@ function updateCharts() {
 }
 
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
-scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
+scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
+
+// One owner for the frame loop. Pausing cancels the frame it scheduled and
+// takes the next run number, so a callback already in flight returns instead
+// of rescheduling: without both, every pause-then-play left the old chain
+// alive beside the new one and the clip advanced once more per frame for as
+// long as the document stayed open.
+let last = 0, playHandle = 0, playRun = 0;
+function pausePlayback() {
+  playing = false;
+  playRun++;
+  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
+  playBtn.textContent = "▶";
+  playBtn.setAttribute("aria-label", "Play the clip");
+}
+function frameLoop(run) {
+  return function tick(now) {
+    if (!playing || run !== playRun || !clip) return;
+    const dt = (now - last) / 1000;
+    last = now;
+    const fps = (clip.frames - 1) / clip.duration;
+    let f = frame + dt * fps;
+    if (f > clip.frames - 1) f = 0; // wrap like the runtime does
+    setFrame(f);
+    playHandle = requestAnimationFrame(tick);
+  };
+}
 playBtn.addEventListener("click", () => {
   if (!canvas) return;
-  playing = !playing;
-  playBtn.textContent = playing ? "⏸" : "▶";
-  if (playing) { last = performance.now(); requestAnimationFrame(tick); }
+  if (playing) { pausePlayback(); return; }
+  playing = true;
+  playBtn.textContent = "⏸";
+  playBtn.setAttribute("aria-label", "Pause the clip");
+  last = performance.now();
+  playRun++;
+  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
-
-let last = 0;
-function tick(now) {
-  if (!playing || !clip) return;
-  const dt = (now - last) / 1000;
-  last = now;
-  const fps = (clip.frames - 1) / clip.duration;
-  let f = frame + dt * fps;
-  if (f > clip.frames - 1) f = 0; // wrap like the runtime does
-  setFrame(f);
-  requestAnimationFrame(tick);
-}
 
 // orbit controls
 let dragging = false, lastX = 0, lastY = 0;

@@ -44,7 +44,10 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
    line. The playhead dot keeps --error, so the current frame is never read
    as either end. */
 .pathstart { fill: none; stroke: var(--pass); stroke-width: 1.5; }
-.pathend { fill: var(--pass); stroke: none; }
+/* The end square carries the plot's own ground as a stroke, so it still
+   reads as a square where it lands on a dot or a line of its own colour. */
+.pathend { fill: var(--pass); stroke: var(--ground); stroke-width: 1; }
+.pathleader { fill: none; stroke: var(--pass); stroke-width: 1; }
 .axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }

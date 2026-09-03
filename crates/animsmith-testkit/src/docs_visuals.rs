@@ -98,6 +98,20 @@ pub const CHART_COLOURS: &[ChartColour] = &[
         dark: "#9ece6a",
     },
     ChartColour {
+        selector: ".pathend",
+        property: "stroke",
+        token: "--as-ground",
+        light: "#f4f5f9",
+        dark: "#17171f",
+    },
+    ChartColour {
+        selector: ".pathleader",
+        property: "stroke",
+        token: "--as-pass",
+        light: "#287a3b",
+        dark: "#9ece6a",
+    },
+    ChartColour {
         selector: "text",
         property: "fill",
         token: "--as-muted",
@@ -145,7 +159,8 @@ pub fn chart_style(scope: &str) -> String {
     format!(
         "#{scope} .series-left,#{scope} .series-right,#{scope} .series-diff,\
          #{scope} .root-path,#{scope} .pathstart{{fill:none;stroke-width:1.5}}\
-         #{scope} .pathend{{stroke:none}}\
+         #{scope} .pathend{{stroke-width:1}}\
+         #{scope} .pathleader{{fill:none;stroke-width:1}}\
          #{scope} .series-diff{{opacity:.6;stroke-dasharray:4 3}}\
          #{scope} text{{font:8.5px ui-monospace,monospace}}{}\
          @media (prefers-color-scheme:dark){{{}}}",

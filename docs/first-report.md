@@ -23,11 +23,15 @@ scrubbed to the first finding:
 
 [Open it full size](visuals/walk-dirty.report.html). Drag to orbit, use the
 wheel to zoom, and click a finding to jump to its frame. The charts share a
-playhead with the 3D view, and each chart caption says what to look for in it:
-the two feet alternating, the root path closing on itself or running out to
-its declared distance. A root path is marked where the track starts (a hollow
-circle) and where it ends (a filled square), and the caption states how far
-apart the two are.
+playhead with the 3D view, and each chart caption says what to look for in
+it — derived from what your configuration declares for that clip and what the
+checks judged, not from an assumption about what the clip is. A clip declared
+`loop = true` is told its curves should end where they began; one that pins
+`speed_mps` with animation-owned travel is told the root should keep
+travelling at that speed, with no claim about the shape it travels; a clip
+that declares neither is told so, and named the checks that judged it. A root
+path is also marked where the track starts (a hollow circle) and where it ends
+(a filled square), and the caption states how far apart the two are.
 
 ## Compare before and after
 

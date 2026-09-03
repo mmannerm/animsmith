@@ -120,10 +120,10 @@ pre { white-space: pre-wrap; word-break: break-word; color: var(--muted) }
 <body><header><h1>animsmith visual comparison</h1></header>
 <section class="disclosure"><p id="mapping"></p>
 <p class="warning">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>
-<section class="sync"><button id="play">▶</button><label>Shared phase <input id="scrub" type="range" min="0" max="1000" value="0"></label><span id="times"></span></section>
+<section class="sync"><button id="play" aria-label="Play the shared phase">▶</button><label>Shared phase <input id="scrub" type="range" min="0" max="1000" value="0"></label><span id="times"></span></section>
 <main><section class="side" id="before-panel"><span id="before-clip-99b66f0b76b27794"></span><h2 id="clip-before">Before</h2><p id="before-identity"></p><h3>Judged pose at the shared phase</h3><canvas id="before-gl"></canvas><p id="before-pose-context" class="context-label"></p></section>
 <section class="side" id="after-panel"><span id="after-clip-99b66f0b76b27794"></span><h2 id="clip-after">After</h2><p id="after-identity"></p><h3>Judged pose at the shared phase</h3><canvas id="after-gl"></canvas><p id="after-pose-context" class="context-label"></p></section>
-<section class="side shared-chart" id="root-panel"><h2>Before/after root trajectory</h2><svg id="comparison-root-path" viewBox="0 0 720 180"></svg><p id="comparison-root-path-caption" class="context-label"></p></section>
+<section class="side shared-chart" id="root-panel"><h2 id="root-panel-title">Root path, before over after</h2><svg id="comparison-root-path" viewBox="0 0 720 180"></svg><p id="comparison-root-path-caption" class="context-label"></p></section>
 <section class="side" id="before-evidence"><h2>Before evidence</h2><h3>Role trajectories</h3><svg id="before-path" viewBox="0 0 360 180"></svg><p id="before-path-caption" class="context-label"></p><h3>Gait and sampled stance</h3><svg id="before-gait" viewBox="0 0 360 180"></svg><p id="before-gait-caption" class="context-label"></p><h3>Acceptance context</h3><ul id="before-contexts"></ul><h3>Findings</h3><ul id="before-findings"></ul><h3>Coverage gaps</h3><ul id="before-gaps"></ul><h3>Prediction provenance</h3><pre id="before-predictions"></pre></section>
 <section class="side" id="after-evidence"><h2>After evidence</h2><h3>Role trajectories</h3><svg id="after-path" viewBox="0 0 360 180"></svg><p id="after-path-caption" class="context-label"></p><h3>Gait and sampled stance</h3><svg id="after-gait" viewBox="0 0 360 180"></svg><p id="after-gait-caption" class="context-label"></p><h3>Acceptance context</h3><ul id="after-contexts"></ul><h3>Findings</h3><ul id="after-findings"></ul><h3>Coverage gaps</h3><ul id="after-gaps"></ul><h3>Prediction provenance</h3><pre id="after-predictions"></pre></section></main>
 <script>// animsmith report shared runtime — the pure helpers both generated viewers
@@ -239,7 +239,7 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
-</script><script type="application/json" id="comparison-report-data">{"after":{"clip":{"anchor":"clip-99b66f0b76b27794","duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAzczMPc3MjD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAH4VrvgAAgD8AAAAAzcxMPpqZmT8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8AAAAAJqZmT8K16M8AACAPgAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAAH4VrPgAAgD8AAAAAAAAAAAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAzczMPc3MjD8AAAAAAAAAPwAAwD8AAAAA","times":[0.0,0.25,0.5,0.75,1.0],"trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}},"contexts":{"gait":{"hips":1,"left":2,"left_role":"left_foot","right":3,"right_role":"right_foot","source":"exact sampled pose-grid model-space selected foot/toe heights relative to hips"},"seams":[],"stances":[{"bone":2,"bone_name":"left_foot","contact_height_m":0.03,"runs":[{"end_frame":1,"end_s":0.25,"start_frame":0,"start_s":0.0},{"end_frame":4,"end_s":1.0,"start_frame":3,"start_s":0.75}],"scope":"left_foot_stance","selected_role":"left_foot","side":"left","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"},{"bone":3,"bone_name":"right_foot","contact_height_m":0.03,"runs":[{"end_frame":3,"end_s":0.75,"start_frame":2,"start_s":0.5}],"scope":"right_foot_stance","selected_role":"right_foot","side":"right","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"}],"structural":[]},"dependency_closure_identity":{"bytes":271,"sha256":"e44f972eba302f4ae0b299aa87d2238ded84ea970b214dc47bbb3e8b32e736b9"},"findings":[],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"identity":{"bytes":2088,"sha256":"1478443e37ecd6db9519bc03cb5c7b7c8583473e2203e77c0de608947dc88ac3"},"prediction_provenance":null,"predictions":[]},"before":{"clip":{"anchor":"clip-99b66f0b76b27794","duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","times":[0.0,0.25,0.5,0.75,1.0],"trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}},"contexts":{"gait":{"hips":1,"left":2,"left_role":"left_foot","right":3,"right_role":"right_foot","source":"exact sampled pose-grid model-space selected foot/toe heights relative to hips"},"seams":[{"check":"loop-closure","finding_anchor":"finding-da62a937d41556e3","first_frame":0,"first_s":0.0,"last_frame":4,"last_s":1.0,"source":"typed seam finding on exact sampled endpoint poses","subject_bone":2,"subject_bone_name":"left_foot"},{"check":"loop-seam-vel","finding_anchor":"finding-1c517530cf385634","first_frame":0,"first_s":0.0,"last_frame":4,"last_s":1.0,"source":"typed seam finding on exact sampled endpoint poses","subject_bone":2,"subject_bone_name":"left_foot"}],"stances":[{"bone":2,"bone_name":"left_foot","contact_height_m":0.03,"runs":[{"end_frame":1,"end_s":0.25,"start_frame":0,"start_s":0.0}],"scope":"left_foot_stance","selected_role":"left_foot","side":"left","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"},{"bone":3,"bone_name":"right_foot","contact_height_m":0.03,"runs":[{"end_frame":4,"end_s":1.0,"start_frame":2,"start_s":0.5}],"scope":"right_foot_stance","selected_role":"right_foot","side":"right","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"}],"structural":[{"check":"constant-track","evidence_kind":"structural","finding_anchor":"finding-f4adab528afc25e5","label":"structural evidence — poses may look unchanged","source":"typed check finding; no visual pose difference is implied","subject_bone_name":"hand"}]},"dependency_closure_identity":{"bytes":271,"sha256":"292bc7d968757dd90e37061be5e7057ae2d377d40479adf487eb873b42894444"},"findings":[{"anchor":"finding-f4adab528afc25e5","bone":"hand","check":"constant-track","clip":"acceptance-matrix","expected":null,"measured":null,"members":null,"message":"rotation track has 5 keys but never moves — export bloat","node":null,"prediction_scope":null,"severity":"note","subject_bone":4,"time":null},{"anchor":"finding-da62a937d41556e3","bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","expected":0.01,"measured":0.4000000059604645,"members":null,"message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"prediction_scope":null,"severity":"error","subject_bone":2,"time":1.0},{"anchor":"finding-1c517530cf385634","bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","expected":0.1,"measured":1.341640591621399,"members":null,"message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"prediction_scope":null,"severity":"error","subject_bone":2,"time":1.0},{"anchor":"finding-8d95790ce2e3be8d","bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","expected":0.3,"measured":0.7199999988079071,"members":null,"message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"prediction_scope":null,"severity":"warning","subject_bone":2,"time":0.25},{"anchor":"finding-64ab7a402def23d7","bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","expected":0.3,"measured":0.8799999952316284,"members":null,"message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"prediction_scope":null,"severity":"warning","subject_bone":3,"time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"identity":{"bytes":2532,"sha256":"1384c67f5a0a50fcb7c3d7ce51c2e7ac912110b591693139fc32724d70be15a9"},"prediction_provenance":null,"predictions":[]},"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"correspondence":{"after_clip":"acceptance-matrix","before_clip":"acceptance-matrix","disclosure":"Panels synchronize by normalized sampled-frame phase. Source times remain separate; this is not an authored time warp.","kind":"explicit_clip_names","mapping":"normalized_phase"},"evidence_only":false,"kind":"animsmith-comparison-v1"}</script><script>// animsmith comparison viewer: hand-written, offline, and driven only by
+</script><script type="application/json" id="comparison-report-data">{"after":{"clip":{"anchor":"clip-99b66f0b76b27794","duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAzczMPc3MjD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAH4VrvgAAgD8AAAAAzcxMPpqZmT8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8AAAAAJqZmT8K16M8AACAPgAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAAH4VrPgAAgD8AAAAAAAAAAAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAzczMPc3MjD8AAAAAAAAAPwAAwD8AAAAA","times":[0.0,0.25,0.5,0.75,1.0],"trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}},"contexts":{"gait":{"hips":1,"left":2,"left_role":"left_foot","right":3,"right_role":"right_foot","source":"exact sampled pose-grid model-space selected foot/toe heights relative to hips"},"seams":[],"stances":[{"bone":2,"bone_name":"left_foot","contact_height_m":0.03,"runs":[{"end_frame":1,"end_s":0.25,"start_frame":0,"start_s":0.0},{"end_frame":4,"end_s":1.0,"start_frame":3,"start_s":0.75}],"scope":"left_foot_stance","selected_role":"left_foot","side":"left","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"},{"bone":3,"bone_name":"right_foot","contact_height_m":0.03,"runs":[{"end_frame":3,"end_s":0.75,"start_frame":2,"start_s":0.5}],"scope":"right_foot_stance","selected_role":"right_foot","side":"right","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"}],"structural":[]},"dependency_closure_identity":{"bytes":271,"sha256":"e44f972eba302f4ae0b299aa87d2238ded84ea970b214dc47bbb3e8b32e736b9"},"findings":[],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"guidance":{"gait":"what to look for: this clip is declared a loop, so the curves should end where they began; the shaded bands are the sampled stance intervals the foot-slide check judged, and a foot that moves horizontally during its band is the slide","root_path":"what to look for: this clip is declared a loop, so its root path should end where it began; this clip declares who owns its horizontal travel and the in-place check judged the root against that declaration, so the path is the evidence for it · the dot is the shared phase, the hollow circle where a track starts and the square where it ends"},"identity":{"bytes":2088,"sha256":"1478443e37ecd6db9519bc03cb5c7b7c8583473e2203e77c0de608947dc88ac3"},"prediction_provenance":null,"predictions":[]},"before":{"clip":{"anchor":"clip-99b66f0b76b27794","duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","times":[0.0,0.25,0.5,0.75,1.0],"trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}},"contexts":{"gait":{"hips":1,"left":2,"left_role":"left_foot","right":3,"right_role":"right_foot","source":"exact sampled pose-grid model-space selected foot/toe heights relative to hips"},"seams":[{"check":"loop-closure","finding_anchor":"finding-da62a937d41556e3","first_frame":0,"first_s":0.0,"last_frame":4,"last_s":1.0,"source":"typed seam finding on exact sampled endpoint poses","subject_bone":2,"subject_bone_name":"left_foot"},{"check":"loop-seam-vel","finding_anchor":"finding-1c517530cf385634","first_frame":0,"first_s":0.0,"last_frame":4,"last_s":1.0,"source":"typed seam finding on exact sampled endpoint poses","subject_bone":2,"subject_bone_name":"left_foot"}],"stances":[{"bone":2,"bone_name":"left_foot","contact_height_m":0.03,"runs":[{"end_frame":1,"end_s":0.25,"start_frame":0,"start_s":0.0}],"scope":"left_foot_stance","selected_role":"left_foot","side":"left","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"},{"bone":3,"bone_name":"right_foot","contact_height_m":0.03,"runs":[{"end_frame":4,"end_s":1.0,"start_frame":2,"start_s":0.5}],"scope":"right_foot_stance","selected_role":"right_foot","side":"right","source":"typed foot-slide evaluated scope plus shared V1 sampled stance classifier"}],"structural":[{"check":"constant-track","evidence_kind":"structural","finding_anchor":"finding-f4adab528afc25e5","label":"structural evidence — poses may look unchanged","source":"typed check finding; no visual pose difference is implied","subject_bone_name":"hand"}]},"dependency_closure_identity":{"bytes":271,"sha256":"292bc7d968757dd90e37061be5e7057ae2d377d40479adf487eb873b42894444"},"findings":[{"anchor":"finding-f4adab528afc25e5","bone":"hand","check":"constant-track","clip":"acceptance-matrix","expected":null,"measured":null,"members":null,"message":"rotation track has 5 keys but never moves — export bloat","node":null,"prediction_scope":null,"severity":"note","subject_bone":4,"time":null},{"anchor":"finding-da62a937d41556e3","bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","expected":0.01,"measured":0.4000000059604645,"members":null,"message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"prediction_scope":null,"severity":"error","subject_bone":2,"time":1.0},{"anchor":"finding-1c517530cf385634","bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","expected":0.1,"measured":1.341640591621399,"members":null,"message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"prediction_scope":null,"severity":"error","subject_bone":2,"time":1.0},{"anchor":"finding-8d95790ce2e3be8d","bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","expected":0.3,"measured":0.7199999988079071,"members":null,"message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"prediction_scope":null,"severity":"warning","subject_bone":2,"time":0.25},{"anchor":"finding-64ab7a402def23d7","bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","expected":0.3,"measured":0.8799999952316284,"members":null,"message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"prediction_scope":null,"severity":"warning","subject_bone":3,"time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"guidance":{"gait":"what to look for: this clip is declared a loop, so the curves should end where they began; the shaded bands are the sampled stance intervals the foot-slide check judged, and a foot that moves horizontally during its band is the slide","root_path":"what to look for: this clip is declared a loop, so its root path should end where it began; this clip declares who owns its horizontal travel and the in-place check judged the root against that declaration, so the path is the evidence for it · the dot is the shared phase, the hollow circle where a track starts and the square where it ends"},"identity":{"bytes":2532,"sha256":"1384c67f5a0a50fcb7c3d7ce51c2e7ac912110b591693139fc32724d70be15a9"},"prediction_provenance":null,"predictions":[]},"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"correspondence":{"after_clip":"acceptance-matrix","before_clip":"acceptance-matrix","disclosure":"Panels synchronize by normalized sampled-frame phase. Source times remain separate; this is not an authored time warp.","kind":"explicit_clip_names","mapping":"normalized_phase"},"evidence_only":false,"kind":"animsmith-comparison-v1"}</script><script>// animsmith comparison viewer: hand-written, offline, and driven only by
 // Rust-sampled metric frames. Shared phase is a display mapping, not a retime.
 "use strict";
 const data = JSON.parse(document.getElementById("comparison-report-data").textContent);
@@ -517,25 +517,23 @@ function drawRootComparison(palette, phase) {
     before: { color: palette.accent, dash: null, width: 3, opacity: 1, radius: 6 },
     after: { color: palette.warning, dash: "7 5", width: 1.6, opacity: .7, radius: 3.5 },
   };
+  const identical = rootTracksIdentical();
   for (const name of ["before", "after"]) {
     const points = rootTrack(data[name]), style = styles[name];
     if (!points) continue;
     const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-root-side": name };
     if (style.dash) path["stroke-dasharray"] = style.dash;
     svg.append(svgElement("path", path));
+    // When the repair left the root alone the after track is exactly the
+    // before one, so its dot and its two end marks would stack on marks
+    // already drawn. It is then only the dashed overlay that says the two
+    // agree, and the caption says the same thing in words.
+    if (identical && name === "after") continue;
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
-    // The two ends of the track, so a clip that walks out and never returns
-    // is not the same picture as one that comes back over its own line. They
-    // are drawn after the phase dot and the start ring is wider than it: on
-    // a closed loop at frame 0 all three land on one coordinate, and a mark
-    // under the dot would say nothing there.
     const ends = trackEnds(points);
-    if (!ends) continue;
-    const [first, last] = [map(ends[0]), map(ends[1])];
-    if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: style.radius + 3, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, "data-root-marker": `${name}-start` }));
-    if (finitePoint(last)) svg.append(svgElement("rect", { x: last[0] - 3.5, y: last[1] - 3.5, width: 7, height: 7, fill: style.color, opacity: style.opacity, "data-root-marker": `${name}-end` }));
+    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, ROOT_PANEL, palette, "data-root-marker", name);
   }
   const rootState = (side) => {
     const points = rootTrack(side);
@@ -554,14 +552,7 @@ function drawRootComparison(palette, phase) {
     svg.append(svgElement("text", { x: legendX, y: 20, fill: state === "unavailable" ? palette.muted : palette[token] }, label));
     legendX += legendAdvance(label);
   }
-  // The two end marks are named in the legend, in the muted token because
-  // they mean the same thing on both tracks and each one is already drawn in
-  // its own track's colour.
-  svg.append(svgElement("circle", { cx: legendX + 4, cy: 16, r: 4, fill: "none", stroke: palette.muted, "stroke-width": 1.5 }));
-  svg.append(svgElement("text", { x: legendX + 12, y: 20, fill: palette.muted }, "start"));
-  legendX += legendAdvance("start") + 8;
-  svg.append(svgElement("rect", { x: legendX, y: 12, width: 7, height: 7, fill: palette.muted }));
-  svg.append(svgElement("text", { x: legendX + 12, y: 20, fill: palette.muted }, "end"));
+  appendMarksLegend(svg, palette, legendX, 20);
   // The bar in the corner: how long a round number is in this panel. It is
   // the one thing a fitted plot cannot say by its shape, and a reader
   // measures the drawing against it directly rather than against a ratio.
@@ -581,31 +572,90 @@ function drawRootComparison(palette, phase) {
   // other's scale.
   const trailScale = topDownScale(sharedTrailBounds || sharedRootBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
   const magnification = scale / trailScale;
-  const sizing = magnification >= 1
-    ? `fitted to this panel, magnified ${magnification.toFixed(1)}× relative to the trail panels`
-    : `fitted to this panel, drawn at ${magnification.toFixed(1)}× the trail panels' scale`;
-  const identical = rootTracksIdentical();
-  const sameness = identical === null ? [] : [identical ? "the before and after paths are identical" : "the before and after paths differ"];
+  const relation = magnification >= 1
+    ? `magnified ${magnification.toFixed(1)}× relative to the trail panels below, where the same paths appear at the trail scale`
+    : `drawn at ${magnification.toFixed(1)}× the trail panels' scale below, where the same paths appear at that scale`;
+  // The heading carries the factor too: the panel is one of three drawings of
+  // the same two root paths, and a reader meeting the big one first has to be
+  // told that the small ones below are it.
+  const title = q("root-panel-title");
+  if (title) title.textContent = magnification >= 1
+    ? `Root path, before over after (magnified ${magnification.toFixed(1)}×)`
+    : `Root path, before over after (${magnification.toFixed(1)}× the trail panels' scale)`;
+  const sameness = identical === null
+    ? []
+    : [identical
+      ? "identical, the after path lies under the before path and is drawn only as the dashed overlay"
+      : "the before and after paths differ"];
+  // One clip's contract, or both when the two sides declare different ones.
+  const guidance = data.before.guidance.root_path === data.after.guidance.root_path
+    ? [data.before.guidance.root_path]
+    : [`before — ${data.before.guidance.root_path}`, `after — ${data.after.guidance.root_path}`];
   const closures = ["before", "after"].map(trackClosure).filter(Boolean);
   panelCaption("comparison-root-path", [
-    "what to look for: an in-place or looping clip's root path should close on itself and stay near "
-    + "the origin; a travelling clip should trace a straight line ending at the declared distance; "
-    + "the dot is the shared phase, the hollow circle where a track starts and the square where it ends",
+    `the two root paths overlaid so their shapes can be compared, ${relation}`,
+    ...guidance,
     "before solid, after dashed and translucent",
     ...sameness,
     ...closures,
     `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m`,
     `Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`,
     `the paths span ${extent.toFixed(3)} m at their widest`,
-    sizing,
+    "fitted to this panel",
     step ? `the corner bar is ${scaleBarLabel(step)}` : "no scale bar: the paths are narrower than 1 cm",
   ].join(" · "));
 }
 
+// Role → its token, its legend label, and how its line is drawn. Seen from
+// above, the root and the hips run within a few centimetres of each other for
+// most of a clip, so the hips trail is dashed and translucent over a solid
+// root — the same device the root panel uses for a coincident after track, so
+// one reading serves both panels.
 const TRAIL_TOKENS = {
-  root: ["pass", "root"], hips: ["note", "hips"],
-  left_foot: ["accent", "left foot"], right_foot: ["warning", "right foot"],
+  root: { token: "pass", label: "root", dash: null, opacity: 1, width: 2, radius: 3 },
+  hips: { token: "note", label: "hips", dash: "7 5", opacity: .7, width: 1.6, radius: 3 },
+  left_foot: { token: "accent", label: "left foot", dash: null, opacity: 1, width: 2, radius: 3 },
+  right_foot: { token: "warning", label: "right foot", dash: null, opacity: 1, width: 2, radius: 3 },
 };
+// How far apart a track's two drawn ends have to be before both fit where
+// they belong, and how far the end mark steps aside when they do not.
+const MARK_CLEAR = 3, MARK_OFFSET = 11, MARK_SIDE = 7;
+// The two ends of one drawn track: a hollow ring where it starts and a filled
+// square where it ends, in the track's own colour so a panel of four trails
+// says which end belongs to which.
+//
+// A track that closes on itself puts its ring, its square and its phase dot
+// on one coordinate, where a filled square inside a ring inside a dot reads
+// as one blob and no paint order rescues it. The ring is drawn wider than
+// the dot, and the square steps aside toward the middle of the panel — where
+// it cannot leave the picture — with a leader back to the point it marks.
+// The square also carries the panel's own ground as a stroke, so it reads as
+// a square wherever it lands on a line of its own colour.
+function appendTrackEnds(svg, ends, style, panel, palette, attribute, value) {
+  const [first, last] = ends;
+  const ring = style.radius + 3;
+  if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: ring, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, [attribute]: `${value}-start` }));
+  if (!finitePoint(last)) return;
+  const apart = finitePoint(first) ? Math.hypot(last[0] - first[0], last[1] - first[1]) : Infinity;
+  let [markX, markY] = last;
+  if (apart < ring + MARK_CLEAR) {
+    markX += last[0] > panel.width / 2 ? -MARK_OFFSET : MARK_OFFSET;
+    markY += last[1] > panel.height / 2 ? -MARK_OFFSET : MARK_OFFSET;
+    svg.append(svgElement("line", { x1: last[0], y1: last[1], x2: markX, y2: markY, stroke: style.color, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-leader` }));
+  }
+  svg.append(svgElement("rect", { x: markX - MARK_SIDE / 2, y: markY - MARK_SIDE / 2, width: MARK_SIDE, height: MARK_SIDE, fill: style.color, stroke: palette.ground, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-end` }));
+}
+// The shared marks legend: one hollow ring and one filled square in the muted
+// token, because the shapes mean the same thing on every track and each mark
+// is already drawn in its own track's colour. Returns the x it ends at.
+function appendMarksLegend(svg, palette, legendX, y) {
+  svg.append(svgElement("circle", { cx: legendX + 4, cy: y - 4, r: 4, fill: "none", stroke: palette.muted, "stroke-width": 1.5 }));
+  svg.append(svgElement("text", { x: legendX + 12, y, fill: palette.muted }, "start"));
+  legendX += legendAdvance("start") + 8;
+  svg.append(svgElement("rect", { x: legendX, y: y - 8, width: 7, height: 7, fill: palette.muted }));
+  svg.append(svgElement("text", { x: legendX + 12, y, fill: palette.muted }, "end"));
+  return legendX + legendAdvance("end");
+}
 function drawTrails(name, palette, phase) {
   const side = data[name], svg = q(`${name}-path`);
   if (!svg) return;
@@ -615,23 +665,31 @@ function drawTrails(name, palette, phase) {
   let legendX = 8, unavailable = [], incomplete = [];
   for (const role of Object.keys(TRAIL_TOKENS)) {
     const bone = side.clip.trails[role];
-    if (bone == null) { unavailable.push(TRAIL_TOKENS[role][1]); continue; }
-    const points = trailPoints(side, bone), [token, label] = TRAIL_TOKENS[role], color = palette[token];
+    if (bone == null) { unavailable.push(TRAIL_TOKENS[role].label); continue; }
+    const points = trailPoints(side, bone), spec = TRAIL_TOKENS[role];
+    const style = Object.assign({}, spec, { color: palette[spec.token] });
     const finite = points.filter(finitePoint).length;
-    if (finite === 0) { unavailable.push(`${label} (non-finite)`); continue; }
-    if (finite !== points.length) incomplete.push(label);
-    svg.append(svgElement("path", { d: pathData(points, map), fill: "none", stroke: color, "stroke-width": 2, "data-role": role }));
+    if (finite === 0) { unavailable.push(`${spec.label} (non-finite)`); continue; }
+    if (finite !== points.length) incomplete.push(spec.label);
+    const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-role": role };
+    if (spec.dash) path["stroke-dasharray"] = spec.dash;
+    svg.append(svgElement("path", path));
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
-    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 3, fill: color, "data-role-dot": role }));
-    const legend = finite === points.length ? label : `${label} incomplete`;
-    svg.append(svgElement("text", { x: legendX, y: 14, fill: color }, legend));
-    legendX += legendAdvance(label);
+    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-role-dot": role }));
+    const ends = trackEnds(points);
+    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, TRAIL_PANEL, palette, "data-role-marker", role);
+    const legend = finite === points.length ? spec.label : `${spec.label} incomplete`;
+    svg.append(svgElement("text", { x: legendX, y: 14, fill: style.color }, legend));
+    legendX += legendAdvance(spec.label);
   }
+  appendMarksLegend(svg, palette, legendX, 14);
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
   const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
   panelCaption(`${name}-path`, "what to look for: top-down trails of root, hips and feet over the whole clip; "
     + "matching trails on both sides mean the repair changed only what it claims"
+    + " · each trail starts at the hollow circle and ends at the square; the root's trail is the path magnified in the panel above"
+    + " · hips dashed and translucent over root, where the two run together"
     + ` · top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
 }
 
@@ -675,11 +733,11 @@ function drawGait(name, palette, phase) {
     svg.append(svgElement("text", { x: legendX, y: 14, fill: palette[token] }, label));
     legendX += legendAdvance(label);
   }
+  // The guidance sentence is derived on the Rust side from what this side's
+  // checks declared and judged, so the same clip reads the same way in a
+  // single-clip report and here.
   panelCaption(`${name}-gait`, gaitFinite
-    ? "what to look for: the two feet should alternate, one planted flat at contact height while the "
-      + "other swings; the shaded bands are the sampled stance intervals the foot-slide check judged, "
-      + "and a foot that moves horizontally during its band is the slide; for a loop the curves should "
-      + "end where they began"
+    ? `${side.guidance.gait}`
       + " · exact sampled height in metres · shaded runs are sampled foot-slide stance evidence"
       + " · left in the upper band, right in the lower"
     : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed");
@@ -787,33 +845,45 @@ const playRate = (() => {
   return sharedFrameMax / duration;
 })();
 if (!playRate) playButton.disabled = true;
-let playing = false, playFrame = 0, playedAt = 0;
+// `playRun` is the loop's owner: every start and every pause takes the next
+// number, and a frame callback that no longer holds it returns instead of
+// rescheduling. Without it a pause immediately followed by a play leaves the
+// old chain's pending callback alive beside the new one, and the phase then
+// advances twice per frame for as long as the document is open.
+let playing = false, playFrame = 0, playedAt = 0, playRun = 0, playHandle = 0;
 function pausePlayback() {
   if (!playing) return;
   playing = false;
+  playRun++;
+  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
   playButton.textContent = "▶";
+  playButton.setAttribute("aria-label", "Play the shared phase");
 }
-function tick(now) {
-  if (!playing) return;
-  const elapsed = Number.isFinite(now - playedAt) ? Math.max(0, (now - playedAt) / 1000) : 0;
-  playedAt = now;
-  playFrame += elapsed * playRate;
-  if (playFrame > sharedFrameMax) playFrame = 0;
-  selectedFrames = null; selectedContext = null;
-  q("scrub").value = Math.round(playFrame);
-  update();
-  requestAnimationFrame(tick);
+function frameLoop(run) {
+  return function tick(now) {
+    if (!playing || run !== playRun) return;
+    const elapsed = Number.isFinite(now - playedAt) ? Math.max(0, (now - playedAt) / 1000) : 0;
+    playedAt = now;
+    playFrame += elapsed * playRate;
+    if (playFrame > sharedFrameMax) playFrame = 0;
+    selectedFrames = null; selectedContext = null;
+    q("scrub").value = Math.round(playFrame);
+    update();
+    playHandle = requestAnimationFrame(tick);
+  };
 }
 playButton.addEventListener("click", () => {
   if (!playRate) return;
-  playing = !playing;
-  playButton.textContent = playing ? "⏸" : "▶";
-  if (!playing) return;
+  if (playing) { pausePlayback(); return; }
+  playing = true;
+  playButton.textContent = "⏸";
+  playButton.setAttribute("aria-label", "Pause the shared phase");
   // Resume from wherever the reader left the phase, not from where playback
   // last stopped: a scrub between two presses is the position they chose.
   playFrame = Number(q("scrub").value) || 0;
   playedAt = performance.now();
-  requestAnimationFrame(tick);
+  playRun++;
+  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
 q("scrub").addEventListener("input", () => { pausePlayback(); selectedFrames = null; selectedContext = null; update(); });
 window.addEventListener("resize", update);

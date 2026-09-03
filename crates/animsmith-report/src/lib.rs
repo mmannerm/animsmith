@@ -12,14 +12,14 @@
 //!
 //! ```no_run
 //! fn write_report(
-//!     doc: &animsmith_core::Document,
-//!     roles: &animsmith_core::ResolvedRoles,
-//!     checks: &[animsmith_core::CheckEvaluation],
+//! doc: &animsmith_core::Document,
+//! roles: &animsmith_core::ResolvedRoles,
+//! checks: &[animsmith_core::CheckEvaluation],
 //! ) -> std::io::Result<()> {
-//!     let grids = animsmith_core::MetricGrids::new(doc);
-//!     let options = animsmith_report::ReportOptions::default();
-//!     let html = animsmith_report::render(&grids, roles, checks, None, None, options);
-//!     std::fs::write("report.html", html)
+//! let grids = animsmith_core::MetricGrids::new(doc);
+//! let options = animsmith_report::ReportOptions::default();
+//! let html = animsmith_report::render(&grids, roles, checks, None, None, options);
+//! std::fs::write("report.html", html)
 //! }
 //! ```
 //!
@@ -505,15 +505,31 @@ pub fn render_comparison(
     let after_clip_anchor = semantic_anchor("clip", after.clip);
     let before_pose = pose_surface("before-gl", options.evidence_only);
     let after_pose = pose_surface("after-gl", options.evidence_only);
-    // The panel is exactly as tall as the region the viewer draws into. It
-    // used to reserve a strip below that for its caption, which is now the
-    // HTML paragraph beside it, so the strip was empty space in the largest
-    // panel of the document.
-    let shared_pose = pose_panel("comparison-root-path", "0 0 720 180", options.evidence_only);
-    let before_trails = pose_panel("before-path", "0 0 360 180", options.evidence_only);
-    let after_trails = pose_panel("after-path", "0 0 360 180", options.evidence_only);
-    let before_gait = pose_panel("before-gait", "0 0 360 180", options.evidence_only);
-    let after_gait = pose_panel("after-gait", "0 0 360 180", options.evidence_only);
+    let shared_pose = pose_panel(
+        "comparison-root-path",
+        COMPARISON_ROOT_VIEW_BOX,
+        options.evidence_only,
+    );
+    let before_trails = pose_panel(
+        "before-path",
+        COMPARISON_SIDE_VIEW_BOX,
+        options.evidence_only,
+    );
+    let after_trails = pose_panel(
+        "after-path",
+        COMPARISON_SIDE_VIEW_BOX,
+        options.evidence_only,
+    );
+    let before_gait = pose_panel(
+        "before-gait",
+        COMPARISON_SIDE_VIEW_BOX,
+        options.evidence_only,
+    );
+    let after_gait = pose_panel(
+        "after-gait",
+        COMPARISON_SIDE_VIEW_BOX,
+        options.evidence_only,
+    );
     let shared_js = shared_runtime();
     // Every comparison panel is drawn from the pose grid, so an
     // evidence-only document has no shared phase left to scrub or play.
@@ -529,10 +545,10 @@ pub fn render_comparison(
          <body><header><h1>animsmith visual comparison</h1></header>\n\
          <section class=\"disclosure\"><p id=\"mapping\"></p>\n\
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
-         <section class=\"sync\"><button id=\"play\"{scrub_state}>▶</button><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
+         <section class=\"sync\"><button id=\"play\" aria-label=\"Play the shared phase\"{scrub_state}>▶</button><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
          <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><h3>Judged pose at the shared phase</h3>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p></section>\n\
          <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><h3>Judged pose at the shared phase</h3>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p></section>\n\
-         <section class=\"side shared-chart\" id=\"root-panel\"><h2>Before/after root trajectory</h2>{shared_pose}</section>\n\
+         <section class=\"side shared-chart\" id=\"root-panel\"><h2 id=\"root-panel-title\">Root path, before over after</h2>{shared_pose}</section>\n\
          <section class=\"side\" id=\"before-evidence\"><h2>Before evidence</h2><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
          <section class=\"side\" id=\"after-evidence\"><h2>After evidence</h2><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script>{shared_js}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
@@ -1124,9 +1140,18 @@ fn comparison_side_json(
         .dependency_closure()
         .identity()
         .expect("comparison authority preflight requires a complete closure");
+    // The words come from the Rust side for both documents, so a caption
+    // cannot say one thing in a single-clip report and another in a
+    // comparison of the same clip. The viewer supplies only the measured
+    // numbers around them.
+    let contract = clip_contract(side.checks, clip_name);
     Ok(json!({
         "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
         "dependency_closure_identity": closure_identity,
+        "guidance": {
+            "root_path": contract.root_path_guidance(SHARED_PATH_MARKS),
+            "gait": contract.gait_guidance(true),
+        },
         "clip": clip,
         "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
         "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
@@ -1514,6 +1539,18 @@ fn dark_token_object() -> String {
     Value::Object(tokens).to_string()
 }
 
+/// The shared root panel's drawing area, in the user units its viewer maps
+/// into. It is exactly the region drawn: the panel used to reserve a strip
+/// below for a caption, which is now the HTML paragraph beside it, so the
+/// strip was empty space in the largest panel of the document.
+///
+/// `assets/comparison.js` maps into these boxes, and
+/// `tests/render.rs::the_comparison_viewer_maps_into_the_panels_this_document_emits`
+/// holds the two copies of the numbers together.
+const COMPARISON_ROOT_VIEW_BOX: &str = "0 0 720 180";
+/// The per-side panels' drawing area, for both the trajectory and gait panels.
+const COMPARISON_SIDE_VIEW_BOX: &str = "0 0 360 180";
+
 /// Shown where a pose view would be when the sampled grid was deliberately
 /// left out of the document.
 const POSE_OMITTED_NOTICE: &str = "Pose playback omitted: evidence-only report";
@@ -1618,7 +1655,12 @@ pub fn render(
             clip_json["positions"] = json!(encoded);
         }
         clips_json.push(clip_json);
-        charts_html.push_str(&clip_charts(&clip.name, grid.as_ref(), roles));
+        charts_html.push_str(&clip_charts(
+            &clip.name,
+            grid.as_ref(),
+            roles,
+            &clip_contract(checks, &clip.name),
+        ));
     }
 
     let findings_json: Vec<Value> = checks
@@ -1710,7 +1752,7 @@ pub fn render(
          <section id=\"viewer-panel\">\n\
            <div id=\"controls\">\n\
              <select id=\"clip-select\"></select>\n\
-             <button id=\"play\"{play_state}>▶</button>\n\
+             <button id=\"play\" aria-label=\"Play the clip\"{play_state}>▶</button>\n\
              <input type=\"range\" id=\"scrub\" min=\"0\" value=\"0\" step=\"1\">\n\
              <span id=\"time\"></span>\n\
            </div>\n\
@@ -1787,7 +1829,12 @@ q('evaluation').textContent=JSON.stringify(d.evaluation,null,2);
 /// meaning under an injected copy of the report tokens. The `data-*` hooks and
 /// the `.playhead`/`.pathdot` elements the viewer syncs are part of that
 /// contract too.
-fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> String {
+fn clip_charts(
+    clip_name: &str,
+    grid: &PoseGrid,
+    roles: &ResolvedRoles,
+    contract: &ClipContract,
+) -> String {
     let mut out = String::new();
     let frames = grid.frame_count();
     let hips = roles.get(Role::Hips);
@@ -1805,7 +1852,7 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
             clip_name,
             "gait",
             "foot height relative to hips",
-            GAIT_GUIDANCE,
+            &contract.gait_guidance(false),
             &[
                 Series {
                     class: "series-left",
@@ -1837,7 +1884,13 @@ fn clip_charts(clip_name: &str, grid: &PoseGrid, roles: &ResolvedRoles) -> Strin
         let zs: Vec<f64> = (0..frames)
             .map(|f| grid.model_position(f, root).z as f64)
             .collect();
-        out.push_str(&path_chart(clip_name, "root path (top-down)", &xs, &zs));
+        out.push_str(&path_chart(
+            clip_name,
+            "root path (top-down)",
+            &xs,
+            &zs,
+            &contract.root_path_guidance(SINGLE_PATH_MARKS),
+        ));
     }
     out
 }
@@ -2009,18 +2062,172 @@ const PLOT_H: f64 = H - PAD_TOP - PAD_BOTTOM;
 /// Every chart plots metres; the unit is stated in the axis labels rather
 /// than left to the caption.
 const UNIT: &str = "m";
-/// What to look for in the foot-height chart, for the game developer or
-/// artist the report is for. It describes what the sampled curves should do,
-/// not whether a clip is acceptable: the findings list judges, the picture
-/// only shows. The single-clip chart plots no stance bands, so it claims
-/// none; the comparison's gait panel, which shades them, says so itself.
-const GAIT_GUIDANCE: &str = "what to look for: the two feet should alternate, one planted flat at \
-     contact height while the other swings; for a loop the curves should end where they began";
-/// What to look for in the top-down root path.
-const ROOT_PATH_GUIDANCE: &str = "what to look for: an in-place or looping clip's root path should \
-     close on itself and stay near the origin; a travelling clip should trace a straight line \
-     ending at the declared distance; the dot is the current frame, the hollow circle where the \
-     track starts and the square where it ends";
+/// Evaluation-scope codes that only a clip declared `loop = true` produces.
+const LOOP_SCOPE_CODES: &[&str] = &[
+    "loop_closure",
+    "duplicate_loop_endpoint",
+    "loop_seam",
+    "loop_seam_velocity",
+    "loop_seam_rotation",
+];
+/// The scope `root-motion-speed` emits, which it evaluates only for a clip
+/// that pins `speed_mps` and does not hand XZ travel to gameplay.
+const ROOT_MOTION_SCOPE_CODES: &[&str] = &["root_motion_speed"];
+/// The per-foot scopes `foot-slide` emits once it has stance to judge.
+const STANCE_SCOPE_CODES: &[&str] = &["left_foot_stance", "right_foot_stance"];
+/// The scope `in-place` emits for a clip that declares an XZ movement owner.
+const TRAVEL_MODE_SCOPE_CODES: &[&str] = &["travel_mode"];
+
+/// What this run declared and judged about one clip.
+///
+/// A caption may only say what to look for in a picture when the document
+/// says what the clip owes. The report is handed check evaluations rather
+/// than the configuration, and that is the better authority anyway: a
+/// check's evaluated scope is the unit of work it actually did on this clip,
+/// so a `loop_closure` scope naming the clip *is* its `loop = true`
+/// declaration, judged.
+///
+/// Nothing here infers a route, a stride, or a locomotion intent. Authored
+/// root motion that curves or turns is a valid clip, and so is an idle or a
+/// jump with no alternating stance; a caption that told a reader to expect a
+/// straight line or two feet trading plants would be wrong about the file in
+/// front of them. Where nothing is declared, the caption says so and names
+/// what was judged instead.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct ClipContract {
+    /// A loop check selected work on this clip, so `loop = true` is declared.
+    looping: bool,
+    /// `root-motion-speed` selected work on this clip, so the animation owns
+    /// its horizontal travel at a declared speed.
+    root_motion: bool,
+    /// `in-place` judged this clip against its declared XZ movement owner.
+    travel_mode: bool,
+    /// `foot-slide` evaluated stance for at least one of this clip's feet.
+    stance: bool,
+    /// Every check that completed work naming this clip, in id order.
+    judged: Vec<&'static str>,
+}
+
+/// Derive [`ClipContract`] from the evaluations the report was handed.
+///
+/// A declaration is visible whether the work completed or hit a coverage
+/// gap, because the declaration is what selected the work either way; stance
+/// bands and the checks named as having judged the clip come from completed
+/// work only, since a gap is precisely the absence of it.
+fn clip_contract(checks: &[CheckEvaluation], clip_name: &str) -> ClipContract {
+    let mut contract = ClipContract::default();
+    for check in checks {
+        let gap_scopes = check.gaps().iter().filter_map(|gap| gap.scope.as_ref());
+        for scope in check.evaluated_scopes().iter().chain(gap_scopes) {
+            if scope.subject.as_deref() != Some(clip_name) {
+                continue;
+            }
+            let code = scope.code.as_str();
+            contract.looping |= LOOP_SCOPE_CODES.contains(&code);
+            contract.root_motion |= ROOT_MOTION_SCOPE_CODES.contains(&code);
+            contract.travel_mode |= TRAVEL_MODE_SCOPE_CODES.contains(&code);
+        }
+        let evaluated: Vec<&str> = check
+            .evaluated_scopes()
+            .iter()
+            .filter(|scope| scope.subject.as_deref() == Some(clip_name))
+            .map(|scope| scope.code.as_str())
+            .collect();
+        if evaluated.is_empty() {
+            continue;
+        }
+        contract.stance |= evaluated
+            .iter()
+            .any(|code| STANCE_SCOPE_CODES.contains(code));
+        contract.judged.push(check.check_id());
+    }
+    contract.judged.sort_unstable();
+    contract.judged.dedup();
+    contract
+}
+
+impl ClipContract {
+    /// The sentence for a clip that declares nothing the picture could be
+    /// read against, naming what was judged instead of prescribing.
+    fn undeclared(&self, contracts: &str) -> String {
+        if self.judged.is_empty() {
+            format!("no {contracts} contract declared and no check judged this clip")
+        } else {
+            format!(
+                "no {contracts} contract declared: the checks judged only {}",
+                self.judged.join(", ")
+            )
+        }
+    }
+
+    /// What to look for in a top-down root path, given `marks` describing how
+    /// that panel marks the current frame and the track's two ends.
+    fn root_path_guidance(&self, marks: &str) -> String {
+        let mut clauses = Vec::new();
+        if self.looping {
+            clauses.push(String::from(
+                "this clip is declared a loop, so its root path should end where it began",
+            ));
+        }
+        if self.root_motion {
+            clauses.push(String::from(
+                "this clip declares animation-owned root travel at a pinned speed, so the path \
+                 should keep travelling at that speed; the shape it travels is whatever the clip \
+                 authors, and a turn is not a defect",
+            ));
+        }
+        if self.travel_mode && !self.root_motion {
+            clauses.push(String::from(
+                "this clip declares who owns its horizontal travel and the in-place check judged \
+                 the root against that declaration, so the path is the evidence for it",
+            ));
+        }
+        if clauses.is_empty() {
+            clauses.push(format!(
+                "{}, so the path is shown as measured rather than against an expectation",
+                self.undeclared("loop or root-motion")
+            ));
+        }
+        format!("what to look for: {} · {marks}", clauses.join("; "))
+    }
+
+    /// What to look for in a foot-height chart. `bands` is true for the
+    /// comparison's gait panel, which shades the judged stance intervals; the
+    /// single-clip chart plots none, so it does not claim any.
+    fn gait_guidance(&self, bands: bool) -> String {
+        let mut clauses = Vec::new();
+        if self.looping {
+            clauses.push(String::from(
+                "this clip is declared a loop, so the curves should end where they began",
+            ));
+        }
+        if self.stance {
+            clauses.push(String::from(if bands {
+                "the shaded bands are the sampled stance intervals the foot-slide check judged, \
+                 and a foot that moves horizontally during its band is the slide"
+            } else {
+                "the foot-slide check judged stance intervals on this clip, and a foot that \
+                 moves horizontally during a plant is the slide it reports"
+            }));
+        }
+        if clauses.is_empty() {
+            clauses.push(format!(
+                "{}, so the heights are shown as measured rather than against an expectation",
+                self.undeclared("loop or stance")
+            ));
+        }
+        format!("what to look for: {}", clauses.join("; "))
+    }
+}
+
+/// How the single-clip root path marks the frame a reader is on and the two
+/// ends of the track.
+const SINGLE_PATH_MARKS: &str = "the dot is the current frame, the hollow circle where the track \
+     starts and the square where it ends";
+/// The same for the comparison's shared panel, whose dot is the shared phase
+/// and which draws two tracks.
+const SHARED_PATH_MARKS: &str = "the dot is the shared phase, the hollow circle where a track \
+     starts and the square where it ends";
 const LEGEND_Y: f64 = 9.0;
 /// Average glyph advance at the shared `--chart-type` scale the
 /// stylesheets set on chart labels, in viewBox units. Approximate on
@@ -2032,8 +2239,17 @@ const LEGEND_CHAR_W: f64 = 4.6;
 /// than plotted: a millimetre, which is finer than any clip an engine
 /// distinguishes from standing still.
 const STATIC_PATH_M: f64 = 0.001;
-/// Radius of the hollow circle marking where a top-down track starts.
-const PATH_START_R: f64 = 4.0;
+/// Radius of the hollow circle marking where a top-down track starts. It
+/// stands outside the playhead dot's own radius, so the two are two marks
+/// wherever the current frame is the track's first one.
+const PATH_START_R: f64 = 6.0;
+/// How close a track's two drawn ends have to be before the end mark steps
+/// aside: inside this, a square, a ring and the playhead dot land on one
+/// coordinate and read as a single blob.
+const PATH_MARK_CLEAR: f64 = PATH_START_R + 3.0;
+/// How far the end mark steps, toward the middle of the plot so it cannot
+/// leave the picture, with a leader back to the coordinate it belongs to.
+const PATH_MARK_OFFSET: f64 = 11.0;
 /// Side of the filled square marking where a top-down track ends.
 ///
 /// A track drawn as one line says nothing about which way it was walked: a
@@ -2134,7 +2350,7 @@ fn line_chart(
     clip: &str,
     kind: &'static str,
     title: &'static str,
-    guidance: &'static str,
+    guidance: &str,
     series: &[Series<'_>],
 ) -> String {
     let Some(left) = axis_range(series, Side::Left) else {
@@ -2291,7 +2507,7 @@ fn line_chart(
     .render()
 }
 
-fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String {
+fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance: &str) -> String {
     if xs.is_empty() {
         return String::new();
     }
@@ -2318,7 +2534,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
                  X and Z together; findings and coverage remain listed",
                 xs.len()
             ),
-            guidance: ROOT_PATH_GUIDANCE.to_owned(),
+            guidance: guidance.to_owned(),
             legend: &[(Swatch::Line, "root-path", "root")],
             axis: vec![AxisLabel {
                 x: W / 2.0,
@@ -2408,6 +2624,41 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         format!("the track ends {gap:.3} {UNIT} from its start")
     };
 
+    // Where the two marks are drawn. A track that comes back to where it
+    // began puts its ring, its square and the playhead dot on one
+    // coordinate, and a filled square inside a ring inside a dot is one
+    // blob: the square steps aside toward the middle of the plot, where it
+    // cannot leave the picture, and a leader says which point it belongs to.
+    let (start_x, start_y) = (x(start.0), y(start.1));
+    let (end_x, end_y) = (x(end.0), y(end.1));
+    let apart = ((end_x - start_x).powi(2) + (end_y - start_y).powi(2)).sqrt();
+    let (mark_x, mark_y) = if apart < PATH_MARK_CLEAR {
+        (
+            end_x
+                + if end_x > center_x {
+                    -PATH_MARK_OFFSET
+                } else {
+                    PATH_MARK_OFFSET
+                },
+            end_y
+                + if end_y > center_y {
+                    -PATH_MARK_OFFSET
+                } else {
+                    PATH_MARK_OFFSET
+                },
+        )
+    } else {
+        (end_x, end_y)
+    };
+    let leader = if apart < PATH_MARK_CLEAR {
+        format!(
+            "<line class=\"pathleader\" x1=\"{end_x:.1}\" y1=\"{end_y:.1}\" \
+             x2=\"{mark_x:.1}\" y2=\"{mark_y:.1}\"/>"
+        )
+    } else {
+        String::new()
+    };
+
     Chart {
         clip,
         kind: "rootpath",
@@ -2425,7 +2676,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
                 xs.len()
             )
         },
-        guidance: format!("{ROOT_PATH_GUIDANCE} · {extent} · {closure}"),
+        guidance: format!("{guidance} · {extent} · {closure}"),
         legend: &[
             (Swatch::Line, "root-path", "root"),
             (Swatch::Start, "pathstart", "start"),
@@ -2439,13 +2690,12 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64]) -> String
         // shows the same thing the viewer would.
         body: format!(
             "<path class=\"root-path\" d=\"{d}\" fill=\"none\"/>\
-             <circle class=\"pathstart\" cx=\"{:.1}\" cy=\"{:.1}\" r=\"{PATH_START_R}\"/>\
+             <circle class=\"pathstart\" cx=\"{start_x:.1}\" cy=\"{start_y:.1}\" \
+             r=\"{PATH_START_R}\"/>{leader}\
              <rect class=\"pathend\" x=\"{:.1}\" y=\"{:.1}\" width=\"{PATH_END_SIDE}\" \
              height=\"{PATH_END_SIDE}\"/>{}",
-            x(start.0),
-            y(start.1),
-            x(end.0) - PATH_END_SIDE / 2.0,
-            y(end.1) - PATH_END_SIDE / 2.0,
+            mark_x - PATH_END_SIDE / 2.0,
+            mark_y - PATH_END_SIDE / 2.0,
             match joint_sample(xs, zs, 0) {
                 Some((px, pz)) => format!(
                     "<circle class=\"pathdot\" r=\"3\" cx=\"{:.1}\" cy=\"{:.1}\"/>",

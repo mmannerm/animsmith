@@ -276,25 +276,23 @@ function drawRootComparison(palette, phase) {
     before: { color: palette.accent, dash: null, width: 3, opacity: 1, radius: 6 },
     after: { color: palette.warning, dash: "7 5", width: 1.6, opacity: .7, radius: 3.5 },
   };
+  const identical = rootTracksIdentical();
   for (const name of ["before", "after"]) {
     const points = rootTrack(data[name]), style = styles[name];
     if (!points) continue;
     const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-root-side": name };
     if (style.dash) path["stroke-dasharray"] = style.dash;
     svg.append(svgElement("path", path));
+    // When the repair left the root alone the after track is exactly the
+    // before one, so its dot and its two end marks would stack on marks
+    // already drawn. It is then only the dashed overlay that says the two
+    // agree, and the caption says the same thing in words.
+    if (identical && name === "after") continue;
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
-    // The two ends of the track, so a clip that walks out and never returns
-    // is not the same picture as one that comes back over its own line. They
-    // are drawn after the phase dot and the start ring is wider than it: on
-    // a closed loop at frame 0 all three land on one coordinate, and a mark
-    // under the dot would say nothing there.
     const ends = trackEnds(points);
-    if (!ends) continue;
-    const [first, last] = [map(ends[0]), map(ends[1])];
-    if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: style.radius + 3, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, "data-root-marker": `${name}-start` }));
-    if (finitePoint(last)) svg.append(svgElement("rect", { x: last[0] - 3.5, y: last[1] - 3.5, width: 7, height: 7, fill: style.color, opacity: style.opacity, "data-root-marker": `${name}-end` }));
+    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, ROOT_PANEL, palette, "data-root-marker", name);
   }
   const rootState = (side) => {
     const points = rootTrack(side);
@@ -313,14 +311,7 @@ function drawRootComparison(palette, phase) {
     svg.append(svgElement("text", { x: legendX, y: 20, fill: state === "unavailable" ? palette.muted : palette[token] }, label));
     legendX += legendAdvance(label);
   }
-  // The two end marks are named in the legend, in the muted token because
-  // they mean the same thing on both tracks and each one is already drawn in
-  // its own track's colour.
-  svg.append(svgElement("circle", { cx: legendX + 4, cy: 16, r: 4, fill: "none", stroke: palette.muted, "stroke-width": 1.5 }));
-  svg.append(svgElement("text", { x: legendX + 12, y: 20, fill: palette.muted }, "start"));
-  legendX += legendAdvance("start") + 8;
-  svg.append(svgElement("rect", { x: legendX, y: 12, width: 7, height: 7, fill: palette.muted }));
-  svg.append(svgElement("text", { x: legendX + 12, y: 20, fill: palette.muted }, "end"));
+  appendMarksLegend(svg, palette, legendX, 20);
   // The bar in the corner: how long a round number is in this panel. It is
   // the one thing a fitted plot cannot say by its shape, and a reader
   // measures the drawing against it directly rather than against a ratio.
@@ -340,31 +331,90 @@ function drawRootComparison(palette, phase) {
   // other's scale.
   const trailScale = topDownScale(sharedTrailBounds || sharedRootBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
   const magnification = scale / trailScale;
-  const sizing = magnification >= 1
-    ? `fitted to this panel, magnified ${magnification.toFixed(1)}× relative to the trail panels`
-    : `fitted to this panel, drawn at ${magnification.toFixed(1)}× the trail panels' scale`;
-  const identical = rootTracksIdentical();
-  const sameness = identical === null ? [] : [identical ? "the before and after paths are identical" : "the before and after paths differ"];
+  const relation = magnification >= 1
+    ? `magnified ${magnification.toFixed(1)}× relative to the trail panels below, where the same paths appear at the trail scale`
+    : `drawn at ${magnification.toFixed(1)}× the trail panels' scale below, where the same paths appear at that scale`;
+  // The heading carries the factor too: the panel is one of three drawings of
+  // the same two root paths, and a reader meeting the big one first has to be
+  // told that the small ones below are it.
+  const title = q("root-panel-title");
+  if (title) title.textContent = magnification >= 1
+    ? `Root path, before over after (magnified ${magnification.toFixed(1)}×)`
+    : `Root path, before over after (${magnification.toFixed(1)}× the trail panels' scale)`;
+  const sameness = identical === null
+    ? []
+    : [identical
+      ? "identical, the after path lies under the before path and is drawn only as the dashed overlay"
+      : "the before and after paths differ"];
+  // One clip's contract, or both when the two sides declare different ones.
+  const guidance = data.before.guidance.root_path === data.after.guidance.root_path
+    ? [data.before.guidance.root_path]
+    : [`before — ${data.before.guidance.root_path}`, `after — ${data.after.guidance.root_path}`];
   const closures = ["before", "after"].map(trackClosure).filter(Boolean);
   panelCaption("comparison-root-path", [
-    "what to look for: an in-place or looping clip's root path should close on itself and stay near "
-    + "the origin; a travelling clip should trace a straight line ending at the declared distance; "
-    + "the dot is the shared phase, the hollow circle where a track starts and the square where it ends",
+    `the two root paths overlaid so their shapes can be compared, ${relation}`,
+    ...guidance,
     "before solid, after dashed and translucent",
     ...sameness,
     ...closures,
     `X ${sharedRootBounds.x[0].toFixed(3)}…${sharedRootBounds.x[1].toFixed(3)} m`,
     `Z ${sharedRootBounds.z[0].toFixed(3)}…${sharedRootBounds.z[1].toFixed(3)} m`,
     `the paths span ${extent.toFixed(3)} m at their widest`,
-    sizing,
+    "fitted to this panel",
     step ? `the corner bar is ${scaleBarLabel(step)}` : "no scale bar: the paths are narrower than 1 cm",
   ].join(" · "));
 }
 
+// Role → its token, its legend label, and how its line is drawn. Seen from
+// above, the root and the hips run within a few centimetres of each other for
+// most of a clip, so the hips trail is dashed and translucent over a solid
+// root — the same device the root panel uses for a coincident after track, so
+// one reading serves both panels.
 const TRAIL_TOKENS = {
-  root: ["pass", "root"], hips: ["note", "hips"],
-  left_foot: ["accent", "left foot"], right_foot: ["warning", "right foot"],
+  root: { token: "pass", label: "root", dash: null, opacity: 1, width: 2, radius: 3 },
+  hips: { token: "note", label: "hips", dash: "7 5", opacity: .7, width: 1.6, radius: 3 },
+  left_foot: { token: "accent", label: "left foot", dash: null, opacity: 1, width: 2, radius: 3 },
+  right_foot: { token: "warning", label: "right foot", dash: null, opacity: 1, width: 2, radius: 3 },
 };
+// How far apart a track's two drawn ends have to be before both fit where
+// they belong, and how far the end mark steps aside when they do not.
+const MARK_CLEAR = 3, MARK_OFFSET = 11, MARK_SIDE = 7;
+// The two ends of one drawn track: a hollow ring where it starts and a filled
+// square where it ends, in the track's own colour so a panel of four trails
+// says which end belongs to which.
+//
+// A track that closes on itself puts its ring, its square and its phase dot
+// on one coordinate, where a filled square inside a ring inside a dot reads
+// as one blob and no paint order rescues it. The ring is drawn wider than
+// the dot, and the square steps aside toward the middle of the panel — where
+// it cannot leave the picture — with a leader back to the point it marks.
+// The square also carries the panel's own ground as a stroke, so it reads as
+// a square wherever it lands on a line of its own colour.
+function appendTrackEnds(svg, ends, style, panel, palette, attribute, value) {
+  const [first, last] = ends;
+  const ring = style.radius + 3;
+  if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: ring, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, [attribute]: `${value}-start` }));
+  if (!finitePoint(last)) return;
+  const apart = finitePoint(first) ? Math.hypot(last[0] - first[0], last[1] - first[1]) : Infinity;
+  let [markX, markY] = last;
+  if (apart < ring + MARK_CLEAR) {
+    markX += last[0] > panel.width / 2 ? -MARK_OFFSET : MARK_OFFSET;
+    markY += last[1] > panel.height / 2 ? -MARK_OFFSET : MARK_OFFSET;
+    svg.append(svgElement("line", { x1: last[0], y1: last[1], x2: markX, y2: markY, stroke: style.color, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-leader` }));
+  }
+  svg.append(svgElement("rect", { x: markX - MARK_SIDE / 2, y: markY - MARK_SIDE / 2, width: MARK_SIDE, height: MARK_SIDE, fill: style.color, stroke: palette.ground, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-end` }));
+}
+// The shared marks legend: one hollow ring and one filled square in the muted
+// token, because the shapes mean the same thing on every track and each mark
+// is already drawn in its own track's colour. Returns the x it ends at.
+function appendMarksLegend(svg, palette, legendX, y) {
+  svg.append(svgElement("circle", { cx: legendX + 4, cy: y - 4, r: 4, fill: "none", stroke: palette.muted, "stroke-width": 1.5 }));
+  svg.append(svgElement("text", { x: legendX + 12, y, fill: palette.muted }, "start"));
+  legendX += legendAdvance("start") + 8;
+  svg.append(svgElement("rect", { x: legendX, y: y - 8, width: 7, height: 7, fill: palette.muted }));
+  svg.append(svgElement("text", { x: legendX + 12, y, fill: palette.muted }, "end"));
+  return legendX + legendAdvance("end");
+}
 function drawTrails(name, palette, phase) {
   const side = data[name], svg = q(`${name}-path`);
   if (!svg) return;
@@ -374,23 +424,31 @@ function drawTrails(name, palette, phase) {
   let legendX = 8, unavailable = [], incomplete = [];
   for (const role of Object.keys(TRAIL_TOKENS)) {
     const bone = side.clip.trails[role];
-    if (bone == null) { unavailable.push(TRAIL_TOKENS[role][1]); continue; }
-    const points = trailPoints(side, bone), [token, label] = TRAIL_TOKENS[role], color = palette[token];
+    if (bone == null) { unavailable.push(TRAIL_TOKENS[role].label); continue; }
+    const points = trailPoints(side, bone), spec = TRAIL_TOKENS[role];
+    const style = Object.assign({}, spec, { color: palette[spec.token] });
     const finite = points.filter(finitePoint).length;
-    if (finite === 0) { unavailable.push(`${label} (non-finite)`); continue; }
-    if (finite !== points.length) incomplete.push(label);
-    svg.append(svgElement("path", { d: pathData(points, map), fill: "none", stroke: color, "stroke-width": 2, "data-role": role }));
+    if (finite === 0) { unavailable.push(`${spec.label} (non-finite)`); continue; }
+    if (finite !== points.length) incomplete.push(spec.label);
+    const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-role": role };
+    if (spec.dash) path["stroke-dasharray"] = spec.dash;
+    svg.append(svgElement("path", path));
     const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
     const selected = map(points[frame]);
-    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: 3, fill: color, "data-role-dot": role }));
-    const legend = finite === points.length ? label : `${label} incomplete`;
-    svg.append(svgElement("text", { x: legendX, y: 14, fill: color }, legend));
-    legendX += legendAdvance(label);
+    if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-role-dot": role }));
+    const ends = trackEnds(points);
+    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, TRAIL_PANEL, palette, "data-role-marker", role);
+    const legend = finite === points.length ? spec.label : `${spec.label} incomplete`;
+    svg.append(svgElement("text", { x: legendX, y: 14, fill: style.color }, legend));
+    legendX += legendAdvance(spec.label);
   }
+  appendMarksLegend(svg, palette, legendX, 14);
   const missing = unavailable.length ? ` · unavailable: ${unavailable.join(", ")}` : "";
   const partial = incomplete.length ? ` · incomplete non-finite samples: ${incomplete.join(", ")}` : "";
   panelCaption(`${name}-path`, "what to look for: top-down trails of root, hips and feet over the whole clip; "
     + "matching trails on both sides mean the repair changed only what it claims"
+    + " · each trail starts at the hollow circle and ends at the square; the root's trail is the path magnified in the panel above"
+    + " · hips dashed and translucent over root, where the two run together"
     + ` · top-down X/Z metres · shared scale across both inputs${missing}${partial}`);
 }
 
@@ -434,11 +492,11 @@ function drawGait(name, palette, phase) {
     svg.append(svgElement("text", { x: legendX, y: 14, fill: palette[token] }, label));
     legendX += legendAdvance(label);
   }
+  // The guidance sentence is derived on the Rust side from what this side's
+  // checks declared and judged, so the same clip reads the same way in a
+  // single-clip report and here.
   panelCaption(`${name}-gait`, gaitFinite
-    ? "what to look for: the two feet should alternate, one planted flat at contact height while the "
-      + "other swings; the shaded bands are the sampled stance intervals the foot-slide check judged, "
-      + "and a foot that moves horizontally during its band is the slide; for a loop the curves should "
-      + "end where they began"
+    ? `${side.guidance.gait}`
       + " · exact sampled height in metres · shaded runs are sampled foot-slide stance evidence"
       + " · left in the upper band, right in the lower"
     : "gait drawing incomplete: non-finite sampled heights; stance and coverage evidence remain listed");
@@ -546,33 +604,45 @@ const playRate = (() => {
   return sharedFrameMax / duration;
 })();
 if (!playRate) playButton.disabled = true;
-let playing = false, playFrame = 0, playedAt = 0;
+// `playRun` is the loop's owner: every start and every pause takes the next
+// number, and a frame callback that no longer holds it returns instead of
+// rescheduling. Without it a pause immediately followed by a play leaves the
+// old chain's pending callback alive beside the new one, and the phase then
+// advances twice per frame for as long as the document is open.
+let playing = false, playFrame = 0, playedAt = 0, playRun = 0, playHandle = 0;
 function pausePlayback() {
   if (!playing) return;
   playing = false;
+  playRun++;
+  if (playHandle) { cancelAnimationFrame(playHandle); playHandle = 0; }
   playButton.textContent = "▶";
+  playButton.setAttribute("aria-label", "Play the shared phase");
 }
-function tick(now) {
-  if (!playing) return;
-  const elapsed = Number.isFinite(now - playedAt) ? Math.max(0, (now - playedAt) / 1000) : 0;
-  playedAt = now;
-  playFrame += elapsed * playRate;
-  if (playFrame > sharedFrameMax) playFrame = 0;
-  selectedFrames = null; selectedContext = null;
-  q("scrub").value = Math.round(playFrame);
-  update();
-  requestAnimationFrame(tick);
+function frameLoop(run) {
+  return function tick(now) {
+    if (!playing || run !== playRun) return;
+    const elapsed = Number.isFinite(now - playedAt) ? Math.max(0, (now - playedAt) / 1000) : 0;
+    playedAt = now;
+    playFrame += elapsed * playRate;
+    if (playFrame > sharedFrameMax) playFrame = 0;
+    selectedFrames = null; selectedContext = null;
+    q("scrub").value = Math.round(playFrame);
+    update();
+    playHandle = requestAnimationFrame(tick);
+  };
 }
 playButton.addEventListener("click", () => {
   if (!playRate) return;
-  playing = !playing;
-  playButton.textContent = playing ? "⏸" : "▶";
-  if (!playing) return;
+  if (playing) { pausePlayback(); return; }
+  playing = true;
+  playButton.textContent = "⏸";
+  playButton.setAttribute("aria-label", "Pause the shared phase");
   // Resume from wherever the reader left the phase, not from where playback
   // last stopped: a scrub between two presses is the position they chose.
   playFrame = Number(q("scrub").value) || 0;
   playedAt = performance.now();
-  requestAnimationFrame(tick);
+  playRun++;
+  playHandle = requestAnimationFrame(frameLoop(playRun));
 });
 q("scrub").addEventListener("input", () => { pausePlayback(); selectedFrames = null; selectedContext = null; update(); });
 window.addEventListener("resize", update);

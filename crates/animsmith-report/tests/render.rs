@@ -3624,10 +3624,11 @@ fn figcaption(figure: &str) -> String {
 /// Every chart says what a reader should look for in it.
 ///
 /// The report is read by the game developer or artist who owns the fix, not
-/// by whoever wrote the check, so each picture states what the sampled
-/// curves should do in the words of the clip. The sentences stay on the
-/// measured, judged facts: the single-clip gait chart shades no stance
-/// intervals, so it claims none, and the root path names only what it draws.
+/// by whoever wrote the check, so each picture opens with what to look for in
+/// it. What it may claim is bounded by what the run declared, which
+/// `chart_guidance_follows_what_the_clip_declares` covers variant by variant;
+/// this pins the shape every caption has, and the measured facts the root
+/// path adds to its own.
 #[test]
 fn every_single_clip_chart_caption_says_what_to_look_for() {
     let doc = chart_roles_fixture();
@@ -3646,15 +3647,8 @@ fn every_single_clip_chart_caption_says_what_to_look_for() {
 
     let gait = caption("gait");
     assert!(
-        gait.starts_with("walk — foot height relative to hips · "),
-        "the caption still names its clip and figure first: {gait}"
-    );
-    assert!(
-        gait.contains(
-            "what to look for: the two feet should alternate, one planted flat at contact \
-             height while the other swings; for a loop the curves should end where they began"
-        ),
-        "{gait}"
+        gait.starts_with("walk — foot height relative to hips · what to look for: "),
+        "the caption names its clip and figure, then says what to look for: {gait}"
     );
     assert!(
         !gait.contains("shaded"),
@@ -3663,25 +3657,32 @@ fn every_single_clip_chart_caption_says_what_to_look_for() {
     );
 
     let root = caption("rootpath");
-    assert!(root.starts_with("walk — root path (top-down) · "), "{root}");
+    assert!(
+        root.starts_with("walk — root path (top-down) · what to look for: "),
+        "{root}"
+    );
     assert!(
         root.contains(
-            "what to look for: an in-place or looping clip's root path should close on itself \
-             and stay near the origin; a travelling clip should trace a straight line ending \
-             at the declared distance; the dot is the current frame, the hollow circle where \
-             the track starts and the square where it ends"
+            "the dot is the current frame, the hollow circle where the track starts and the \
+             square where it ends"
         ),
-        "{root}"
+        "the root caption names the marks it draws: {root}"
     );
     assert!(
         root.contains(" m at its widest"),
         "the root caption states the measured extent in metres: {root}"
     );
 
-    // Neither sentence promises anything about how the clip will look or
-    // play: the report presents checked evidence, and an absent finding is
-    // not acceptance.
+    // No check judged this render, so neither picture may prescribe: both say
+    // what the document does not declare and show the measurement instead.
     for (kind, text) in [("gait", &gait), ("rootpath", &root)] {
+        assert!(
+            text.contains("contract declared and no check judged this clip"),
+            "{kind} claims a contract nothing declared: {text}"
+        );
+        // Neither sentence promises anything about how the clip will look or
+        // play: the report presents checked evidence, and an absent finding
+        // is not acceptance.
         for word in ["acceptable", "looks good", "correct", "approved", "quality"] {
             assert!(
                 !text.to_lowercase().contains(word),
@@ -3727,10 +3728,13 @@ fn the_root_path_marks_where_the_track_starts_and_ends() {
         }],
         ..Document::default()
     };
-    let render = |doc: &Document| {
+    let render_document = |doc: &Document| {
         let grids = MetricGrids::new(doc);
         let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
-        let html = animsmith_report::render(&grids, &roles, &[], None, None, full());
+        animsmith_report::render(&grids, &roles, &[], None, None, full())
+    };
+    let render = |doc: &Document| {
+        let html = render_document(doc);
         chart_figures(&html)
             .into_iter()
             .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -3738,7 +3742,7 @@ fn the_root_path_marks_where_the_track_starts_and_ends() {
     };
 
     // Out along +X and back over its own line: one line, two different ends.
-    let there_and_back = render(&track(
+    let there_and_back_doc = track(
         "there-and-back",
         vec![
             Vec3::ZERO,
@@ -3747,7 +3751,12 @@ fn the_root_path_marks_where_the_track_starts_and_ends() {
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(0.0, 0.0, 0.0),
         ],
-    ));
+    );
+    let there_and_back_html = render_document(&there_and_back_doc);
+    let there_and_back = chart_figures(&there_and_back_html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "rootpath")
+        .expect("root path chart");
     let points: Vec<(f64, f64)> = there_and_back
         .split_once("<template class=\"pathpoints\">")
         .expect("plotted points")
@@ -3798,31 +3807,56 @@ fn the_root_path_marks_where_the_track_starts_and_ends() {
     );
     let side = number(&square, "width");
     assert_eq!(number(&square, "height"), side, "the end mark is square");
-    assert_eq!(
-        (
-            number(&square, "x") + side / 2.0,
-            number(&square, "y") + side / 2.0
-        ),
-        end,
-        "the end mark is centred on the last plotted frame"
+    let square_centre = (
+        number(&square, "x") + side / 2.0,
+        number(&square, "y") + side / 2.0,
     );
 
-    // The current frame stays distinguishable from both ends: the dot is a
-    // circle like the start mark, so it must not be the same circle.
+    // The current frame stays distinguishable from both ends. On this track
+    // the two ends and the playhead dot are one coordinate, which is exactly
+    // where a ring inside a square inside a dot reads as a single blob, so
+    // the geometry has to keep them apart rather than the paint order.
     let dot = marked("pathdot")
         .into_iter()
         .next()
         .expect("the playhead dot");
     assert!(dot.starts_with("circle"), "{dot}");
+    let dot_r = number(&dot, "r");
     assert!(
-        number(&dot, "r") != number(&circle, "r"),
-        "the playhead dot and the start mark are the same size, so a reader \
-         at frame 0 cannot tell the current frame from the track's start"
+        number(&circle, "r") >= dot_r + 2.0,
+        "the start ring (r {}) does not stand clear of the playhead dot (r {dot_r})",
+        number(&circle, "r")
+    );
+    let leader = marked("pathleader");
+    assert_eq!(leader.len(), 1, "a coincident end mark carries one leader");
+    assert_eq!(
+        (number(&leader[0], "x1"), number(&leader[0], "y1")),
+        end,
+        "the leader starts at the last plotted frame"
+    );
+    assert_eq!(
+        (number(&leader[0], "x2"), number(&leader[0], "y2")),
+        square_centre,
+        "the leader reaches the end mark it explains"
+    );
+    let clearance = ((square_centre.0 - number(&dot, "cx")).powi(2)
+        + (square_centre.1 - number(&dot, "cy")).powi(2))
+    .sqrt()
+        + side / 2.0;
+    assert!(
+        clearance > dot_r + 2.0,
+        "the end mark lies inside the playhead dot: {clearance} against r {dot_r}"
     );
     assert!(
-        !dot.contains("class=\"pathstart\"") && !circle.contains("class=\"pathdot\""),
-        "the dot and the start mark take their own classes, so the \
+        !square.contains("class=\"pathdot\"") && !circle.contains("class=\"pathdot\""),
+        "the dot and the two marks take their own classes, so the \
          stylesheet paints them apart"
+    );
+    // And the square carries the plot's own ground as a stroke, so it reads
+    // as a square even where it lands on a line of its own colour.
+    assert!(
+        there_and_back_html.contains(".pathend { fill: var(--pass); stroke: var(--ground)"),
+        "the end mark has no contrasting stroke"
     );
 
     // Both marks are named in the legend, beside a swatch of their own shape.
@@ -3938,4 +3972,357 @@ fn the_comparison_can_play_its_shared_phase() {
         element_with_id(&evidence, "play").contains("disabled"),
         "an evidence-only comparison leaves playback enabled"
     );
+}
+
+/// A walking rig whose feet alternate and whose root travels along +X, so
+/// every guidance variant below differs only in what its configuration
+/// declares rather than in what the clip contains.
+fn contract_fixture() -> animsmith_core::Document {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+
+    let bone = |name: &str, parent: Option<usize>| Bone {
+        name: name.into(),
+        parent,
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    };
+    let times: Vec<f32> = (0..5).map(|frame| frame as f32 / 4.0).collect();
+    let swing = |offset: f32| {
+        TrackValues::Vec3s(
+            (0..5)
+                .map(|frame| {
+                    let phase = (frame as f32 / 4.0 + offset) * std::f32::consts::TAU;
+                    Vec3::new(frame as f32 * 0.25, 0.1 * phase.sin().abs(), 0.0)
+                })
+                .collect(),
+        )
+    };
+    let track = |bone: usize, values: TrackValues| Track {
+        bone,
+        property: Property::Translation,
+        interpolation: Interpolation::Linear,
+        times: times.clone(),
+        values,
+    };
+    Document {
+        skeleton: Skeleton {
+            bones: vec![
+                bone("root", None),
+                bone("hips", Some(0)),
+                bone("left_foot", Some(1)),
+                bone("right_foot", Some(1)),
+            ],
+        },
+        clips: vec![Clip {
+            name: "take".into(),
+            duration_s: 1.0,
+            tracks: vec![
+                track(
+                    0,
+                    TrackValues::Vec3s(
+                        (0..5)
+                            .map(|frame| Vec3::new(frame as f32 * 0.25, 0.0, 0.0))
+                            .collect(),
+                    ),
+                ),
+                track(
+                    1,
+                    TrackValues::Vec3s(
+                        (0..5)
+                            .map(|frame| Vec3::new(frame as f32 * 0.25, 1.0, 0.0))
+                            .collect(),
+                    ),
+                ),
+                track(2, swing(0.0)),
+                track(3, swing(0.5)),
+            ],
+        }],
+        ..Document::default()
+    }
+}
+
+/// Render `contract_fixture` under one configuration and return its chart
+/// captions by kind, so a test can read what the document told its reader.
+fn contract_captions(
+    configure: impl FnOnce(&mut animsmith_core::Config),
+    roles: &[(Role, &str)],
+) -> std::collections::BTreeMap<String, String> {
+    let doc = contract_fixture();
+    let mut config = animsmith_core::Config::default();
+    config.rig.roles = roles
+        .iter()
+        .map(|(role, name)| (*role, (*name).to_owned()))
+        .collect();
+    configure(&mut config);
+    let grids = MetricGrids::new(&doc);
+    let resolved = ResolvedRoles::from_names(
+        &doc.skeleton,
+        roles.iter().map(|(role, name)| (*role, (*name).to_owned())),
+    );
+    let checks = matrix_evaluations(&grids, &resolved, &config);
+    let html = animsmith_report::render(&grids, &resolved, &checks, None, None, full());
+    chart_figures(&html)
+        .into_iter()
+        .map(|figure| (attribute(&figure, "data-kind"), figcaption(&figure)))
+        .collect()
+}
+
+/// Every role a walking rig resolves.
+fn walking_roles() -> Vec<(Role, &'static str)> {
+    vec![
+        (Role::Root, "root"),
+        (Role::Hips, "hips"),
+        (Role::LeftFoot, "left_foot"),
+        (Role::RightFoot, "right_foot"),
+    ]
+}
+
+/// A caption may only tell a reader what to expect where the document says
+/// what the clip owes.
+///
+/// The guidance used to assert universals — a travelling clip traces a
+/// straight line to a declared distance, the two feet alternate with one
+/// planted — and both are false for valid clips. Authored root motion that
+/// curves or turns is legitimate, and an idle, a jump or any other
+/// non-locomotion take has no alternating stance at all. What the report can
+/// honestly say is what this run declared and judged, so each variant below
+/// is the same motion under a different contract.
+#[test]
+fn chart_guidance_follows_what_the_clip_declares() {
+    use animsmith_core::config::ClipExpectations;
+    use animsmith_core::{MovementOwner, Pinned};
+
+    // A declared loop: both pictures are read against their own endpoints.
+    let looped = contract_captions(
+        |config| {
+            config.clips.insert(
+                "take".to_owned(),
+                ClipExpectations {
+                    looping: Some(true),
+                    ..Default::default()
+                },
+            );
+        },
+        &walking_roles(),
+    );
+    assert!(
+        looped["rootpath"]
+            .contains("this clip is declared a loop, so its root path should end where it began"),
+        "{}",
+        looped["rootpath"]
+    );
+    assert!(
+        looped["gait"]
+            .contains("this clip is declared a loop, so the curves should end where they began"),
+        "{}",
+        looped["gait"]
+    );
+    for caption in looped.values() {
+        assert!(
+            !caption.contains("straight line") && !caption.contains("alternate"),
+            "a loop declaration says nothing about a route or a stride: {caption}"
+        );
+    }
+
+    // Animation-owned travel at a pinned speed: the speed is the expectation,
+    // and the shape the clip travels is not.
+    let travelling = contract_captions(
+        |config| {
+            config.clips.insert(
+                "take".to_owned(),
+                ClipExpectations {
+                    speed_mps: Some(Pinned {
+                        value: 1.0,
+                        tolerance: 0.5,
+                    }),
+                    movement_owner_xz: Some(MovementOwner::Animation),
+                    ..Default::default()
+                },
+            );
+        },
+        &walking_roles(),
+    );
+    assert!(
+        travelling["rootpath"].contains(
+            "this clip declares animation-owned root travel at a pinned speed, so the path should \
+             keep travelling at that speed"
+        ),
+        "{}",
+        travelling["rootpath"]
+    );
+    assert!(
+        travelling["rootpath"].contains("a turn is not a defect"),
+        "a declared speed is not a declared route: {}",
+        travelling["rootpath"]
+    );
+    assert!(
+        !travelling["rootpath"].contains("declared a loop"),
+        "{}",
+        travelling["rootpath"]
+    );
+    // `foot-slide` judges stance on a clip that pins a speed, so the gait
+    // chart may name what it found — and, drawing no bands, may not claim any.
+    assert!(
+        travelling["gait"].contains(
+            "the foot-slide check judged stance intervals on this clip, and a foot that moves \
+             horizontally during a plant is the slide it reports"
+        ),
+        "{}",
+        travelling["gait"]
+    );
+    assert!(
+        !travelling["gait"].contains("shaded"),
+        "the single-clip chart plots no stance bands: {}",
+        travelling["gait"]
+    );
+
+    // Nothing declared: the caption says so and names what was judged
+    // instead of prescribing anything.
+    let undeclared = contract_captions(|_| {}, &walking_roles());
+    for kind in ["rootpath", "gait"] {
+        assert!(
+            undeclared[kind].contains("contract declared"),
+            "{kind}: {}",
+            undeclared[kind]
+        );
+        assert!(
+            undeclared[kind].contains("shown as measured rather than against an expectation"),
+            "{kind}: {}",
+            undeclared[kind]
+        );
+        for prescription in [
+            "should end where",
+            "should keep travelling",
+            "straight line",
+            "alternate",
+        ] {
+            assert!(
+                !undeclared[kind].contains(prescription),
+                "{kind} prescribes {prescription:?} for a clip that declares nothing: {}",
+                undeclared[kind]
+            );
+        }
+    }
+    assert!(
+        undeclared["rootpath"].contains("no loop or root-motion contract declared"),
+        "{}",
+        undeclared["rootpath"]
+    );
+    assert!(
+        undeclared["gait"].contains("no loop or stance contract declared"),
+        "{}",
+        undeclared["gait"]
+    );
+
+    // A clip with no resolved feet has no foot-height chart to caption at
+    // all, and its root path still speaks only for what was declared.
+    let footless = contract_captions(
+        |config| {
+            config.clips.insert(
+                "take".to_owned(),
+                ClipExpectations {
+                    looping: Some(true),
+                    ..Default::default()
+                },
+            );
+        },
+        &[(Role::Root, "root")],
+    );
+    assert!(
+        !footless.contains_key("gait"),
+        "a clip with no resolved feet renders no foot-height chart: {footless:?}"
+    );
+    assert!(
+        footless["rootpath"].contains("this clip is declared a loop"),
+        "{}",
+        footless["rootpath"]
+    );
+    assert!(
+        !footless["rootpath"].contains("foot"),
+        "a rootless-footed clip's root caption says nothing about feet: {}",
+        footless["rootpath"]
+    );
+}
+
+/// The comparison's panels are viewer drawings, so the words in them come
+/// from this crate through the payload rather than from a sentence the
+/// JavaScript holds: one clip must read the same way in a single-clip report
+/// and in a comparison.
+#[test]
+fn the_comparison_payload_carries_each_side_its_own_derived_guidance() {
+    let html = comparison_documents(full());
+    let data = embedded_json(&html, "comparison-report-data");
+    for side in ["before", "after"] {
+        let guidance = &data[side]["guidance"];
+        for key in ["root_path", "gait"] {
+            let sentence = guidance[key].as_str().unwrap_or_default();
+            assert!(
+                sentence.starts_with("what to look for: "),
+                "{side} {key}: {sentence}"
+            );
+            assert!(
+                !sentence.contains("straight line") && !sentence.contains("alternate"),
+                "{side} {key} asserts a universal a valid clip can break: {sentence}"
+            );
+        }
+    }
+}
+
+/// The comparison viewer maps into the boxes this document emits.
+///
+/// The panel geometry is written twice — as a `viewBox` here and as the
+/// projection targets in `assets/comparison.js` — and nothing at runtime
+/// reconciles them, so a panel resized on one side would silently draw off
+/// the other's edge.
+#[test]
+fn the_comparison_viewer_maps_into_the_panels_this_document_emits() {
+    let html = comparison_documents(full());
+    let viewer = html
+        .rsplit_once("<script>")
+        .expect("the inline comparison viewer")
+        .1;
+    let box_of = |id: &str| {
+        let element = element_with_id(&html, id);
+        let view_box = attribute(&element, "viewBox");
+        let numbers: Vec<f64> = view_box
+            .split_whitespace()
+            .map(|part| part.parse().expect("viewBox number"))
+            .collect();
+        (numbers[2], numbers[3])
+    };
+    let declared = |name: &str| {
+        let at = viewer
+            .find(&format!("const {name} = {{"))
+            .unwrap_or_else(|| panic!("the viewer declares {name}"));
+        let body = &viewer[at..][..viewer[at..].find('}').expect("declaration closes")];
+        let number = |key: &str| -> f64 {
+            let start = body
+                .find(&format!("{key}: "))
+                .unwrap_or_else(|| panic!("{name} declares {key}"))
+                + key.len()
+                + 2;
+            body[start..]
+                .split([',', ' '])
+                .next()
+                .expect("a value")
+                .parse()
+                .expect("a number")
+        };
+        (number("width"), number("height"))
+    };
+    assert_eq!(
+        box_of("comparison-root-path"),
+        declared("ROOT_PANEL"),
+        "the shared root panel and the box its viewer maps into"
+    );
+    for id in ["before-path", "after-path"] {
+        assert_eq!(
+            box_of(id),
+            declared("TRAIL_PANEL"),
+            "{id} and the box its viewer maps into"
+        );
+    }
 }

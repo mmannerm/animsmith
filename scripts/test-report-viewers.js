@@ -126,7 +126,7 @@ function run(parts, dataId, html, payload, options) {
   // callback instead of scheduling it, so a viewer that animates does
   // nothing until a test asks for the next frame — and a test that asks can
   // observe exactly what one frame changed.
-  const clock = { now: 0, pending: [] };
+  const clock = { now: 0, next: 1, pending: new Map() };
   const location = {
     get hash() { return hash.value; },
     set hash(next) { hash.writes++; hash.value = next; },
@@ -152,7 +152,11 @@ function run(parts, dataId, html, payload, options) {
     getComputedStyle: () => settings.styles || noStyles,
     matchMedia: () => ({ matches: false, addEventListener(kind, handler) { media[kind] = handler; }, removeEventListener() {} }),
     performance: { now: () => clock.now },
-    requestAnimationFrame: (callback) => clock.pending.push(callback),
+    requestAnimationFrame: (callback) => { const handle = clock.next++; clock.pending.set(handle, callback); return handle; },
+    // `settings.ignoreCancel` is a browser that drops the cancellation on the
+    // floor, which is what leaves a viewer with only its run number to stop
+    // the chain it retired.
+    cancelAnimationFrame: (handle) => { if (!settings.ignoreCancel) clock.pending.delete(handle); },
     atob: value => Buffer.from(value, "base64").toString("binary"),
     Uint8Array, Float32Array, Buffer, Math, Map, Set, Array, Number, Object, Infinity, JSON, console,
   };
@@ -161,10 +165,13 @@ function run(parts, dataId, html, payload, options) {
   return { nodes, root, listeners, context, charts, hash, media, settings, clock };
 }
 
-// One animation frame, `seconds` after the last one.
+// One animation frame, `seconds` after the last one. Returns how many
+// callbacks that frame actually ran, which is how many redraw chains the
+// document is keeping alive.
 function stepFrame(state, seconds) {
   state.clock.now += seconds * 1000;
-  const pending = state.clock.pending.splice(0, state.clock.pending.length);
+  const pending = [...state.clock.pending.values()];
+  state.clock.pending.clear();
   for (const callback of pending) callback(state.clock.now);
   return pending.length;
 }
@@ -227,24 +234,56 @@ assertNoBareSvgText(nodes, comparisonSvgs, "drawn comparison");
 const panelCaption = (id) => nodes[`${id}-caption`].textContent;
 const rootCaptionOf = (state) => state["comparison-root-path-caption"].textContent;
 for (const [id, phrase] of [
-  // What a reader should look for, in the words of the clip rather than of
-  // the check that judged it. Each panel's sentence stays on what its own
-  // drawing shows: the gait panel shades stance intervals and says so, the
-  // trajectory panels do not and do not claim to.
-  ["comparison-root-path", "what to look for: an in-place or looping clip's root path should close on itself and stay near the origin; a travelling clip should trace a straight line ending at the declared distance; the dot is the shared phase, the hollow circle where a track starts and the square where it ends"],
+  // Each panel's caption says what its own drawing shows. The gait panel
+  // shades stance intervals and says so; the trajectory panels do not and do
+  // not claim to; and every panel that draws two ends names them.
+  ["comparison-root-path", "the two root paths overlaid so their shapes can be compared"],
   ["comparison-root-path", "before solid, after dashed and translucent"],
-  ["comparison-root-path", "fitted to this panel, magnified"],
+  ["comparison-root-path", "fitted to this panel"],
   ["before-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
   ["after-path", "what to look for: top-down trails of root, hips and feet over the whole clip; matching trails on both sides mean the repair changed only what it claims"],
+  ["before-path", "each trail starts at the hollow circle and ends at the square; the root's trail is the path magnified in the panel above"],
+  ["after-path", "each trail starts at the hollow circle and ends at the square; the root's trail is the path magnified in the panel above"],
   ["before-path", "shared scale across both inputs"],
   ["after-path", "shared scale across both inputs"],
-  ["before-gait", "what to look for: the two feet should alternate, one planted flat at contact height while the other swings; the shaded bands are the sampled stance intervals the foot-slide check judged, and a foot that moves horizontally during its band is the slide; for a loop the curves should end where they began"],
-  ["after-gait", "what to look for: the two feet should alternate, one planted flat at contact height while the other swings; the shaded bands are the sampled stance intervals the foot-slide check judged, and a foot that moves horizontally during its band is the slide; for a loop the curves should end where they began"],
   ["before-gait", "shaded runs are sampled foot-slide stance evidence"],
   ["before-gait", "left in the upper band, right in the lower"],
   ["after-gait", "left in the upper band, right in the lower"],
 ]) {
   if (!panelCaption(id).includes(phrase)) throw new Error(`${id} lost its caption: ${JSON.stringify(phrase)}`);
+}
+// The "what to look for" sentences are derived on the Rust side from what
+// each side's checks declared and judged: a clip that declares no loop and no
+// root motion must not be told what its root path should do. The viewer's job
+// is to render that sentence, not to carry one of its own.
+for (const [id, sentence] of [
+  ["comparison-root-path", data.before.guidance.root_path],
+  ["before-gait", data.before.guidance.gait],
+  ["after-gait", data.after.guidance.gait],
+]) {
+  if (!sentence) throw new Error(`the payload carries no derived guidance for ${id}`);
+  if (!panelCaption(id).includes(sentence)) throw new Error(`${id} does not render the document's own derived guidance: ${JSON.stringify(sentence)} is not in ${JSON.stringify(panelCaption(id))}`);
+}
+// A viewer holding its own copy of those words would still pass the line
+// above, so the sentences are also driven from the payload.
+const swapped = JSON.parse(JSON.stringify(data));
+swapped.before.guidance = {root_path: "SENTINEL-root-both", gait: "SENTINEL-gait-before"};
+swapped.after.guidance = {root_path: "SENTINEL-root-both", gait: "SENTINEL-gait-after"};
+const swappedRun = run(generated, "comparison-report-data", html, swapped);
+for (const [id, sentinel] of [
+  ["comparison-root-path", "SENTINEL-root-both"],
+  ["before-gait", "SENTINEL-gait-before"],
+  ["after-gait", "SENTINEL-gait-after"],
+]) {
+  if (!swappedRun.nodes[`${id}-caption`].textContent.includes(sentinel)) throw new Error(`${id} ignores the document's derived guidance and carries a sentence of its own`);
+}
+// Two sides that declare different contracts are both stated, attributed.
+const split = JSON.parse(JSON.stringify(data));
+split.before.guidance = {root_path: "SENTINEL-before-only", gait: "g"};
+split.after.guidance = {root_path: "SENTINEL-after-only", gait: "g"};
+const splitCaption = run(generated, "comparison-report-data", html, split).nodes["comparison-root-path-caption"].textContent;
+for (const [side, sentinel] of [["before", "SENTINEL-before-only"], ["after", "SENTINEL-after-only"]]) {
+  if (!splitCaption.includes(`${side} — ${sentinel}`)) throw new Error(`the root caption drops the ${side} side's own contract when the two differ: ${splitCaption}`);
 }
 // The document presents checked evidence; a caption that told a reader the
 // clip was fine would contradict the disclosure two sections above it.
@@ -278,8 +317,7 @@ for (const side of ["before", "after"]) {
 const rootPaths = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-side"]);
 if (rootPaths.length !== 2) throw new Error("the shared root chart plots both sides");
 if (rootPaths.filter((path) => path.attrs["stroke-dasharray"]).length !== 1) throw new Error("two coincident root paths are drawn identically, so one hides the other");
-const rootDots = nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]);
-if (new Set(rootDots.map((dot) => dot.attrs.r)).size !== 2) throw new Error("two coincident shared-phase dots are drawn identically");
+if (nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]).length !== 1) throw new Error("an identical pair draws one shared-phase dot; a second on the same coordinate says nothing");
 
 // A coincident `after` is also thinner and translucent, so the `before` it
 // sits on stays visible through it rather than only around its gaps.
@@ -334,6 +372,20 @@ if (!trailBounds || !rootBounds) throw new Error("the fixture must resolve a roo
 const roleScale = fittedScale(trailBounds, 360, 180, 24);
 const rootScale = fittedScale(rootBounds, 720, 180, 28);
 if (Math.abs(roleScale - rootScale) < 1e-6) throw new Error("the fixture's root and role extents must differ, or the magnification cannot be told from 1");
+// The same projection for any payload, so a mutated pair can be checked
+// against its own extents rather than the committed fixture's.
+function rootGeometry(payload) {
+  const bounds = payloadBounds(payload, ["root"]);
+  const scale = fittedScale(bounds, 720, 180, 28);
+  return {
+    bounds,
+    scale,
+    map: (point) => [
+      720 / 2 + (point[0] - (bounds.x[0] + bounds.x[1]) / 2) * scale,
+      180 / 2 - (point[1] - (bounds.z[0] + bounds.z[1]) / 2) * scale,
+    ],
+  };
+}
 const rootMap = (point) => [
   720 / 2 + (point[0] - (rootBounds.x[0] + rootBounds.x[1]) / 2) * rootScale,
   180 / 2 - (point[1] - (rootBounds.z[0] + rootBounds.z[1]) / 2) * rootScale,
@@ -359,25 +411,90 @@ const magnified = rootCaptionOf(nodes).match(/magnified ([0-9.]+)× relative to 
 if (!magnified) throw new Error(`the caption does not state the panel's magnification against the trail panels: ${rootCaptionOf(nodes)}`);
 if (magnified[1] !== (rootScale / roleScale).toFixed(1)) throw new Error(`the caption claims ${magnified[1]}× where this panel's fitted scale is ${(rootScale / roleScale).toFixed(1)}× the trail panels'`);
 
-// Both ends of both tracks are marked, at the coordinates the first and last
-// sampled frames map to, and the start mark is hollow so the phase dot
-// sitting on it at frame 0 is still its own thing.
+// One track's two end marks: the shapes, the track's own colour, their
+// placement on the first and last sampled frames, and that neither is hidden
+// by the phase dot standing on them where a track closes on itself.
+function assertEndMarks(children, attribute, dotAttribute, value, metres, map, what) {
+  const found = (kind) => children.find((child) => child.attrs[attribute] === `${value}-${kind}`);
+  const circle = found("start"), square = found("end");
+  if (!circle || !square) throw new Error(`${what} is not marked at both ends`);
+  if (circle.tag !== "circle" || square.tag !== "rect") throw new Error(`${what}: its two ends are not drawn as two different shapes`);
+  if (circle.attrs.fill !== "none") throw new Error(`${what}: the start mark is filled, so the phase dot standing on it disappears into it`);
+  const dot = children.find((child) => child.attrs[dotAttribute] === value);
+  if (!dot) throw new Error(`${what}: no phase dot to size and colour its marks against`);
+  // The marks belong to their own track, so a panel of four trails says which
+  // end is whose. A shared muted mark would say only that some track ended.
+  if (circle.attrs.stroke !== dot.attrs.fill) throw new Error(`${what}: the start mark is stroked ${circle.attrs.stroke}, not the track's own ${dot.attrs.fill}`);
+  if (square.attrs.fill !== dot.attrs.fill) throw new Error(`${what}: the end mark is filled ${square.attrs.fill}, not the track's own ${dot.attrs.fill}`);
+  // Distinguishable by geometry rather than by paint order: on a track that
+  // closes on itself the ring, the square and the phase dot land on one
+  // coordinate, and z-order rescues none of them there.
+  if (!(Number(circle.attrs.r) >= Number(dot.attrs.r) + 2)) throw new Error(`${what}: the start ring (r ${circle.attrs.r}) does not stand clear of its own phase dot (r ${dot.attrs.r})`);
+  if (!square.attrs.stroke || square.attrs.stroke === square.attrs.fill) throw new Error(`${what}: the end mark has no contrasting stroke, so on a line of its own colour it is not a square`);
+  const half = Number(square.attrs.width) / 2;
+  const squareCentre = [Number(square.attrs.x) + half, Number(square.attrs.y) + half];
+  const clearance = Math.hypot(squareCentre[0] - Number(dot.attrs.cx), squareCentre[1] - Number(dot.attrs.cy)) + half;
+  if (!(clearance > Number(dot.attrs.r) + 2)) throw new Error(`${what}: the end mark lies inside its own phase dot (reaches ${clearance} against r ${dot.attrs.r})`);
+  const start = map(metres[0]), end = map(metres[metres.length - 1]);
+  if (Math.abs(circle.attrs.cx - start[0]) > 1e-6 || Math.abs(circle.attrs.cy - start[1]) > 1e-6) throw new Error(`${what}: the start mark is at ${circle.attrs.cx},${circle.attrs.cy} rather than the first sampled frame's ${start}`);
+  // The end mark sits on the last sampled frame, or steps aside with a
+  // leader back to it.
+  const leader = children.find((child) => child.attrs[attribute] === `${value}-leader`);
+  if (leader) {
+    if (Math.abs(leader.attrs.x1 - end[0]) > 1e-6 || Math.abs(leader.attrs.y1 - end[1]) > 1e-6) throw new Error(`${what}: the leader does not start at the last sampled frame's ${end}`);
+    if (Math.abs(leader.attrs.x2 - squareCentre[0]) > 1e-6 || Math.abs(leader.attrs.y2 - squareCentre[1]) > 1e-6) throw new Error(`${what}: the leader does not reach the end mark it explains`);
+  } else if (Math.abs(squareCentre[0] - end[0]) > 1e-6 || Math.abs(squareCentre[1] - end[1]) > 1e-6) {
+    throw new Error(`${what}: the end mark is neither centred on the last sampled frame's ${end} nor offset with a leader`);
+  }
+}
+const finiteTrail = (payload, side, role) => payloadTrail(payload, side, role).filter((point) => point.every(Number.isFinite));
+
+// Both sides here carry the same grid, so the after root track is exactly the
+// before one: it is drawn as the dashed overlay alone, because a second dot
+// and a second pair of marks on the same coordinates say nothing, and the
+// caption says the same thing in words.
+assertEndMarks(nodes["comparison-root-path"].children, "data-root-marker", "data-root-dot", "before", beforeRootMetres, rootMap, "the before root track");
+for (const kind of ["start", "end"]) {
+  if (nodes["comparison-root-path"].children.some((child) => child.attrs["data-root-marker"] === `after-${kind}`)) throw new Error(`the after root track repeats its ${kind} mark on top of the identical before one`);
+}
+if (nodes["comparison-root-path"].children.some((child) => child.attrs["data-root-dot"] === "after")) throw new Error("the after root track repeats its phase dot on top of the identical before one");
+if (!rootCaptionOf(nodes).includes("identical, the after path lies under the before path and is drawn only as the dashed overlay")) throw new Error(`the caption does not say the after path is the overlay: ${rootCaptionOf(nodes)}`);
+
+// The heading is where a reader meets this panel, and it is one of three
+// drawings of the same two paths, so it carries the factor too.
+const rootTitle = nodes["root-panel-title"].textContent;
+const titled = rootTitle.match(/^Root path, before over after \(magnified ([0-9.]+)×\)$/);
+if (!titled) throw new Error(`the root panel is not titled as the overlay it is, with its magnification: ${JSON.stringify(rootTitle)}`);
+if (titled[1] !== (rootScale / roleScale).toFixed(1)) throw new Error(`the title claims ${titled[1]}× where this panel's fitted scale is ${(rootScale / roleScale).toFixed(1)}× the trail panels'`);
+
+// Every role trail carries the same two marks, in its own colour, at its own
+// first and last sampled positions. These panels are where the trails overlap,
+// so this is the panel that needs them most.
+const trailMap = (point) => [
+  360 / 2 + (point[0] - (trailBounds.x[0] + trailBounds.x[1]) / 2) * roleScale,
+  180 / 2 - (point[1] - (trailBounds.z[0] + trailBounds.z[1]) / 2) * roleScale,
+];
+const TRAIL_ROLES = ["root", "hips", "left_foot", "right_foot"];
+for (const role of TRAIL_ROLES) {
+  if (data.before.clip.trails[role] == null) throw new Error(`the fixture must resolve every role trail; ${role} is absent`);
+}
 for (const side of ["before", "after"]) {
-  const metres = payloadTrail(data, side, "root").filter((point) => point.every(Number.isFinite));
-  const marker = (kind) => nodes["comparison-root-path"].children.find((child) => child.attrs["data-root-marker"] === `${side}-${kind}`);
-  const circle = marker("start"), square = marker("end");
-  if (!circle || !square) throw new Error(`the ${side} root track is not marked at both ends`);
-  if (circle.tag !== "circle" || square.tag !== "rect") throw new Error(`the ${side} track's two ends are not drawn as two different shapes`);
-  if (circle.attrs.fill !== "none") throw new Error(`the ${side} start mark is filled, so the phase dot standing on it at frame 0 disappears into it`);
-  // On a closed loop at frame 0 the start mark, the end mark and the phase
-  // dot are one coordinate, so a ring no wider than the dot says nothing.
-  const dot = nodes["comparison-root-path"].children.find((child) => child.attrs["data-root-dot"] === side);
-  if (!(Number(circle.attrs.r) > Number(dot.attrs.r))) throw new Error(`the ${side} start ring (r ${circle.attrs.r}) does not stand outside its own phase dot (r ${dot.attrs.r})`);
-  const drawnAfterDot = nodes["comparison-root-path"].children.indexOf(dot) < nodes["comparison-root-path"].children.indexOf(square);
-  if (!drawnAfterDot) throw new Error(`the ${side} end mark is drawn under the phase dot, which hides it wherever a track closes on itself`);
-  const start = rootMap(metres[0]), end = rootMap(metres[metres.length - 1]);
-  if (Math.abs(circle.attrs.cx - start[0]) > 1e-6 || Math.abs(circle.attrs.cy - start[1]) > 1e-6) throw new Error(`the ${side} start mark is at ${circle.attrs.cx},${circle.attrs.cy} rather than the first sampled frame's ${start}`);
-  if (Math.abs(square.attrs.x + square.attrs.width / 2 - end[0]) > 1e-6 || Math.abs(square.attrs.y + square.attrs.height / 2 - end[1]) > 1e-6) throw new Error(`the ${side} end mark is not centred on the last sampled frame's ${end}`);
+  for (const role of TRAIL_ROLES) {
+    assertEndMarks(nodes[`${side}-path`].children, "data-role-marker", "data-role-dot", role, finiteTrail(data, side, role), trailMap, `the ${side} ${role} trail`);
+  }
+  // Root and hips run together from above, so one of the two is dashed and
+  // translucent: two solid lines on one path leave the panel showing three
+  // trails where its legend names four.
+  const trailPath = (name) => nodes[`${side}-path`].children.find((child) => child.attrs["data-role"] === name);
+  if (!trailPath("hips").attrs["stroke-dasharray"]) throw new Error(`the ${side} hips trail is solid over a solid root, so where the two coincide the panel shows one`);
+  if (!(Number(trailPath("hips").attrs.opacity) < Number(trailPath("root").attrs.opacity))) throw new Error(`the ${side} hips trail is opaque over the root trail it covers`);
+  // And the marks are named where the trails are named.
+  for (const label of ["start", "end"]) {
+    if (!nodes[`${side}-path`].children.some((child) => child.tag === "text" && child.textContent === label)) throw new Error(`the ${side} role-trajectory panel does not name its ${label} mark in the legend`);
+  }
+  const swatch = (tag) => nodes[`${side}-path`].children.find((child) => child.tag === tag && !child.attrs["data-role-marker"] && !child.attrs["data-role-dot"] && !child.attrs["data-role"]);
+  if (!swatch("circle") || swatch("circle").attrs.fill !== "none") throw new Error(`the ${side} trail legend names a start mark without drawing the hollow circle it means`);
+  if (!swatch("rect") || swatch("rect").attrs.fill === "none") throw new Error(`the ${side} trail legend names an end mark without drawing the filled square it means`);
 }
 for (const label of ["start", "end"]) {
   if (!nodes["comparison-root-path"].children.some((child) => child.tag === "text" && child.textContent === label)) throw new Error(`the shared root panel does not name its ${label} mark in the legend`);
@@ -393,7 +510,7 @@ if (!legendSwatch("rect") || legendSwatch("rect").attrs.fill === "none") throw n
 // two tracks are the same line, and where each one ends relative to its own
 // start.
 const rootCaption = () => rootCaptionOf(nodes);
-if (!rootCaption().includes("the before and after paths are identical")) throw new Error(`two identical root tracks are not declared identical: ${rootCaption()}`);
+if (!rootCaption().includes("identical, the after path lies under the before path")) throw new Error(`two identical root tracks are not declared identical: ${rootCaption()}`);
 const beforeGap = Math.hypot(
   beforeRootMetres[beforeRootMetres.length - 1][0] - beforeRootMetres[0][0],
   beforeRootMetres[beforeRootMetres.length - 1][1] - beforeRootMetres[0][1],
@@ -423,6 +540,70 @@ for (const side of ["before", "after"]) {
   if (!closedCaption.includes(`${side} closes on itself`)) throw new Error(`a closed root loop is not declared closed: ${closedCaption}`);
 }
 if (closedCaption.includes("from its start")) throw new Error(`a closed root loop still names a distance: ${closedCaption}`);
+// It is also the case where all three marks land on one coordinate, so the
+// end mark must have stepped aside rather than hidden inside the dot.
+const closedGeometry = rootGeometry(closedRoots);
+assertEndMarks(closedRun.nodes["comparison-root-path"].children, "data-root-marker", "data-root-dot", "before", finiteTrail(closedRoots, "before", "root"), closedGeometry.map, "the before root track of a closed loop");
+if (!closedRun.nodes["comparison-root-path"].children.some((child) => child.attrs["data-root-marker"] === "before-leader")) throw new Error("a closed root loop draws its two ends on one coordinate without stepping the end mark aside");
+
+// ---- the scale bar's other branches ------------------------------------
+// A payload whose four role trails occupy prescribed X/Z boxes, so the two
+// fitted scales — and therefore the bar and the magnification — can be put
+// where a committed fixture never reaches.
+function shapedPayload(boxes) {
+  const shaped = JSON.parse(JSON.stringify(data));
+  for (const name of ["before", "after"]) {
+    const side = shaped[name], buffer = Buffer.from(side.clip.positions, "base64");
+    for (const [role, box] of Object.entries(boxes)) {
+      const bone = side.clip.trails[role];
+      if (bone == null) continue;
+      for (let frame = 0; frame < side.clip.frames; frame++) {
+        const base = (frame * shaped.bones.length + bone) * 3;
+        const at = side.clip.frames > 1 ? frame / (side.clip.frames - 1) : 0;
+        buffer.writeFloatLE(box.x[0] + at * (box.x[1] - box.x[0]), base * 4);
+        buffer.writeFloatLE(box.z[0] + at * (box.z[1] - box.z[0]), (base + 2) * 4);
+      }
+    }
+    side.clip.positions = buffer.toString("base64");
+  }
+  return shaped;
+}
+const everyRole = (box) => Object.fromEntries(TRAIL_ROLES.map((role) => [role, box]));
+const barOf = (state) => state.nodes["comparison-root-path"].children.find((child) => child.attrs["data-scale-bar-m"] != null);
+
+// Under a centimetre there is no bar a reader could measure against, so the
+// panel draws none and the caption says which.
+const tiny = shapedPayload(everyRole({x: [0, 0.004], z: [0, 0.003]}));
+const tinyRun = run(generated, "comparison-report-data", html, tiny);
+if (barOf(tinyRun)) throw new Error("a path narrower than the smallest bar still drew one");
+if (!tinyRun.nodes["comparison-root-path-caption"].textContent.includes("no scale bar: the paths are narrower than 1 cm")) throw new Error(`a path with no bar does not say so: ${tinyRun.nodes["comparison-root-path-caption"].textContent}`);
+
+// Between a centimetre and about two, a 1 cm bar runs across more than the
+// three fifths of the plot the tidy rule allows, and there is no smaller
+// step: the fallback keeps the bar rather than dropping it.
+const fallback = shapedPayload(everyRole({x: [0, 0.012], z: [0, 0.0005]}));
+const fallbackRun = run(generated, "comparison-report-data", html, fallback);
+const fallbackBar = barOf(fallbackRun);
+if (!fallbackBar) throw new Error("a path wider than a centimetre drew no bar");
+if (Number(fallbackBar.attrs["data-scale-bar-m"]) !== 0.01) throw new Error(`the fallback bar is ${fallbackBar.attrs["data-scale-bar-m"]} m, not the smallest step inside the extent`);
+const fallbackGeometry = rootGeometry(fallback);
+const fallbackLength = Number(fallbackBar.attrs.x2) - Number(fallbackBar.attrs.x1);
+if (Math.abs(fallbackLength - 0.01 * fallbackGeometry.scale) > 1e-6) throw new Error(`the fallback bar is drawn ${fallbackLength} plot units for a labelled 1 cm`);
+if (!(fallbackLength > 0.6 * 664)) throw new Error("the fallback fixture must not satisfy the tidy rule, or it proves nothing");
+if (fallbackLength > 664) throw new Error(`even the fallback bar stays inside the plot: ${fallbackLength}`);
+
+// The root panel is twice as wide as a trail panel but no taller, so a pair
+// of extents that both scale off Z draws the root smaller than the trails.
+const shrunk = shapedPayload(everyRole({x: [0, 0.2], z: [0, 0.1]}));
+const shrunkRun = run(generated, "comparison-report-data", html, shrunk);
+const shrunkGeometry = rootGeometry(shrunk);
+const shrunkRole = fittedScale(payloadBounds(shrunk, TRAIL_ROLES), 360, 180, 24);
+const factor = shrunkGeometry.scale / shrunkRole;
+if (!(factor < 1)) throw new Error(`the sub-1 fixture magnifies ${factor}×, so it exercises the wrong branch`);
+const shrunkCaption = shrunkRun.nodes["comparison-root-path-caption"].textContent;
+if (!shrunkCaption.includes(`drawn at ${factor.toFixed(1)}× the trail panels' scale below`)) throw new Error(`a panel smaller than the trail panels claims a magnification: ${shrunkCaption}`);
+if (shrunkCaption.includes("magnified")) throw new Error(`a panel smaller than the trail panels says it is magnified: ${shrunkCaption}`);
+if (shrunkRun.nodes["root-panel-title"].textContent !== `Root path, before over after (${factor.toFixed(1)}× the trail panels' scale)`) throw new Error(`the title of a shrunk panel is ${JSON.stringify(shrunkRun.nodes["root-panel-title"].textContent)}`);
 
 // ---- panel order: pose, root, trails, gait -----------------------------
 // The judged poses are what the comparison is about, so they come first and
@@ -443,28 +624,34 @@ for (const side of ["before", "after"]) {
 // One number drives both sides, so playing it animates the two clips
 // together at the before clip's own duration. Nothing about it touches the
 // fragment: `#frame=` stays a way in, never something the document writes.
-const playback = run(generated, "comparison-report-data", html, data);
+// The shared phase runs at the *before* clip's duration, so the two sides
+// must not share one: with equal durations a viewer reading either would
+// pass. The after side is given a duration two and a half times the before
+// one, and the rate is then pinned to within half a frame.
+const timed = JSON.parse(JSON.stringify(data));
+timed.after.clip.duration = timed.before.clip.duration * 2.5;
+const playback = run(generated, "comparison-report-data", html, timed);
 const playMax = Number(playback.nodes.scrub.max);
 const poseArcs = (state, side) => JSON.stringify(state.nodes[`${side}-gl`].context.arcs);
 if (!/<button id="play"[^>]*>▶<\/button>/.test(html)) throw new Error("the comparison does not open paused, with a play control the document itself labels");
 const paused = {before: poseArcs(playback, "before"), after: poseArcs(playback, "after")};
 playback.nodes.play.listeners.click();
 if (playback.nodes.play.textContent !== "⏸") throw new Error("pressing play did not start the shared phase");
-if (!stepFrame(playback, data.before.clip.duration / 4)) throw new Error("playing scheduled no animation frame");
+if (!stepFrame(playback, timed.before.clip.duration / 4)) throw new Error("playing scheduled no animation frame");
 const quarter = Number(playback.nodes.scrub.value);
-if (Math.abs(quarter - playMax / 4) > 1) throw new Error(`the shared phase does not advance at the before clip's ${data.before.clip.duration}s duration: frame ${quarter} after a quarter of it, against ${playMax / 4}`);
+if (Math.abs(quarter - playMax / 4) > 0.51) throw new Error(`the shared phase does not advance at the before clip's ${timed.before.clip.duration}s duration: frame ${quarter} after a quarter of it, against ${playMax / 4} (the after clip's ${timed.after.clip.duration}s would give ${playMax / 10})`);
 for (const side of ["before", "after"]) {
   if (poseArcs(playback, side) === paused[side]) throw new Error(`playing the shared phase did not redraw the ${side} pose pane`);
 }
 // Past the end it loops rather than stopping there.
-stepFrame(playback, data.before.clip.duration);
+stepFrame(playback, timed.before.clip.duration);
 const looped = Number(playback.nodes.scrub.value);
 if (!(looped >= 0 && looped <= quarter + 1)) throw new Error(`the shared phase did not loop at the end of the clip: frame ${looped} of ${playMax}`);
 // Scrubbing takes the phase back, the way the single-clip viewer does.
 playback.nodes.scrub.value = "10";
 playback.nodes.scrub.listeners.input();
 if (playback.nodes.play.textContent !== "▶") throw new Error("scrubbing did not pause the shared phase");
-stepFrame(playback, data.before.clip.duration / 4);
+stepFrame(playback, timed.before.clip.duration / 4);
 if (Number(playback.nodes.scrub.value) !== 10) throw new Error("a paused comparison kept advancing the shared phase");
 // And so does selecting a finding, which would otherwise be overwritten by
 // the next frame.
@@ -472,6 +659,44 @@ playback.nodes.play.listeners.click();
 playback.nodes["before-findings"].children[0].listeners.click();
 if (playback.nodes.play.textContent !== "▶") throw new Error("selecting a finding did not pause the shared phase");
 assertNoHashWrites(playback, "playing the shared phase");
+
+// A `#frame=` navigation is a reader asking for one position. Playback that
+// kept running would overwrite it on the next frame, so it pauses the way a
+// scrub does.
+const fragmentPause = run(generated, "comparison-report-data", html, data);
+fragmentPause.nodes.play.listeners.click();
+if (fragmentPause.nodes.play.textContent !== "⏸") throw new Error("the fragment-pause fixture never started playing");
+fragmentPause.hash.value = "#frame=42";
+fragmentPause.listeners.hashchange();
+if (fragmentPause.nodes.play.textContent !== "▶") throw new Error("a #frame= navigation did not pause playback");
+stepFrame(fragmentPause, data.before.clip.duration / 4);
+if (Number(fragmentPause.nodes.scrub.value) !== 42) throw new Error(`playback ran on past the deep-linked frame, leaving ${fragmentPause.nodes.scrub.value}`);
+assertNoHashWrites(fragmentPause, "pausing on a deep-linked frame");
+
+// One loop owner. A pause immediately followed by a play must not leave the
+// old chain's pending callback alive beside the new one: two chains advance
+// the shared phase twice per frame for as long as the document is open.
+const restarted = run(generated, "comparison-report-data", html, data);
+restarted.nodes.play.listeners.click();
+stepFrame(restarted, 0.01);
+// Pausing cancels the frame it scheduled, so nothing is left in flight.
+restarted.nodes.play.listeners.click();
+if (restarted.clock.pending.size !== 0) throw new Error(`pausing left ${restarted.clock.pending.size} animation frame(s) scheduled`);
+restarted.nodes.play.listeners.click();
+for (const cycle of [1, 2, 3, 4]) {
+  const ran = stepFrame(restarted, 0.01);
+  if (ran !== 1) throw new Error(`after ${cycle} restart cycle(s) one frame ran ${ran} callbacks, so the shared phase advances more than once per frame`);
+  if (restarted.clock.pending.size !== 1) throw new Error(`after ${cycle} restart cycle(s) ${restarted.clock.pending.size} frame loops are scheduled`);
+  restarted.nodes.play.listeners.click();
+  restarted.nodes.play.listeners.click();
+}
+restarted.nodes.play.listeners.click();
+assertNoHashWrites(restarted, "restarting playback");
+// The control is named, not only drawn: a glyph is no accessible name.
+if (!/<button id="play"[^>]*aria-label="[^"]+"/.test(html)) throw new Error("the comparison's play control has no accessible name");
+if (restarted.nodes.play.attrs["aria-label"] !== "Play the shared phase") throw new Error(`a paused control is named ${JSON.stringify(restarted.nodes.play.attrs["aria-label"])}`);
+restarted.nodes.play.listeners.click();
+if (restarted.nodes.play.attrs["aria-label"] !== "Pause the shared phase") throw new Error("a playing control still calls itself Play");
 
 // Two stance windows at the same frames stay two visible bands. The left
 // and right shading are semi-transparent, so drawing them over each other
@@ -504,7 +729,16 @@ if (!(drawnSpread("after") < drawnSpread("before") * 0.75)) throw new Error(`the
 // caption must not go on claiming the two tracks are the same line.
 const scaledCaption = oneCamera.nodes["comparison-root-path-caption"].textContent;
 if (!scaledCaption.includes("the before and after paths differ")) throw new Error(`two different root tracks are not declared different: ${scaledCaption}`);
-if (scaledCaption.includes("are identical")) throw new Error(`two different root tracks are declared identical: ${scaledCaption}`);
+if (scaledCaption.includes("identical")) throw new Error(`two different root tracks are declared identical: ${scaledCaption}`);
+// A pair that really differs is drawn in full on both sides, and the two
+// shared-phase dots stay distinguishable where they cross.
+const scaledDots = oneCamera.nodes["comparison-root-path"].children.filter((child) => child.attrs["data-root-dot"]);
+if (scaledDots.length !== 2) throw new Error("a differing pair must draw both sides' shared-phase dots");
+if (new Set(scaledDots.map((dot) => dot.attrs.r)).size !== 2) throw new Error("two shared-phase dots are drawn identically");
+const scaledGeometry = rootGeometry(scaledSides);
+for (const side of ["before", "after"]) {
+  assertEndMarks(oneCamera.nodes["comparison-root-path"].children, "data-root-marker", "data-root-dot", side, finiteTrail(scaledSides, side, "root"), scaledGeometry.map, `the ${side} root track of a differing pair`);
+}
 const seamIndex = data.before.findings.indexOf(seamFinding), structuralIndex = data.before.findings.indexOf(structuralFinding), afterIndex = data.after.findings.indexOf(afterFinding);
 nodes["before-findings"].children[seamIndex].listeners.click();
 if(nodes.scrub.value != 1501 || !nodes["before-pose-context"].textContent.includes("first 0.000s") || !nodes["before-pose-context"].textContent.includes(`affected ${seam.subject_bone_name}`)) throw new Error("seam finding did not select exact frame and endpoint/subject context");
@@ -695,7 +929,7 @@ if (!/<button id="play"[^>]*\sdisabled/.test(comparisonEvidenceHtml)) throw new 
 if (!evidenceNodes.play.disabled) throw new Error("the shared phase stayed playable with no pose grid behind it");
 evidenceNodes.play.listeners.click();
 if (evidenceNodes.play.textContent === "⏸") throw new Error("an evidence-only comparison started playing a grid it does not carry");
-if (evidenceRun.clock.pending.length) throw new Error("an evidence-only comparison scheduled an animation frame");
+if (evidenceRun.clock.pending.size) throw new Error("an evidence-only comparison scheduled an animation frame");
 if (evidenceNodes["before-findings"].children.length !== evidencePayload.before.findings.length || !evidenceNodes["before-identity"].textContent.includes(evidencePayload.before.dependency_closure_identity.sha256)) throw new Error("an evidence-only comparison dropped findings or identities");
 if (!evidenceNodes.times.textContent.includes("not a time warp") || !evidenceNodes.mapping.textContent) throw new Error("an evidence-only comparison dropped its phase disclosures");
 
@@ -1071,6 +1305,53 @@ actions.nodes.scrub.value = "1";
 actions.nodes.scrub.listeners.input();
 if (Number(actions.nodes.scrub.value) !== 1) throw new Error("scrubbing did not move the viewer");
 assertNoHashWrites(actions, "selecting a clip, playing, pausing and scrubbing");
+
+// The single-clip viewer's frame loop has one owner too. Its transport is
+// older than the comparison's and carried the same latent chain: every
+// pause-then-play left the previous loop scheduled, so the clip advanced once
+// more per frame for as long as the report stayed open.
+const singlePlay = runSingle(single, singleHtml, singlePayload);
+singlePlay.nodes.play.listeners.click();
+stepFrame(singlePlay, 0.01);
+singlePlay.nodes.play.listeners.click();
+if (singlePlay.clock.pending.size !== 0) throw new Error(`pausing the single-clip viewer left ${singlePlay.clock.pending.size} animation frame(s) scheduled`);
+singlePlay.nodes.play.listeners.click();
+for (const cycle of [1, 2, 3, 4]) {
+  const ran = stepFrame(singlePlay, 0.01);
+  if (ran !== 1) throw new Error(`after ${cycle} restart cycle(s) the single-clip viewer ran ${ran} callbacks in one frame`);
+  if (singlePlay.clock.pending.size !== 1) throw new Error(`after ${cycle} restart cycle(s) the single-clip viewer has ${singlePlay.clock.pending.size} frame loops scheduled`);
+  singlePlay.nodes.play.listeners.click();
+  singlePlay.nodes.play.listeners.click();
+}
+singlePlay.nodes.play.listeners.click();
+// Scrubbing pauses it, and pausing cancels the frame it had scheduled.
+singlePlay.nodes.play.listeners.click();
+stepFrame(singlePlay, 0.01);
+singlePlay.nodes.scrub.value = "1";
+singlePlay.nodes.scrub.listeners.input();
+if (singlePlay.nodes.play.textContent !== "▶" || singlePlay.clock.pending.size !== 0) throw new Error("scrubbing the single-clip viewer did not stop and cancel its frame loop");
+assertNoHashWrites(singlePlay, "restarting single-clip playback");
+if (!/<button id="play"[^>]*aria-label="[^"]+"/.test(singleHtml)) throw new Error("the single-clip play control has no accessible name");
+if (singlePlay.nodes.play.attrs["aria-label"] !== "Play the clip") throw new Error(`a paused single-clip control is named ${JSON.stringify(singlePlay.nodes.play.attrs["aria-label"])}`);
+
+// A cancellation the browser ignores must not accumulate chains either: the
+// run number retires the old loop on its own.
+for (const [what, parts, id, document_, payload, options] of [
+  ["comparison", generated, "comparison-report-data", html, data, {ignoreCancel: true}],
+  ["single-clip", single, "report-data", singleHtml, singlePayload, {ignoreCancel: true}],
+]) {
+  const uncancelled = run(parts, id, document_, payload, options);
+  uncancelled.nodes.play.listeners.click();
+  for (const cycle of [1, 2, 3, 4]) {
+    // A retired callback still runs once — the browser kept it — but it must
+    // not schedule a successor, so exactly one loop survives each frame
+    // however many pause/play cycles preceded it.
+    stepFrame(uncancelled, 0.01);
+    if (uncancelled.clock.pending.size !== 1) throw new Error(`after ${cycle} restart cycle(s) with cancellation ignored, the ${what} viewer has ${uncancelled.clock.pending.size} frame loops scheduled: its run number does not retire the old one`);
+    uncancelled.nodes.play.listeners.click();
+    uncancelled.nodes.play.listeners.click();
+  }
+}
 
 // The counters above cover the actions this harness drives; this covers the
 // rest, including orbit and zoom: neither viewer nor the shared runtime

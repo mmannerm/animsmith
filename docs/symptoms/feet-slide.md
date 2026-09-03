@@ -27,9 +27,11 @@ interval.
 [Open the interactive comparison](../visuals/foot-slide.comparison.html) to
 see the before and after side by side, or the
 [single-clip report of the defective clip](../visuals/foot-slide-before.report.html).
-Press play beside the shared phase to run both sides together: the two feet
-should alternate, one planted flat at contact height while the other swings,
-and a foot that moves horizontally inside its shaded band is the slide.
+Press play beside the shared phase to run both sides together. This clip
+declares a loop and a `speed_mps` pin, so the gait panel's caption says its
+curves should end where they began and that the shaded bands are the stance
+intervals `foot-slide` judged: a foot that moves horizontally inside its band
+is the slide.
 
 ## What the finding looks like
 
