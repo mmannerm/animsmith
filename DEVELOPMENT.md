@@ -255,9 +255,11 @@ With no argument the target is `[workspace.package] version`; `--version`
 stages the next patch or minor before the release workflow is dispatched, and
 any other version is refused. The inventory and the reader that locates each
 claim live in `animsmith-testkit`'s `docs_versions` module, which both the
-example and the test drive, so the tool rewrites exactly the spans the gate
-reads: a version-shaped string elsewhere on the same page is not a
-current-version claim and is left alone. Re-running the example changes
+example and the test drive: validating is asking whether staging would report
+a change, so the tool rewrites exactly the spans the gate reads and a
+version-shaped string elsewhere on the same page is not a current-version
+claim. A second test holds that inventory to the tracked Markdown, so a new
+snippet cannot be added without entering it. Re-running the example changes
 nothing, and the gate — not the example — is what fails a stale checkout.
 
 ### GitHub Pages preview

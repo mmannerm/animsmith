@@ -24,6 +24,18 @@
 //! claims: the inventory it holds is what the release gate reads and
 //! what the `stage_release_docs` example writes.
 
+use std::path::PathBuf;
+
+/// The repository root of the checkout this crate was compiled from.
+///
+/// The documentation gates and the generators they share read committed
+/// files, so they need the checkout rather than a working directory: a
+/// test's is the package it belongs to, and a generator can be run from
+/// anywhere.
+pub fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
 pub mod docs_html;
 pub mod docs_markdown;
 pub mod docs_transcripts;

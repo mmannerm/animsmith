@@ -19,8 +19,13 @@
 //!   cargo run -p animsmith --example stage_release_docs -- --version <next>
 
 use animsmith_testkit::docs_versions::{requested_version, stage_release_docs, workspace_version};
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::ExitCode;
+
+/// Test-only override of the checkout to write, so the gate can run this
+/// example against a temporary copy of the inventoried documents instead
+/// of the repository it was built from.
+const ROOT_OVERRIDE: &str = "ANIMSMITH_DOCS_ROOT";
 
 fn main() -> ExitCode {
     // The usage message spans lines, so the error is printed rather than
@@ -35,7 +40,8 @@ fn main() -> ExitCode {
 }
 
 fn stage() -> Result<(), String> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository =
+        std::env::var_os(ROOT_OVERRIDE).map_or_else(animsmith_testkit::repo_root, PathBuf::from);
     let target = match requested_version(std::env::args().skip(1))? {
         Some(version) => version,
         None => workspace_version(&repository)?,

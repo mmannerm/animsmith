@@ -5,10 +5,10 @@
 //! `Cargo.toml`'s `[workspace.package] version` is the authority. The
 //! `release_version_docs` gate reads the located claims and compares them
 //! to it; the `stage_release_docs` example writes them from it. Both walk
-//! the same spans, so the tool and the gate cannot disagree about what a
-//! document claims, and a version-shaped string anywhere else on an
-//! inventoried page — a historical note, a changelog line, a roadmap
-//! record — is invisible to both.
+//! the same spans — [`claims`] is the only reader — so validation is
+//! exactly "staging would report no change", and a version-shaped string
+//! anywhere else on an inventoried page (a historical note, a changelog
+//! line, a roadmap record) is invisible to both.
 //!
 //! The inventory is intentionally explicit: a document enters it because
 //! it makes a current-version claim, not because it contains a number.
@@ -19,14 +19,14 @@
 //! staged for the next patch or minor while `main` still carries the last
 //! released workspace version, and the generated release-plz PR then bumps
 //! the workspace manifest to that documented version. [`validate`] accepts
-//! both states, and requires exact manifest equality when its caller asks
-//! for release-PR strictness.
+//! both in [`ReleaseMode::Staging`], and requires exact manifest equality
+//! in [`ReleaseMode::ReleasePr`].
 
 use serde_json::Value as JsonValue;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 /// The command that rewrites every claim in the inventory from the
@@ -34,60 +34,86 @@ use std::process::Command;
 /// fix is where the failure is.
 pub const STAGE_COMMAND: &str = "cargo run -p animsmith --example stage_release_docs";
 
-/// Documents whose Cargo snippets state a current dependency requirement,
-/// with the packages each one requires. Each pair contributes exactly one
-/// `package = "X.Y"` line to its document.
-pub const DEPENDENCY_SNIPPETS: &[(&str, &[&str])] = &[
-    (
-        "README.md",
-        &[
-            "animsmith-core",
-            "animsmith-gltf",
-            "animsmith-fbx",
-            "animsmith-engine",
-            "animsmith-report",
-        ],
-    ),
-    (
-        "crates/animsmith-core/README.md",
-        &["animsmith-core", "animsmith-gltf"],
-    ),
-    (
-        "crates/animsmith-gltf/README.md",
-        &["animsmith-core", "animsmith-gltf"],
-    ),
-    (
-        "crates/animsmith-fbx/README.md",
-        &["animsmith-core", "animsmith-fbx"],
-    ),
-    (
-        "crates/animsmith-engine/README.md",
-        &["animsmith-core", "animsmith-engine"],
-    ),
-    (
-        "crates/animsmith-report/README.md",
-        &["animsmith-core", "animsmith-report"],
-    ),
-    (
-        "docs/embedding.md",
-        &[
-            "animsmith-core",
-            "animsmith-gltf",
-            "animsmith-fbx",
-            "animsmith-engine",
-            "animsmith-report",
-        ],
-    ),
-];
+/// One inventoried document and the current-version claims it makes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Document {
+    /// The repository-relative path.
+    pub path: &'static str,
+    /// The packages whose `package = "X.Y"` snippet line this document
+    /// carries, exactly once each.
+    pub packages: &'static [&'static str],
+    /// The number of `"tool"` objects this document quotes.
+    pub tool_examples: usize,
+}
 
-/// Documents that quote machine-readable output, with the number of
-/// `"tool"` objects each one shows. The count is part of the inventory:
-/// an example that stops being quoted, or a new one nobody staged, is a
-/// change to what the documentation claims.
-pub const TOOL_VERSION_SNIPPETS: &[(&str, usize)] = &[
-    ("docs/output.md", 4),
-    ("docs/mixamo-tutorial.md", 1),
-    ("examples/README.md", 1),
+/// Every document that states the current release, with what it states.
+///
+/// The order is what a disagreement is reported against: the release the
+/// documentation describes is the one its first `"tool"` example states,
+/// and every other claim is held to it.
+pub const INVENTORY: &[Document] = &[
+    Document {
+        path: "README.md",
+        packages: &[
+            "animsmith-core",
+            "animsmith-gltf",
+            "animsmith-fbx",
+            "animsmith-engine",
+            "animsmith-report",
+        ],
+        tool_examples: 0,
+    },
+    Document {
+        path: "crates/animsmith-core/README.md",
+        packages: &["animsmith-core", "animsmith-gltf"],
+        tool_examples: 0,
+    },
+    Document {
+        path: "crates/animsmith-gltf/README.md",
+        packages: &["animsmith-core", "animsmith-gltf"],
+        tool_examples: 0,
+    },
+    Document {
+        path: "crates/animsmith-fbx/README.md",
+        packages: &["animsmith-core", "animsmith-fbx"],
+        tool_examples: 0,
+    },
+    Document {
+        path: "crates/animsmith-engine/README.md",
+        packages: &["animsmith-core", "animsmith-engine"],
+        tool_examples: 0,
+    },
+    Document {
+        path: "crates/animsmith-report/README.md",
+        packages: &["animsmith-core", "animsmith-report"],
+        tool_examples: 0,
+    },
+    Document {
+        path: "docs/embedding.md",
+        packages: &[
+            "animsmith-core",
+            "animsmith-gltf",
+            "animsmith-fbx",
+            "animsmith-engine",
+            "animsmith-report",
+        ],
+        tool_examples: 0,
+    },
+    Document {
+        path: "docs/output.md",
+        packages: &[],
+        tool_examples: 4,
+    },
+    Document {
+        path: "docs/mixamo-tutorial.md",
+        packages: &[],
+        tool_examples: 1,
+    },
+    Document {
+        path: "examples/README.md",
+        packages: &[],
+        tool_examples: 1,
+    },
 ];
 
 /// The contents of every inventoried document, keyed by repository path.
@@ -153,18 +179,21 @@ impl Version {
         }
     }
 
+    /// The releases documentation may describe while the workspace
+    /// manifest still reads this one: the released version itself, and
+    /// the next patch or next minor staged before the release workflow is
+    /// dispatched.
+    ///
+    /// One list serves the acceptance rule and the refusal message, so the
+    /// two cannot come to disagree about the window.
+    pub fn release_window(self) -> [Self; 3] {
+        [self, self.next_patch(), self.next_minor()]
+    }
+
     /// Whether documentation describing this version is legitimate while
-    /// the workspace manifest still reads `workspace`: the released
-    /// version itself, or exactly the next patch or next minor staged
-    /// before the release workflow is dispatched.
+    /// the workspace manifest reads `workspace`.
     pub fn is_current_or_next_release_from(self, workspace: Self) -> bool {
-        self == workspace
-            || (self.major == workspace.major
-                && self.minor == workspace.minor
-                && self.patch == workspace.patch.saturating_add(1))
-            || (self.major == workspace.major
-                && self.minor == workspace.minor.saturating_add(1)
-                && self.patch == 0)
+        workspace.release_window().contains(&self)
     }
 }
 
@@ -175,25 +204,36 @@ impl fmt::Display for Version {
 }
 
 /// What one located claim states, and therefore how it is spelled.
-#[derive(Clone, Copy, Debug)]
-enum ClaimKind {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClaimKind {
     /// The `X.Y` requirement in a `package = "X.Y"` snippet line.
     Dependency(&'static str),
-    /// The `X.Y.Z` string in a quoted `"tool"` object's `version`.
+    /// The `X.Y.Z` string in a quoted `"tool"` object's own `version`.
     Tool,
 }
 
 impl ClaimKind {
     /// How this claim spells `version`.
-    fn render(self, version: Version) -> String {
+    pub fn render(self, version: Version) -> String {
         match self {
             Self::Dependency(_) => version.dependency_line(),
             Self::Tool => version.to_string(),
         }
     }
 
+    /// The version `text` states in this claim's spelling.
+    pub fn parse(self, text: &str) -> Result<Version, String> {
+        match self {
+            // A requirement names a release line, not a release: `X.Y`
+            // admits every patch on it, and `X.Y.0` is the line's name.
+            Self::Dependency(_) => Version::parse(&format!("{text}.0"))
+                .map_err(|_| format!("expected an X.Y requirement, found {text:?}")),
+            Self::Tool => Version::parse(text),
+        }
+    }
+
     /// How this claim reads in a message.
-    fn label(self) -> String {
+    pub fn label(self) -> String {
         match self {
             Self::Dependency(package) => format!("`{package}` dependency requirement"),
             Self::Tool => "`tool.version` example".to_owned(),
@@ -202,14 +242,33 @@ impl ClaimKind {
 }
 
 /// One current-version claim, located in the bytes of its document.
-#[derive(Debug)]
-struct Claim {
-    kind: ClaimKind,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Claim {
+    /// The document the claim is in.
+    pub path: &'static str,
+    /// What the claim states.
+    pub kind: ClaimKind,
     /// The 1-based line the claim sits on.
-    line: usize,
+    pub line: usize,
     /// The byte range of the version text itself — never the syntax
     /// around it, and never anything else on the page.
-    range: Range<usize>,
+    pub span: Range<usize>,
+    /// The version text as written.
+    pub text: String,
+}
+
+impl Claim {
+    /// The version this claim states.
+    pub fn version(&self) -> Result<Version, String> {
+        self.kind.parse(&self.text).map_err(|error| {
+            format!(
+                "{}:{}: {}: {error}",
+                self.path,
+                self.line,
+                self.kind.label()
+            )
+        })
+    }
 }
 
 /// One rewritten claim, as the staging tool reports it.
@@ -219,8 +278,8 @@ pub struct Change {
     pub path: &'static str,
     /// The 1-based line the claim sits on.
     pub line: usize,
-    /// What the claim states, for a human reading the report.
-    pub claim: String,
+    /// What the claim states.
+    pub kind: ClaimKind,
     /// The version text that was there.
     pub from: String,
     /// The version text now there.
@@ -232,18 +291,34 @@ impl fmt::Display for Change {
         let Self {
             path,
             line,
-            claim,
+            kind,
             from,
             to,
         } = self;
-        write!(formatter, "{path}:{line}: {claim} {from} -> {to}")
+        write!(formatter, "{path}:{line}: {} {from} -> {to}", kind.label())
     }
 }
 
-/// The repository root of the checkout this crate was compiled from.
-pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+/// Whether a checkout is an ordinary one staging a release, or the
+/// generated release PR that must already agree with its manifest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseMode {
+    /// An ordinary branch: documentation may describe the manifest
+    /// version, its next patch, or its next minor.
+    Staging,
+    /// A generated `release-plz-*` branch: every claim must equal the
+    /// bumped workspace manifest.
+    ReleasePr,
 }
+
+/// The environment variable that states the mode outright.
+const RELEASE_PR_VARIABLE: &str = "ANIMSMITH_RELEASE_PR";
+
+/// The pull-request head branch GitHub Actions exports.
+const HEAD_REF_VARIABLE: &str = "GITHUB_HEAD_REF";
+
+/// The prefix release-plz gives the branch it generates.
+const RELEASE_BRANCH_PREFIX: &str = "release-plz-";
 
 /// The version `root`'s workspace manifest releases.
 pub fn workspace_version(root: &Path) -> Result<Version, String> {
@@ -262,33 +337,14 @@ pub fn workspace_version(root: &Path) -> Result<Version, String> {
 
 /// Every inventoried document under `root`, read once.
 pub fn documentation_snapshot(root: &Path) -> Result<Snapshot, String> {
-    inventory_paths()
-        .into_iter()
-        .map(|path| {
-            std::fs::read_to_string(root.join(path))
-                .map(|content| (path, content))
-                .map_err(|error| format!("reads {path}: {error}"))
+    INVENTORY
+        .iter()
+        .map(|document| {
+            std::fs::read_to_string(root.join(document.path))
+                .map(|content| (document.path, content))
+                .map_err(|error| format!("reads {}: {error}", document.path))
         })
         .collect()
-}
-
-/// Every document in the inventory, once each, in inventory order.
-///
-/// The order is what a disagreement is reported against: the first claim
-/// read is the release line the rest are held to, so it is the inventory's
-/// own order rather than an incidental sort.
-fn inventory_paths() -> Vec<&'static str> {
-    let mut paths = Vec::new();
-    for path in DEPENDENCY_SNIPPETS
-        .iter()
-        .map(|(path, _)| *path)
-        .chain(TOOL_VERSION_SNIPPETS.iter().map(|(path, _)| *path))
-    {
-        if !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-    paths
 }
 
 /// The 1-based line `offset` falls on.
@@ -296,20 +352,15 @@ fn line_of(content: &str, offset: usize) -> usize {
     content[..offset].matches('\n').count() + 1
 }
 
-/// Locate the one `package = "X.Y"` snippet line each inventoried package
-/// contributes to `content`.
+/// Locate the one `package = "X.Y"` snippet line each of `document`'s
+/// packages contributes to `content`.
 ///
 /// The claim is the requirement text between the quotes: a line that only
 /// mentions the package, or quotes the snippet inside a sentence, is not
 /// a snippet line and is left alone.
-fn dependency_claims(
-    path: &str,
-    packages: &[&'static str],
-    content: &str,
-    errors: &mut Vec<String>,
-) -> Vec<Claim> {
+fn dependency_claims(document: &Document, content: &str, errors: &mut Vec<String>) -> Vec<Claim> {
     let mut claims = Vec::new();
-    for &package in packages {
+    for &package in document.packages {
         let prefix = format!("{package} = \"");
         let mut located = Vec::new();
         let mut offset = 0;
@@ -320,16 +371,19 @@ fn dependency_claims(
             {
                 let start = offset + indent + prefix.len();
                 located.push(Claim {
+                    path: document.path,
                     kind: ClaimKind::Dependency(package),
                     line: line_of(content, start),
-                    range: start..start + version.len(),
+                    span: start..start + version.len(),
+                    text: version.to_owned(),
                 });
             }
             offset += line.len();
         }
         if located.len() != 1 {
             errors.push(format!(
-                "{path}: expected exactly one current `{package} = \"X.Y\"` snippet, found {}",
+                "{}: expected exactly one current `{package} = \"X.Y\"` snippet, found {}",
+                document.path,
                 located.len()
             ));
             continue;
@@ -345,12 +399,8 @@ fn dependency_claims(
 /// Each object is parsed as JSON before its version is located, so a
 /// snippet the gate reads is a snippet a reader can paste, and a claim is
 /// never extracted from text that only looks like an example.
-fn tool_claims(
-    path: &str,
-    expected_count: usize,
-    content: &str,
-    errors: &mut Vec<String>,
-) -> Vec<Claim> {
+fn tool_claims(document: &Document, content: &str, errors: &mut Vec<String>) -> Vec<Claim> {
+    let path = document.path;
     let objects = match json_objects_after_key(content, "\"tool\"") {
         Ok(objects) => objects,
         Err(error) => {
@@ -358,9 +408,10 @@ fn tool_claims(
             return Vec::new();
         }
     };
-    if objects.len() != expected_count {
+    if objects.len() != document.tool_examples {
         errors.push(format!(
-            "{path}: expected {expected_count} current `tool.version` example(s), found {}",
+            "{path}: expected {} current `tool.version` example(s), found {}",
+            document.tool_examples,
             objects.len()
         ));
     }
@@ -381,63 +432,74 @@ fn tool_claims(
             ));
             continue;
         }
-        let Some(version) = string_value_range(text, "version") else {
+        let Some(version) = member_string(text, "version") else {
             errors.push(format!(
                 "{path}: current `tool` example must carry a string version"
             ));
             continue;
         };
-        let range = object.start + version.start..object.start + version.end;
+        let span = object.start + version.start..object.start + version.end;
         claims.push(Claim {
+            path,
             kind: ClaimKind::Tool,
-            line: line_of(content, range.start),
-            range,
+            line: line_of(content, span.start),
+            text: content[span.clone()].to_owned(),
+            span,
         });
     }
     claims
 }
 
-/// Every current-version claim one inventoried document makes, in
-/// document order.
-fn document_claims(path: &str, content: &str, errors: &mut Vec<String>) -> Vec<Claim> {
+/// Every current-version claim the inventory makes in `docs`, in
+/// inventory order and, within a document, in document order.
+///
+/// A document whose claims cannot be located is an error rather than a
+/// partial answer: the inventory says what it states, so a duplicated,
+/// missing, or unreadable claim is drift in itself.
+pub fn claims(docs: &Snapshot) -> Result<Vec<Claim>, Vec<String>> {
+    let mut errors = Vec::new();
     let mut claims = Vec::new();
-    for &(inventoried, packages) in DEPENDENCY_SNIPPETS {
-        if inventoried == path {
-            claims.extend(dependency_claims(path, packages, content, errors));
-        }
+    for document in INVENTORY {
+        let content = docs
+            .get(document.path)
+            .expect("a snapshot holds every inventoried document");
+        let mut located = dependency_claims(document, content, &mut errors);
+        located.extend(tool_claims(document, content, &mut errors));
+        located.sort_by_key(|claim| claim.span.start);
+        claims.extend(located);
     }
-    for &(inventoried, expected_count) in TOOL_VERSION_SNIPPETS {
-        if inventoried == path {
-            claims.extend(tool_claims(path, expected_count, content, errors));
-        }
+    if errors.is_empty() {
+        Ok(claims)
+    } else {
+        Err(errors)
     }
-    claims.sort_by_key(|claim| claim.range.start);
-    claims
 }
 
-/// Every claim in the inventory, by document. A document missing from
-/// `docs` is an error rather than an empty result: the inventory says it
-/// makes a claim.
-fn snapshot_claims(docs: &Snapshot, errors: &mut Vec<String>) -> Vec<(&'static str, Vec<Claim>)> {
-    let mut claims = Vec::new();
-    for path in inventory_paths() {
-        let Some(content) = docs.get(path) else {
-            errors.push(format!("{path}: current-version document is missing"));
-            continue;
-        };
-        claims.push((path, document_claims(path, content, errors)));
+/// The byte range of the contents of the string literal whose opening
+/// quote is at `start`, and the offset just past its closing quote.
+fn json_string(text: &str, start: usize) -> Option<(Range<usize>, usize)> {
+    let bytes = text.as_bytes();
+    let mut cursor = start + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            // A JSON escape is always followed by one ASCII byte, so the
+            // cursor stays on a character boundary.
+            b'\\' => cursor += 2,
+            b'"' => return Some((start + 1..cursor, cursor + 1)),
+            _ => cursor += 1,
+        }
     }
-    claims
+    None
 }
 
 /// The byte ranges of the JSON objects introduced by `key` in `content`.
 fn json_objects_after_key(content: &str, key: &str) -> Result<Vec<Range<usize>>, String> {
+    let bytes = content.as_bytes();
     let mut objects = Vec::new();
     let mut search_from = 0;
     while let Some(relative) = content[search_from..].find(key) {
         let key_start = search_from + relative;
         let mut cursor = key_start + key.len();
-        let bytes = content.as_bytes();
         while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
             cursor += 1;
         }
@@ -454,63 +516,41 @@ fn json_objects_after_key(content: &str, key: &str) -> Result<Vec<Range<usize>>,
         }
 
         let start = cursor;
+        let unclosed = || format!("{key} JSON object is not closed");
         let mut depth = 0usize;
-        let mut in_string = false;
-        let mut escaped = false;
         let mut end = None;
-        for (offset, byte) in bytes[start..].iter().copied().enumerate() {
-            if in_string {
-                if escaped {
-                    escaped = false;
-                } else if byte == b'\\' {
-                    escaped = true;
-                } else if byte == b'"' {
-                    in_string = false;
+        while cursor < bytes.len() {
+            match bytes[cursor] {
+                b'"' => cursor = json_string(content, cursor).ok_or_else(unclosed)?.1,
+                b'{' => {
+                    depth += 1;
+                    cursor += 1;
                 }
-                continue;
-            }
-            match byte {
-                b'"' => in_string = true,
-                b'{' => depth += 1,
                 b'}' => {
                     depth -= 1;
+                    cursor += 1;
                     if depth == 0 {
-                        end = Some(start + offset + 1);
+                        end = Some(cursor);
                         break;
                     }
                 }
-                _ => {}
+                _ => cursor += 1,
             }
         }
-        let end = end.ok_or_else(|| format!("{key} JSON object is not closed"))?;
+        let end = end.ok_or_else(unclosed)?;
         objects.push(start..end);
         search_from = end;
     }
     Ok(objects)
 }
 
-/// The byte range of the contents of the string literal whose opening
-/// quote is at `start`, and the offset just past its closing quote.
-fn json_string(text: &str, start: usize) -> Option<(Range<usize>, usize)> {
-    let bytes = text.as_bytes();
-    let mut cursor = start + 1;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'\\' => cursor += 2,
-            b'"' => return Some((start + 1..cursor, cursor + 1)),
-            _ => cursor += 1,
-        }
-    }
-    None
-}
-
 /// The byte range of `object`'s own `key` string value, relative to
 /// `object`.
 ///
 /// Only the object's own members are considered: a `version` inside a
-/// nested object belongs to that object, not to this one. `object` must
-/// already have parsed as JSON.
-fn string_value_range(object: &str, key: &str) -> Option<Range<usize>> {
+/// nested object belongs to that object, and a string *value* that reads
+/// `version` is not a key. `object` must already have parsed as JSON.
+fn member_string(object: &str, key: &str) -> Option<Range<usize>> {
     let bytes = object.as_bytes();
     let mut cursor = 0;
     let mut depth = 0usize;
@@ -527,13 +567,16 @@ fn string_value_range(object: &str, key: &str) -> Option<Range<usize>> {
             b'"' => {
                 let (name, after) = json_string(object, cursor)?;
                 cursor = after;
-                if depth != 1 || &object[name] != key {
+                if depth != 1 || object.get(name) != Some(key) {
                     continue;
                 }
                 let mut value = after;
                 while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
                     value += 1;
                 }
+                // A member's name is followed by `:`; anything else means
+                // this string was a value that happens to read like the
+                // key.
                 if bytes.get(value) != Some(&b':') {
                     continue;
                 }
@@ -552,131 +595,110 @@ fn string_value_range(object: &str, key: &str) -> Option<Range<usize>> {
     None
 }
 
-/// The version every located claim in `docs` states, in document order.
-fn read_claims(
-    docs: &Snapshot,
-    errors: &mut Vec<String>,
-) -> Vec<(&'static str, ClaimKind, Version)> {
-    let mut versions = Vec::new();
-    for (path, located) in snapshot_claims(docs, errors) {
-        let content = &docs[path];
-        for claim in located {
-            let text = &content[claim.range.clone()];
-            let parsed = match claim.kind {
-                ClaimKind::Dependency(package) => Version::parse(&format!("{text}.0")).map_err(|_| {
-                    format!(
-                        "{path}:{}: `{package}` dependency must use an X.Y requirement, found {text:?}",
-                        claim.line
-                    )
-                }),
-                ClaimKind::Tool => Version::parse(text).map_err(|error| {
-                    format!("{path}: current `tool.version` {text:?} is invalid: {error}")
-                }),
-            };
-            match parsed {
-                Ok(version) => versions.push((path, claim.kind, version)),
-                Err(error) => errors.push(error),
-            }
-        }
-    }
-    versions
+/// The release the documentation describes: the one its first `"tool"`
+/// example states. Dependency requirements name that release's line.
+fn documented_release(claims: &[Claim]) -> Result<Version, String> {
+    claims
+        .iter()
+        .find(|claim| claim.kind == ClaimKind::Tool)
+        .ok_or_else(|| "the inventory states no current `tool.version` example".to_owned())?
+        .version()
 }
 
 /// Every way `docs` fails to describe one release line consistent with
 /// the `workspace` manifest.
 ///
-/// `require_manifest_match` is the release-PR rule: on a generated
-/// `release-plz-*` branch the documented version must equal the bumped
-/// manifest exactly. Off it, pre-dispatch staging of the next patch or
-/// minor is also accepted.
-pub fn validate(workspace: Version, docs: &Snapshot, require_manifest_match: bool) -> Vec<String> {
-    let mut errors = Vec::new();
-    let mut dependencies = Vec::new();
-    let mut tools = Vec::new();
-    for (path, kind, version) in read_claims(docs, &mut errors) {
-        match kind {
-            ClaimKind::Dependency(package) => dependencies.push((path, package, version)),
-            ClaimKind::Tool => tools.push((path, version)),
-        }
-    }
+/// Validation is exactly "staging would report no change": every located
+/// claim must already be spelled the way the writer would spell the
+/// release the documentation describes, and that release must be one the
+/// `mode` allows.
+pub fn validate(workspace: Version, docs: &Snapshot, mode: ReleaseMode) -> Vec<String> {
+    let claims = match claims(docs) {
+        Ok(claims) => claims,
+        Err(errors) => return errors,
+    };
+    let documented = match documented_release(&claims) {
+        Ok(documented) => documented,
+        Err(error) => return vec![error],
+    };
 
-    let dependency_version = dependencies.first().map(|(_, _, version)| *version);
-    if let Some(expected) = dependency_version {
-        for &(path, package, found) in &dependencies {
-            if found != expected {
-                errors.push(format!(
-                    "{path}: `{package}` uses dependency line {}, expected {}",
-                    found.dependency_line(),
-                    expected.dependency_line()
-                ));
-            }
-        }
-    }
+    let mut errors: Vec<_> = claims
+        .iter()
+        .filter_map(|claim| {
+            let expected = claim.kind.render(documented);
+            (claim.text != expected).then(|| {
+                format!(
+                    "{}:{}: {} states {}, expected {expected}",
+                    claim.path,
+                    claim.line,
+                    claim.kind.label(),
+                    claim.text
+                )
+            })
+        })
+        .collect();
 
-    let tool_version = tools.first().map(|(_, version)| *version);
-    if let Some(expected) = tool_version {
-        for &(path, found) in &tools {
-            if found != expected {
-                errors.push(format!(
-                    "{path}: `tool.version` is {found}, expected {expected}"
-                ));
-            }
-        }
-        if require_manifest_match && expected != workspace {
+    match mode {
+        ReleaseMode::ReleasePr if documented != workspace => errors.push(format!(
+            "release-plz PR docs describe {documented}, but Cargo.toml releases {workspace}"
+        )),
+        ReleaseMode::Staging if !documented.is_current_or_next_release_from(workspace) => {
             errors.push(format!(
-                "release-plz PR docs describe {expected}, but Cargo.toml releases {workspace}"
-            ));
-        } else if !require_manifest_match && !expected.is_current_or_next_release_from(workspace) {
-            errors.push(format!(
-                "current docs describe {expected}, but Cargo.toml is {workspace}; docs may describe only the current version, next patch, or next minor"
+                "current docs describe {documented}, but Cargo.toml is {workspace}; docs may describe only the current version, next patch, or next minor"
             ));
         }
+        _ => {}
     }
-
-    if let (Some(dependency), Some(tool)) = (dependency_version, tool_version)
-        && (dependency.major, dependency.minor) != (tool.major, tool.minor)
-    {
-        errors.push(format!(
-            "dependency snippets use {}, but current `tool.version` examples use {}",
-            dependency.dependency_line(),
-            tool.dependency_line()
-        ));
-    }
-
     errors
 }
 
-/// Whether this checkout is a generated release PR, in which every
-/// current-version claim must equal the bumped manifest.
-pub fn is_release_plz_pr(root: &Path) -> bool {
-    let branch = Command::new("git")
+/// The branch `root` has checked out, if git can say.
+pub fn current_branch(root: &Path) -> Option<String> {
+    Command::new("git")
         .arg("-C")
         .arg(root)
         .args(["branch", "--show-current"])
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
-    strict_release_mode(
-        std::env::var("ANIMSMITH_RELEASE_PR").ok().as_deref(),
-        std::env::var("GITHUB_HEAD_REF").ok().as_deref(),
-        branch.as_deref(),
-    )
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|branch| !branch.is_empty())
 }
 
-/// The release-PR decision itself, as a function of the signals a
-/// checkout carries: an explicit `ANIMSMITH_RELEASE_PR` override, the
-/// pull-request head branch CI exports, and the checked-out branch.
-pub fn strict_release_mode(
-    explicit: Option<&str>,
-    github_head_ref: Option<&str>,
+/// The mode a checkout carrying these signals is in.
+///
+/// An explicit `ANIMSMITH_RELEASE_PR` decides outright, so a local
+/// diagnostic run can ask for either mode. Otherwise the generated
+/// release branch is recognised by name, whether CI exports it as the
+/// pull-request head or the checkout simply has it.
+pub fn release_mode(
+    variable: impl Fn(&str) -> Option<String>,
     branch: Option<&str>,
-) -> bool {
-    if let Some(value) = explicit {
-        return matches!(value, "1" | "true");
+) -> ReleaseMode {
+    if let Some(value) = variable(RELEASE_PR_VARIABLE) {
+        return if matches!(value.as_str(), "1" | "true") {
+            ReleaseMode::ReleasePr
+        } else {
+            ReleaseMode::Staging
+        };
     }
-    github_head_ref.is_some_and(|head| head.starts_with("release-plz-"))
-        || branch.is_some_and(|branch| branch.starts_with("release-plz-"))
+    let is_release_branch = |name: &str| name.starts_with(RELEASE_BRANCH_PREFIX);
+    if variable(HEAD_REF_VARIABLE).is_some_and(|head| is_release_branch(&head))
+        || branch.is_some_and(is_release_branch)
+    {
+        ReleaseMode::ReleasePr
+    } else {
+        ReleaseMode::Staging
+    }
+}
+
+/// The mode the checkout at `root` is in, from its environment and its
+/// branch.
+pub fn checkout_release_mode(root: &Path) -> ReleaseMode {
+    release_mode(
+        |name| std::env::var(name).ok(),
+        current_branch(root).as_deref(),
+    )
 }
 
 /// `docs` with every located claim rewritten to `target`, and the changes
@@ -685,39 +707,73 @@ pub fn strict_release_mode(
 /// Only the located spans move: the syntax around a claim, and every
 /// other version-shaped string on the page, is copied through unchanged.
 /// A document whose claims cannot be located is an error rather than a
-/// partial rewrite.
+/// partial rewrite, so nothing is written when anything is unreadable.
 pub fn stage(docs: &Snapshot, target: Version) -> Result<(Snapshot, Vec<Change>), Vec<String>> {
-    let mut errors = Vec::new();
-    let claims = snapshot_claims(docs, &mut errors);
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-
+    let claims = claims(docs)?;
     let mut staged = docs.clone();
     let mut changes = Vec::new();
-    for (path, located) in claims {
+    for document in INVENTORY {
         let content = staged
-            .get_mut(path)
-            .expect("the snapshot holds every located document");
+            .get_mut(document.path)
+            .expect("a snapshot holds every inventoried document");
         // Later spans first: replacing one never moves an earlier one.
-        for claim in located.iter().rev() {
+        for claim in claims
+            .iter()
+            .filter(|claim| claim.path == document.path)
+            .rev()
+        {
             let replacement = claim.kind.render(target);
-            let current = &content[claim.range.clone()];
-            if current == replacement {
+            if claim.text == replacement {
                 continue;
             }
             changes.push(Change {
-                path,
+                path: claim.path,
                 line: claim.line,
-                claim: claim.kind.label(),
-                from: current.to_owned(),
+                kind: claim.kind,
+                from: claim.text.clone(),
                 to: replacement.clone(),
             });
-            content.replace_range(claim.range.clone(), &replacement);
+            content.replace_range(claim.span.clone(), &replacement);
         }
     }
     changes.sort_by(|left, right| (left.path, left.line).cmp(&(right.path, right.line)));
     Ok((staged, changes))
+}
+
+/// Rewrite every current-version claim under `root` to `target`, and
+/// report what moved.
+///
+/// `target` must be in the release window of the version `root`'s
+/// manifest releases — the same window [`validate`] accepts before the
+/// release workflow is dispatched. Only documents whose bytes change are
+/// written, so a second run writes nothing.
+pub fn stage_release_docs(root: &Path, target: Version) -> Result<Vec<Change>, String> {
+    let workspace = workspace_version(root)?;
+    if !target.is_current_or_next_release_from(workspace) {
+        let window = workspace
+            .release_window()
+            .map(|version| version.to_string())
+            .join(", ");
+        return Err(format!(
+            "{target} is not a release this checkout may document; Cargo.toml releases {workspace}, so the window is {window}"
+        ));
+    }
+
+    let docs = documentation_snapshot(root)?;
+    let (staged, changes) = stage(&docs, target).map_err(|errors| {
+        format!(
+            "current-version documentation cannot be read:\n- {}",
+            errors.join("\n- ")
+        )
+    })?;
+
+    let mut written: Vec<_> = changes.iter().map(|change| change.path).collect();
+    written.dedup();
+    for path in written {
+        std::fs::write(root.join(path), &staged[path])
+            .map_err(|error| format!("writes {path}: {error}"))?;
+    }
+    Ok(changes)
 }
 
 /// The version a `stage_release_docs` invocation targets, or `None` when
@@ -750,35 +806,69 @@ where
         .map_err(|error| format!("--version: {error}\n{usage}"))
 }
 
-/// Rewrite every current-version claim under `root` to `target`, and
-/// report what moved.
-///
-/// `target` must be the version `root`'s manifest releases, its next
-/// patch, or its next minor — the same window [`validate`] accepts before
-/// the release workflow is dispatched. Only documents whose bytes change
-/// are written, so a second run writes nothing.
-pub fn stage_release_docs(root: &Path, target: Version) -> Result<Vec<Change>, String> {
-    let workspace = workspace_version(root)?;
-    if !target.is_current_or_next_release_from(workspace) {
-        return Err(format!(
-            "{target} is neither the workspace version {workspace}, its next patch {}, nor its next minor {}",
-            workspace.next_patch(),
-            workspace.next_minor()
-        ));
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The objects `key` introduces, as the text they select.
+    fn objects(content: &str) -> Result<Vec<&str>, String> {
+        json_objects_after_key(content, "\"tool\"")
+            .map(|ranges| ranges.into_iter().map(|range| &content[range]).collect())
     }
 
-    let docs = documentation_snapshot(root)?;
-    let (staged, changes) = stage(&docs, target).map_err(|errors| {
-        format!(
-            "current-version documentation cannot be read:\n- {}",
-            errors.join("\n- ")
-        )
-    })?;
-
-    let written: BTreeSet<_> = changes.iter().map(|change| change.path).collect();
-    for path in written {
-        std::fs::write(root.join(path), &staged[path])
-            .map_err(|error| format!("writes {path}: {error}"))?;
+    #[test]
+    fn a_tool_key_that_introduces_no_object_is_an_error() {
+        assert_eq!(
+            objects("\"tool\": [\"animsmith\"]"),
+            Err("\"tool\" must introduce a JSON object".to_owned()),
+            "a key the page uses for something else is drift, not a claim"
+        );
+        assert_eq!(
+            objects("\"tool\": { \"name\": \"animsmith\""),
+            Err("\"tool\" JSON object is not closed".to_owned()),
+            "a truncated example states nothing"
+        );
+        assert_eq!(
+            objects("\"tool\": { \"name\": \"} not the end\" }"),
+            Ok(vec!["{ \"name\": \"} not the end\" }"]),
+            "a brace inside a string does not close the object"
+        );
     }
-    Ok(changes)
+
+    #[test]
+    fn a_tool_key_without_a_colon_is_prose_rather_than_a_claim() {
+        assert_eq!(
+            objects("the \"tool\" field, and \"tool\": { \"a\": 1 }"),
+            Ok(vec!["{ \"a\": 1 }"]),
+            "only the mention that introduces an object is read"
+        );
+    }
+
+    #[test]
+    fn only_an_objects_own_string_member_is_located() {
+        let object = "{ \"source\": { \"version\": \"9.9.9\" }, \"version\": \"0.1.2\" }";
+        let located = member_string(object, "version").expect("the object's own version");
+        assert_eq!(
+            &object[located], "0.1.2",
+            "a nested version is not this one"
+        );
+
+        let value_shaped = "{ \"note\": \"version\", \"version\": \"0.1.2\" }";
+        let located = member_string(value_shaped, "version").expect("the object's own version");
+        assert_eq!(
+            &value_shaped[located], "0.1.2",
+            "a string value that reads like the key is not a member name"
+        );
+
+        assert_eq!(
+            member_string("{ \"version\": 12 }", "version"),
+            None,
+            "a version that is not a string carries no text to move"
+        );
+        assert_eq!(
+            member_string("{ \"name\": \"animsmith\" }", "version"),
+            None,
+            "an object without the member states nothing"
+        );
+    }
 }
