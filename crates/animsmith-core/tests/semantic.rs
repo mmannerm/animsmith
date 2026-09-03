@@ -1143,3 +1143,103 @@ fn circular_spread_handles_wrap() {
     let spread = circular_phase_spread(&[0.25, 0.75]);
     assert!((spread - 0.25).abs() < 1e-6, "got {spread}");
 }
+
+/// Extracting the circular mean out of `circular_phase_spread` must not move
+/// a single bit of the spread: the number is a reference-implementation port
+/// that lint text, collection evidence and the foot-cycle proof all print.
+///
+/// The reference below is the arithmetic as it stood before the extraction,
+/// so the comparison is exact on any platform rather than pinned to literals
+/// one machine's `libm` produced.
+#[test]
+fn circular_spread_keeps_its_reference_arithmetic() {
+    use animsmith_core::metrics::circular_phase_spread;
+    use std::f64::consts::{PI, TAU};
+
+    fn reference_spread(phases: &[f64]) -> f64 {
+        let (mut sin_sum, mut cos_sum) = (0.0f64, 0.0f64);
+        for p in phases {
+            sin_sum += (p * TAU).sin();
+            cos_sum += (p * TAU).cos();
+        }
+        let mean = sin_sum.atan2(cos_sum);
+        let mut max_dev = 0.0f64;
+        for p in phases {
+            let mut d = (p * TAU - mean).abs() % TAU;
+            if d > PI {
+                d = TAU - d;
+            }
+            max_dev = max_dev.max(d / TAU);
+        }
+        max_dev
+    }
+
+    for phases in [
+        &[][..],
+        &[0.75][..],
+        &[0.98, 0.02][..],
+        &[0.25, 0.75][..],
+        &[0.0, 0.5][..],
+        &[0.75, 0.75, 0.50, 0.75][..],
+        &[0.1, 0.2, 0.3, 0.4, 0.9][..],
+    ] {
+        assert_eq!(
+            circular_phase_spread(phases),
+            reference_spread(phases),
+            "the spread of {phases:?} moved"
+        );
+    }
+}
+
+/// The circular mean is the centre the spread measures deviations from, on
+/// the `[0, 1)` cycle axis a caller draws a tolerance band on.
+#[test]
+fn circular_mean_is_the_centre_the_spread_measures_from() {
+    use animsmith_core::metrics::{circular_phase_mean, circular_phase_spread};
+
+    assert_eq!(circular_phase_mean(&[]), None, "an empty set has no mean");
+
+    // Cycle distance on the ring, which is what a band around the mean has
+    // to contain.
+    let distance = |a: f64, b: f64| {
+        let d = (a - b).abs() % 1.0;
+        d.min(1.0 - d)
+    };
+    for phases in [
+        &[0.25][..],
+        &[0.98, 0.02][..],
+        &[0.25, 0.75][..],
+        &[0.75, 0.75, 0.50, 0.75][..],
+        &[0.1, 0.2, 0.3, 0.4, 0.9][..],
+    ] {
+        let mean = circular_phase_mean(phases).expect("a non-empty set has a mean");
+        assert!(
+            (0.0..1.0).contains(&mean),
+            "the mean of {phases:?} is a cycle position: {mean}"
+        );
+        let widest = phases
+            .iter()
+            .map(|&p| distance(p, mean))
+            .fold(0.0f64, f64::max);
+        assert!(
+            (widest - circular_phase_spread(phases)).abs() < 1e-12,
+            "the spread of {phases:?} is the widest deviation from its mean: \
+             {widest} against {}",
+            circular_phase_spread(phases)
+        );
+    }
+
+    // A single phase is its own mean, and a wrapped pair means the wrap
+    // point rather than the far side of the ring.
+    assert!((circular_phase_mean(&[0.25]).expect("one phase") - 0.25).abs() < 1e-12);
+    let wrapped = circular_phase_mean(&[0.98, 0.02]).expect("a wrapped pair");
+    assert!(
+        distance(wrapped, 0.0) < 1e-12,
+        "a pair either side of the wrap means the wrap: {wrapped}"
+    );
+    let ring = circular_phase_mean(&[0.75, 0.75, 0.50, 0.75]).expect("the run-ring anchors");
+    assert!(
+        (ring - 0.698_78).abs() < 1e-4,
+        "the mean leans toward the three coherent members: {ring}"
+    );
+}

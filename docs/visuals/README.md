@@ -42,8 +42,7 @@ generator and that test both drive.
 | `walk.foot-height.svg` | foot-height figure of `walk.report.html` | |
 | `walk.root-path.svg` | root-path figure of `walk.report.html` | |
 | `walk-travel.root-path.svg` | root-path figure of `walk-travel.report.html` | |
-| `run-ring.run-forward.foot-height.svg` | foot-height figure of clip `run_forward` in `run-ring.report.html` | |
-| `run-ring.run-left.foot-height.svg` | foot-height figure of clip `run_left` in `run-ring.report.html` | |
+| `run-ring.gait-group.svg` | gait-group figure of group `run-ring` in `run-ring.report.html` | |
 | `foot-slide-before.foot-height.svg` | foot-height figure of `foot-slide-before.report.html` | |
 | `foot-slide-after.foot-height.svg` | foot-height figure of `foot-slide-after.report.html` | |
 
@@ -72,9 +71,12 @@ picture here becomes the picture itself, and a frame becomes a
 site-absolute path, which is the one spelling that resolves both on the
 chapter page and on mdBook's aggregated print page.
 
-A report of more than one clip carries one figure per clip, so a chart
-cut out of it names the clip as well as the figure kind; an ambiguous
-selector is an error rather than a silent first match.
+A report of more than one clip carries one figure per clip, and a report
+with declared gait groups carries one figure per group as well, so a chart
+cut out of either names its subject — the clip or the group — as well as the
+figure kind; an ambiguous selector is an error rather than a silent first
+match. A group figure carries the group's members on one shared phase axis,
+so it is one picture where two per-clip charts side by side used to be.
 
 A chart earns a file only where a still picture carries the symptom on
 its own. `walk-travel.glb` is why the root-path figures are committed:

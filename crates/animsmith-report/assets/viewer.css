@@ -38,6 +38,27 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
    on top of one foot curve, and a solid line there would simply disappear. */
 .series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
+/* A gait group's members share one figure, so each one needs its own colour
+   and its stride-anchor mark needs the same colour again: the mark says which
+   curve entered the stride there. Six members is the whole series palette. */
+.series-member-0, .series-member-1, .series-member-2,
+.series-member-3, .series-member-4, .series-member-5 { fill: none; stroke-width: 1.5; }
+.anchor-member-0, .anchor-member-1, .anchor-member-2,
+.anchor-member-3, .anchor-member-4, .anchor-member-5 { stroke-width: 2.5; }
+/* Members of a coherent group draw the same curve and land on the same
+   anchor, so every one after the first would hide the ones under it. Each
+   member carries its own dash pattern as well as its own colour, and the
+   coincident ones then interleave instead of covering each other. */
+.series-member-0, .anchor-member-0 { stroke: var(--accent); }
+.series-member-1, .anchor-member-1 { stroke: var(--warning); stroke-dasharray: 7 4; }
+.series-member-2, .anchor-member-2 { stroke: var(--pass); stroke-dasharray: 2 3; }
+.series-member-3, .anchor-member-3 { stroke: var(--note); stroke-dasharray: 12 5; }
+.series-member-4, .anchor-member-4 { stroke: var(--error); stroke-dasharray: 4 2 1 2; }
+.series-member-5, .anchor-member-5 { stroke: var(--muted); stroke-dasharray: 1 4; }
+/* The tolerance the group declares, drawn as a region rather than a line:
+   the anchors inside it are the ones within the cap. It sits under every
+   curve, so it is tinted rather than painted. */
+.phase-band { fill: var(--pass); opacity: 0.16; }
 /* Where a top-down track starts and where it ends, in the track's own
    colour: a hollow circle and a filled square, so a clip that walks out and
    never returns is not the same picture as one that comes back over its own

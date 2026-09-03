@@ -707,7 +707,14 @@ to *that* frame N. Determinism is the feature.
 - **Charts**: Rust-generated inline SVG — root-motion top-down path, foot
   heights, L−R gait signal with the fitted fundamental, per-bone
   seam-delta bars — with a small shared JS playhead syncing a cursor line
-  across all charts and the 3D view.
+  across all charts and the 3D view. A declared `gait_groups` blend ring
+  adds one cross-clip figure per group: every member's L−R foot height on
+  one unshifted normalized source-phase axis, each measured stride anchor
+  marked at its own phase, and the group's `max_gait_phase_spread` drawn
+  as a band around their circular mean. The members are never aligned to
+  their anchors, because that would erase the disagreement the figure is
+  evidence for, and no member is nominated as the reference the others are
+  judged against — the check judges the set's spread and names none.
 - **Findings panel**: each finding links to its clip + time; clicking
   scrubs the viewer.
 - A skinned-mesh view (vendored three.js, `--report full`) is a P2 option

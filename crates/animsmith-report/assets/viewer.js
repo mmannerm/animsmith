@@ -217,7 +217,12 @@ function updateCharts() {
   if (!clip) return;
   const u = clip.frames > 1 ? frame / (clip.frames - 1) : 0;
   for (const fig of document.querySelectorAll(".chart")) {
-    const active = fig.dataset.clip === clip.name;
+    // A group figure draws every member of a declared gait group against the
+    // others, so it stays visible whichever member is selected; a clip
+    // figure belongs to its own clip. Its playhead follows the selected
+    // clip's phase either way, because that is the position the reader is
+    // scrubbing on the shared axis.
+    const active = "group" in fig.dataset || fig.dataset.clip === clip.name;
     fig.style.display = active ? "" : "none";
     if (!active) continue;
     const playhead = fig.querySelector(".playhead");

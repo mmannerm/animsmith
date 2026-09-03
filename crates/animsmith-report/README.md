@@ -28,10 +28,22 @@ along with the `embed`, `clip`, `frame`, and `finding` options. Each chart is
 a self-describing `<figure>` — `viewBox`, `role="img"`, an `aria-label` naming
 the plotted series and their units, an in-chart legend, and axis labels —
 whose paint comes from stable series classes (`series-left`, `series-right`,
-`series-diff`, `root-path`) rather than per-element attributes, so a figure
-lifted out of the report keeps its meaning. The `data-clip`, `data-kind`,
+`series-diff`, `root-path`, and for a gait group `series-member-0`…`5`,
+`anchor-member-0`…`5` and `phase-band`) rather than per-element attributes, so
+a figure lifted out of the report keeps its meaning. The `data-kind`,
 `data-pad`, and `data-plotw` hooks the playhead uses are part of that
-contract.
+contract, along with the subject a figure names: `data-clip` for the gait and
+root-path figures of one clip, `data-group` for the figure a declared gait
+group draws its members on.
+
+That group figure is why `render` takes the `Config` the checks were
+evaluated under: a coherent group emits no finding carrying its membership or
+its cap, so the declarations are the only authority for it. Every member is
+drawn on one unshifted normalized source-phase axis, each measured stride
+anchor is marked at its own phase, and the group's `max_gait_phase_spread` is
+drawn as a band around their circular mean. The figure names no canonical
+member, because the check does not have one: it states which measured anchors
+lie outside that band.
 
 `render_comparison` is the deliberately narrow before/after companion. Call
 `preflight_comparison_sources` on the two exact `LoadedSource` authorities

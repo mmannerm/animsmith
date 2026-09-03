@@ -31,7 +31,12 @@ checks judged, not from an assumption about what the clip is. A clip declared
 travelling at that speed, with no claim about the shape it travels; a clip
 that declares neither is told so, and named the checks that judged it. A root
 path is also marked where the track starts (a hollow circle) and where it ends
-(a filled square), and the caption states how far apart the two are.
+(a filled square), and the caption states how far apart the two are. A
+configuration that declares a `[gait_groups.<name>]` blend ring adds one
+further figure per group, drawing every member's left-minus-right foot height
+on one shared stride-phase axis with the declared tolerance as a band; that
+figure stays on screen whichever member you select, because comparing them is
+what it is for.
 
 ## Compare before and after
 

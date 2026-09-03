@@ -2030,6 +2030,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     &grids,
                     &roles,
                     &evaluations,
+                    config,
                     prediction_provenance.as_ref(),
                     clip.as_deref(),
                     report_options,

@@ -4,15 +4,16 @@
 // full and evidence-only shape. The DOM and WebGL stubs are deliberately
 // thin — everything asserted here is something a reader would see.
 const fs = require("fs"), vm = require("vm");
-if (process.argv.length !== 7) {
-  throw new Error("usage: test-report-viewers.js COMPARISON.html COMPARISON-EVIDENCE.html REPORT.html REPORT-EVIDENCE.html REPORT-MULTI-CLIP.html");
+if (process.argv.length !== 8) {
+  throw new Error("usage: test-report-viewers.js COMPARISON.html COMPARISON-EVIDENCE.html REPORT.html REPORT-EVIDENCE.html REPORT-MULTI-CLIP.html REPORT-GAIT-GROUP.html");
 }
-const [, , comparisonPath, comparisonEvidencePath, singlePath, singleEvidencePath, multiPath] = process.argv;
+const [, , comparisonPath, comparisonEvidencePath, singlePath, singleEvidencePath, multiPath, groupPath] = process.argv;
 const html = fs.readFileSync(comparisonPath, "utf8");
 const comparisonEvidenceHtml = fs.readFileSync(comparisonEvidencePath, "utf8");
 const singleHtml = fs.readFileSync(singlePath, "utf8");
 const singleEvidenceHtml = fs.readFileSync(singleEvidencePath, "utf8");
 const multiHtml = fs.readFileSync(multiPath, "utf8");
+const groupHtml = fs.readFileSync(groupPath, "utf8");
 
 function generatedReportParts(source) {
   const match = source.match(/<script>([\s\S]*?)<\/script><script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script><script>([\s\S]*?)<\/script><\/body><\/html>\s*$/);
@@ -1691,6 +1692,60 @@ assertNoHashWrites(selectionNav, "navigating the single-clip viewer");
 assertNoHashWrites(clipNav, "navigating clips");
 assertNoHashWrites(evidenceSingle, "scrubbing an evidence-only report");
 assertNoHashWrites(evidenceRun, "an evidence-only comparison");
+
+// ---- gait-group figures ------------------------------------------------
+// A declared gait group draws every member on one figure, so that figure is
+// evidence about the document rather than about one clip: it stays visible
+// whichever member the reader selects, while a member's own gait chart is
+// shown only on its own clip. Its playhead follows the phase being scrubbed,
+// because the axis every member is drawn on is that same normalized phase.
+const group = singleReportParts(groupHtml);
+const groupPayload = JSON.parse(group.payload);
+if (groupPayload.clips.length < 2) throw new Error("the gait-group fixture must embed more than one member");
+const groupFigures = documentCharts(groupHtml).filter((figure) => figure.dataset.kind === "gait-group");
+if (groupFigures.length !== 1) throw new Error(`the gait-group fixture must render exactly one group figure, saw ${groupFigures.length}`);
+if (groupFigures[0].dataset.clip !== undefined) throw new Error("a group figure must carry no data-clip, or it would be hidden with its clip");
+if (groupFigures[0].dataset.group !== "run-ring") throw new Error(`the group figure names its group: ${groupFigures[0].dataset.group}`);
+const groupPad = Number(groupFigures[0].dataset.pad), groupPlotW = Number(groupFigures[0].dataset.plotw);
+if (!(groupPad > 0) || !(groupPlotW > 0)) throw new Error("the group figure does not publish its plot rectangle");
+
+const figureOf = (state, select) => {
+  const figure = state.charts.find(select);
+  if (!figure) throw new Error("the run does not carry the figure under test");
+  return figure;
+};
+const groupFigureOf = (state) => figureOf(state, (figure) => figure.dataset.kind === "gait-group");
+const memberGaitOf = (state, name) => figureOf(state, (figure) => figure.dataset.kind === "gait" && figure.dataset.clip === name);
+const groupPlayheadOf = (state) => {
+  // An unplaced playhead reads as `undefined`, and every comparison against
+  // NaN is false: a viewer that stopped moving this figure's playhead would
+  // otherwise satisfy every assertion below.
+  const at = groupFigureOf(state).query[".playhead"].attrs.x1;
+  if (!Number.isFinite(Number(at))) throw new Error(`the group figure's playhead was never placed: ${at}`);
+  return Number(at);
+};
+const groupRun = runSingle(group, groupHtml, groupPayload);
+const [firstMember, secondMember] = groupPayload.clips;
+if (firstMember.name === secondMember.name) throw new Error("the gait-group fixture must embed distinguishable members");
+if (groupFigureOf(groupRun).style.display === "none") throw new Error("the group figure is hidden on the clip the report opens with");
+if (memberGaitOf(groupRun, secondMember.name).style.display !== "none") throw new Error("an unselected member's own gait chart stayed visible");
+groupRun.nodes["clip-select"].value = secondMember.name;
+groupRun.nodes["clip-select"].listeners.change();
+if (groupFigureOf(groupRun).style.display === "none") throw new Error("selecting another member hid the group figure");
+if (memberGaitOf(groupRun, firstMember.name).style.display !== "none") throw new Error("the previously selected member's own gait chart stayed visible");
+if (memberGaitOf(groupRun, secondMember.name).style.display === "none") throw new Error("the selected member's own gait chart is hidden");
+if (Math.abs(groupPlayheadOf(groupRun) - groupPad) > 1e-6) throw new Error(`the group playhead did not return to phase 0 with the new member: ${groupPlayheadOf(groupRun)}`);
+const groupLastFrame = secondMember.frames - 1;
+groupRun.nodes.scrub.value = String(groupLastFrame);
+groupRun.nodes.scrub.listeners.input();
+if (Math.abs(groupPlayheadOf(groupRun) - (groupPad + groupPlotW)) > 1e-6) throw new Error(`scrubbing to the last frame left the group playhead at ${groupPlayheadOf(groupRun)}`);
+if (groupFigureOf(groupRun).style.display === "none") throw new Error("scrubbing hid the group figure");
+const groupMidFrame = Math.round(groupLastFrame / 2);
+groupRun.nodes.scrub.value = String(groupMidFrame);
+groupRun.nodes.scrub.listeners.input();
+const groupExpected = groupPad + groupPlotW * (groupMidFrame / groupLastFrame);
+if (Math.abs(groupPlayheadOf(groupRun) - groupExpected) > 1e-6) throw new Error(`the group playhead follows the scrubbed phase: ${groupPlayheadOf(groupRun)} against ${groupExpected}`);
+assertNoHashWrites(groupRun, "selecting a member of a gait group");
 
 // ---- system theme changes ----------------------------------------------
 // The CSS follows prefers-color-scheme on its own; the canvas views have to

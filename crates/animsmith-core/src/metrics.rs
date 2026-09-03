@@ -709,17 +709,53 @@ pub fn rotation_range_deg(track: &Track) -> Option<f64> {
     Some(max_deg)
 }
 
-/// Maximum circular distance (in cycle fraction, `[0, 0.5]`) of a set of
-/// normalized phases from their circular mean. Phases live on a ring, so
-/// a naive max−min would over-report a cluster straddling the 0/1 wrap.
-pub fn circular_phase_spread(phases: &[f64]) -> f64 {
-    use std::f64::consts::{PI, TAU};
+/// Direction of the resultant of a set of normalized phases, in radians.
+///
+/// One place computes the mean, so [`circular_phase_spread`] and
+/// [`circular_phase_mean`] cannot drift apart: the spread is the maximum
+/// deviation from exactly the direction the mean names. An empty set has no
+/// resultant. A set whose vectors cancel keeps whatever direction `atan2`
+/// derives from the residual sums — the same direction the spread has always
+/// been measured from.
+fn circular_mean_radians(phases: &[f64]) -> Option<f64> {
+    use std::f64::consts::TAU;
+    if phases.is_empty() {
+        return None;
+    }
     let (mut sin_sum, mut cos_sum) = (0.0f64, 0.0f64);
     for p in phases {
         sin_sum += (p * TAU).sin();
         cos_sum += (p * TAU).cos();
     }
-    let mean = sin_sum.atan2(cos_sum);
+    Some(sin_sum.atan2(cos_sum))
+}
+
+/// Circular mean of a set of normalized phases, as a cycle position in
+/// `[0, 1)`; `None` for an empty set, which has no mean direction.
+///
+/// This is the centre [`circular_phase_spread`] measures deviations from,
+/// on the same `[0, 1)` cycle axis the phases themselves live on. A caller
+/// drawing a tolerance around a group of phases needs the centre as well as
+/// the spread.
+pub fn circular_phase_mean(phases: &[f64]) -> Option<f64> {
+    use std::f64::consts::TAU;
+    circular_mean_radians(phases).map(|mean| {
+        let phase = (mean / TAU).rem_euclid(1.0);
+        // A mean a hair below zero divides to a magnitude under the ulp of
+        // one, and `rem_euclid` then rounds the wrap up to exactly 1.0. The
+        // cycle position of a full turn is zero.
+        if phase < 1.0 { phase } else { 0.0 }
+    })
+}
+
+/// Maximum circular distance (in cycle fraction, `[0, 0.5]`) of a set of
+/// normalized phases from their circular mean. Phases live on a ring, so
+/// a naive max−min would over-report a cluster straddling the 0/1 wrap.
+pub fn circular_phase_spread(phases: &[f64]) -> f64 {
+    use std::f64::consts::{PI, TAU};
+    let Some(mean) = circular_mean_radians(phases) else {
+        return 0.0;
+    };
     let mut max_dev = 0.0f64;
     for p in phases {
         let mut d = (p * TAU - mean).abs() % TAU;
