@@ -185,6 +185,8 @@ function assertNoBareSvgText(nodes, svgIds, why) {
   }
 }
 
+// The drawn width of an end mark, which is how close two of them may be.
+const MARK_WIDTH = 7;
 const comparisonSvgs = ["comparison-root-path","before-path","after-path","before-gait","after-gait"];
 
 for (const side of [data.before, data.after]) {
@@ -438,17 +440,33 @@ function assertEndMarks(children, attribute, dotAttribute, value, metres, map, w
   const squareCentre = [Number(square.attrs.x) + half, Number(square.attrs.y) + half];
   const clearance = Math.hypot(squareCentre[0] - Number(dot.attrs.cx), squareCentre[1] - Number(dot.attrs.cy)) + half;
   if (!(clearance > Number(dot.attrs.r) + 2)) throw new Error(`${what}: the end mark lies inside its own phase dot (reaches ${clearance} against r ${dot.attrs.r})`);
-  const start = map(metres[0]), end = map(metres[metres.length - 1]);
-  if (Math.abs(circle.attrs.cx - start[0]) > 1e-6 || Math.abs(circle.attrs.cy - start[1]) > 1e-6) throw new Error(`${what}: the start mark is at ${circle.attrs.cx},${circle.attrs.cy} rather than the first sampled frame's ${start}`);
-  // The end mark sits on the last sampled frame, or steps aside with a
-  // leader back to it.
-  const leader = children.find((child) => child.attrs[attribute] === `${value}-leader`);
-  if (leader) {
-    if (Math.abs(leader.attrs.x1 - end[0]) > 1e-6 || Math.abs(leader.attrs.y1 - end[1]) > 1e-6) throw new Error(`${what}: the leader does not start at the last sampled frame's ${end}`);
-    if (Math.abs(leader.attrs.x2 - squareCentre[0]) > 1e-6 || Math.abs(leader.attrs.y2 - squareCentre[1]) > 1e-6) throw new Error(`${what}: the leader does not reach the end mark it explains`);
-  } else if (Math.abs(squareCentre[0] - end[0]) > 1e-6 || Math.abs(squareCentre[1] - end[1]) > 1e-6) {
-    throw new Error(`${what}: the end mark is neither centred on the last sampled frame's ${end} nor offset with a leader`);
+  // No two marks in this panel may share a coordinate: a filled square hides
+  // whatever is under it, and a ring hides one of its own radius.
+  for (const other of children) {
+    const marker = other.attrs[attribute];
+    if (!marker || other === square || !marker.endsWith("-end")) continue;
+    const otherCentre = [Number(other.attrs.x) + Number(other.attrs.width) / 2, Number(other.attrs.y) + Number(other.attrs.height) / 2];
+    if (Math.hypot(otherCentre[0] - squareCentre[0], otherCentre[1] - squareCentre[1]) < Number(square.attrs.width)) throw new Error(`${what}: its end mark shares a coordinate with ${marker}, and a filled square hides what is under it`);
   }
+  for (const other of children) {
+    const marker = other.attrs[attribute];
+    if (!marker || other === circle || !marker.endsWith("-start")) continue;
+    if (Number(other.attrs.r) !== Number(circle.attrs.r)) continue;
+    if (Math.hypot(Number(other.attrs.cx) - Number(circle.attrs.cx), Number(other.attrs.cy) - Number(circle.attrs.cy)) < Number(square.attrs.width)) throw new Error(`${what}: its start ring shares a coordinate and a radius with ${marker}, so one hides the other`);
+  }
+  // Each mark sits on the sampled frame it stands for, or steps aside with a
+  // leader back to it.
+  const anchored = (kind, mark, centre, point) => {
+    const leader = children.find((child) => child.attrs[attribute] === `${value}-${kind}-leader`);
+    if (!leader) {
+      if (Math.hypot(centre[0] - point[0], centre[1] - point[1]) > 1e-6) throw new Error(`${what}: the ${kind} mark is neither on the frame it stands for (${point}) nor offset with a leader, but at ${centre}`);
+      return;
+    }
+    if (Math.abs(leader.attrs.x1 - point[0]) > 1e-6 || Math.abs(leader.attrs.y1 - point[1]) > 1e-6) throw new Error(`${what}: the ${kind} leader does not start at the frame it stands for (${point})`);
+    if (Math.abs(leader.attrs.x2 - centre[0]) > 1e-6 || Math.abs(leader.attrs.y2 - centre[1]) > 1e-6) throw new Error(`${what}: the ${kind} leader does not reach the mark it explains`);
+  };
+  anchored("start", circle, [Number(circle.attrs.cx), Number(circle.attrs.cy)], map(metres[0]));
+  anchored("end", square, squareCentre, map(metres[metres.length - 1]));
 }
 const finiteTrail = (payload, side, role) => payloadTrail(payload, side, role).filter((point) => point.every(Number.isFinite));
 
@@ -553,7 +571,43 @@ if (closedCaption.includes("from its start")) throw new Error(`a closed root loo
 // end mark must have stepped aside rather than hidden inside the dot.
 const closedGeometry = rootGeometry(closedRoots);
 assertEndMarks(closedRun.nodes["comparison-root-path"].children, "data-root-marker", "data-root-dot", "before", finiteTrail(closedRoots, "before", "root"), closedGeometry.map, "the before root track of a closed loop");
-if (!closedRun.nodes["comparison-root-path"].children.some((child) => child.attrs["data-root-marker"] === "before-leader")) throw new Error("a closed root loop draws its two ends on one coordinate without stepping the end mark aside");
+if (!closedRun.nodes["comparison-root-path"].children.some((child) => child.attrs["data-root-marker"] === "before-end-leader")) throw new Error("a closed root loop draws its two ends on one coordinate without stepping the end mark aside");
+
+// Two root paths that differ everywhere but begin and end at one point put
+// their squares on the same coordinate exactly as two identical paths do, so
+// the lane a mark takes is allocated from where it would be plotted rather
+// than from whether the paths match.
+const sharedEnds = JSON.parse(JSON.stringify(data));
+// Two loops through the origin, one arcing each way: every frame between
+// the ends differs, and both ends are the same coordinate.
+for (const [name, sense] of [["before", 1], ["after", -1]]) {
+  const side = sharedEnds[name], bone = side.clip.trails.root;
+  const buffer = Buffer.from(side.clip.positions, "base64");
+  for (let frame = 0; frame < side.clip.frames; frame++) {
+    const base = (frame * sharedEnds.bones.length + bone) * 3;
+    const angle = 2 * Math.PI * frame / (side.clip.frames - 1);
+    buffer.writeFloatLE(Math.sin(angle) * 0.02, base * 4);
+    buffer.writeFloatLE(sense * (1 - Math.cos(angle)) * 0.02, (base + 2) * 4);
+  }
+  side.clip.positions = buffer.toString("base64");
+}
+const sharedEndsRun = run(generated, "comparison-report-data", html, sharedEnds);
+const sharedEndsCaption = sharedEndsRun.nodes["comparison-root-path-caption"].textContent;
+if (!sharedEndsCaption.includes("the before and after paths differ")) throw new Error(`the shared-endpoint fixture must carry two different paths: ${sharedEndsCaption}`);
+const sharedEndsGeometry = rootGeometry(sharedEnds);
+const endsOf = (side) => {
+  const points = finiteTrail(sharedEnds, side, "root");
+  return [sharedEndsGeometry.map(points[0]), sharedEndsGeometry.map(points[points.length - 1])];
+};
+if (Math.hypot(endsOf("before")[1][0] - endsOf("after")[1][0], endsOf("before")[1][1] - endsOf("after")[1][1]) > 1e-6) throw new Error("the shared-endpoint fixture must plot both tracks' last frames on one coordinate");
+for (const side of ["before", "after"]) {
+  assertEndMarks(sharedEndsRun.nodes["comparison-root-path"].children, "data-root-marker", "data-root-dot", side, finiteTrail(sharedEnds, side, "root"), sharedEndsGeometry.map, `the ${side} root track of two paths that share their endpoints`);
+}
+const sharedEndsSquare = (side) => {
+  const mark = sharedEndsRun.nodes["comparison-root-path"].children.find((child) => child.attrs["data-root-marker"] === `${side}-end`);
+  return [Number(mark.attrs.x) + Number(mark.attrs.width) / 2, Number(mark.attrs.y) + Number(mark.attrs.height) / 2];
+};
+if (Math.hypot(sharedEndsSquare("before")[0] - sharedEndsSquare("after")[0], sharedEndsSquare("before")[1] - sharedEndsSquare("after")[1]) < MARK_WIDTH) throw new Error("two different paths that end on one coordinate drew their end squares in the same lane, and a filled square hides what is under it");
 
 // ---- the scale bar's other branches ------------------------------------
 // A payload whose four role trails occupy prescribed X/Z boxes, so the two
@@ -1279,6 +1333,21 @@ if (clipNav.nodes["clip-select"].value !== firstClip.name) throw new Error("an u
 navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
 navigate(clipNav, "#theme=light");
 if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("a fragment without a clip changed the selected clip");
+
+// Selecting another clip through the fragment is the same ask as a frame or
+// a finding: a running report would put the first clip's next frame over it.
+const clipWhilePlaying = runMulti();
+clipWhilePlaying.nodes.play.listeners.click();
+if (!clipWhilePlaying.clock.pending.size) throw new Error("the multi-clip playback fixture never started playing");
+navigate(clipWhilePlaying, `#clip=${encodeURIComponent(secondClip.name)}`);
+if (clipWhilePlaying.nodes.play.textContent !== "▶") throw new Error("navigating to another clip did not pause the multi-clip report");
+if (clipWhilePlaying.nodes["clip-select"].value !== secondClip.name) throw new Error("navigating to another clip did not select it");
+const selectedFrame = Number(clipWhilePlaying.nodes.scrub.value);
+stepFrame(clipWhilePlaying, 1);
+stepFrame(clipWhilePlaying, 1);
+if (clipWhilePlaying.nodes["clip-select"].value !== secondClip.name) throw new Error("a frame callback moved off the deep-linked clip");
+if (Number(clipWhilePlaying.nodes.scrub.value) !== selectedFrame) throw new Error(`a frame callback overwrote the frame the deep-linked clip opened on: ${clipWhilePlaying.nodes.scrub.value} against ${selectedFrame}`);
+assertNoHashWrites(clipWhilePlaying, "deep-linking a clip while playing");
 
 assertNoHashWrites(selectionNav, "navigating the single-clip viewer");
 assertNoHashWrites(clipNav, "navigating clips");

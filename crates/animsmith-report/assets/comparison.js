@@ -277,6 +277,7 @@ function drawRootComparison(palette, phase) {
     after: { color: palette.warning, dash: "7 5", width: 1.6, opacity: .7, radius: 3.5 },
   };
   const identical = rootTracksIdentical();
+  const place = markLanes(ROOT_PANEL);
   for (const name of ["before", "after"]) {
     const points = rootTrack(data[name]), style = styles[name];
     if (!points) continue;
@@ -287,10 +288,10 @@ function drawRootComparison(palette, phase) {
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
     // Every track carries its own marks, including an after track the repair
-    // left identical: its ring is narrower than the before one and its
-    // square takes the second lane, so the pair reads as two.
+    // left identical: its ring is narrower than the before one, and a square
+    // that would land on one already drawn takes the next lane.
     const ends = trackEnds(points);
-    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, ROOT_PANEL, palette, "data-root-marker", name, identical && name === "after");
+    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, place, palette, "data-root-marker", name);
   }
   const rootState = (side) => {
     const points = rootTrack(side);
@@ -377,37 +378,54 @@ const TRAIL_TOKENS = {
 // How far apart a track's two drawn ends have to be before both fit where
 // they belong, and how far the end mark steps aside when they do not.
 const MARK_CLEAR = 3, MARK_OFFSET = 11, MARK_SIDE = 7;
+// Where one panel's end marks may be drawn, given the ones already on it.
+//
+// A mark that lands on an indistinguishable neighbour is not a mark: it is
+// the neighbour. Which marks hide which is a property of the shapes, not of
+// the tracks — two root paths that differ everywhere but start and finish at
+// one point put their squares on the same coordinate exactly as two
+// identical paths do — so a lane is allocated from where a mark would be
+// plotted rather than from what its track is. A filled square hides
+// everything beneath it; a hollow ring hides only a ring of its own radius,
+// so two tracks whose phase dots differ still read as concentric circles at
+// a shared point. A mark that has to move steps toward the middle of the
+// panel, where it cannot leave the picture, and carries a leader back to the
+// coordinate it belongs to.
+function markLanes(panel) {
+  const placed = [];
+  const stepped = (point, lane) => [
+    point[0] + (point[0] > panel.width / 2 ? -MARK_OFFSET : MARK_OFFSET) * lane,
+    point[1] + (point[1] > panel.height / 2 ? -MARK_OFFSET : MARK_OFFSET) * lane,
+  ];
+  return function place(point, mark) {
+    let lane = 0, at = point;
+    while (placed.some((prior) => mark.hides(prior) && Math.hypot(prior.at[0] - at[0], prior.at[1] - at[1]) < prior.clear)) {
+      at = stepped(point, ++lane);
+    }
+    placed.push({ at, kind: mark.kind, size: mark.size, clear: mark.clear });
+    return { at, lane };
+  };
+}
 // The two ends of one drawn track: a hollow ring where it starts and a filled
 // square where it ends, in the track's own colour so a panel of four trails
-// says which end belongs to which.
-//
-// A track that closes on itself puts its ring, its square and its phase dot
-// on one coordinate, where a filled square inside a ring inside a dot reads
-// as one blob and no paint order rescues it. The ring is drawn wider than
-// the dot, and the square steps aside toward the middle of the panel — where
-// it cannot leave the picture — with a leader back to the point it marks.
-// The square also carries the panel's own ground as a stroke, so it reads as
-// a square wherever it lands on a line of its own colour.
-function appendTrackEnds(svg, ends, style, panel, palette, attribute, value, crowded) {
+// says which end belongs to which. The square also carries the panel's own
+// ground as a stroke, so it reads as a square wherever it lands on a line of
+// its own colour.
+function appendTrackEnds(svg, ends, style, place, palette, attribute, value) {
   const [first, last] = ends;
   const ring = style.radius + 3;
-  // The ring is hollow and its radius follows the track's own dot, so two
-  // tracks that coincide draw two visible circles without moving anywhere.
-  if (finitePoint(first)) svg.append(svgElement("circle", { cx: first[0], cy: first[1], r: ring, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, [attribute]: `${value}-start` }));
-  if (!finitePoint(last)) return;
-  // The square is filled, so it cannot share a coordinate with anything.
-  // It steps aside when its own track's two ends meet, and into a second
-  // lane when another track has already marked this point — which is what a
-  // repair that left the root alone produces.
-  const apart = finitePoint(first) ? Math.hypot(last[0] - first[0], last[1] - first[1]) : Infinity;
-  const lane = (apart < ring + MARK_CLEAR ? 1 : 0) + (crowded ? 1 : 0);
-  let [markX, markY] = last;
-  if (lane) {
-    markX += (last[0] > panel.width / 2 ? -MARK_OFFSET : MARK_OFFSET) * lane;
-    markY += (last[1] > panel.height / 2 ? -MARK_OFFSET : MARK_OFFSET) * lane;
-    svg.append(svgElement("line", { x1: last[0], y1: last[1], x2: markX, y2: markY, stroke: style.color, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-leader` }));
+  const leader = (from, to, kind) => svg.append(svgElement("line", { x1: from[0], y1: from[1], x2: to[0], y2: to[1], stroke: style.color, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-${kind}-leader` }));
+  if (finitePoint(first)) {
+    // A ring clears its own width plus a margin, so a square drawn inside it
+    // later has to step out of it.
+    const at = place(first, { kind: "start", size: ring, clear: ring + MARK_CLEAR, hides: (prior) => prior.kind === "start" && prior.size === ring });
+    if (at.lane) leader(first, at.at, "start");
+    svg.append(svgElement("circle", { cx: at.at[0], cy: at.at[1], r: ring, fill: "none", stroke: style.color, "stroke-width": 1.5, opacity: style.opacity, [attribute]: `${value}-start` }));
   }
-  svg.append(svgElement("rect", { x: markX - MARK_SIDE / 2, y: markY - MARK_SIDE / 2, width: MARK_SIDE, height: MARK_SIDE, fill: style.color, stroke: palette.ground, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-end` }));
+  if (!finitePoint(last)) return;
+  const at = place(last, { kind: "end", size: MARK_SIDE, clear: MARK_SIDE, hides: () => true });
+  if (at.lane) leader(last, at.at, "end");
+  svg.append(svgElement("rect", { x: at.at[0] - MARK_SIDE / 2, y: at.at[1] - MARK_SIDE / 2, width: MARK_SIDE, height: MARK_SIDE, fill: style.color, stroke: palette.ground, "stroke-width": 1, opacity: style.opacity, [attribute]: `${value}-end` }));
 }
 // The shared marks legend: one hollow ring and one filled square in the muted
 // token, because the shapes mean the same thing on every track and each mark
@@ -426,6 +444,7 @@ function drawTrails(name, palette, phase) {
   svg.replaceChildren();
   if (!sharedTrailBounds) { svgMessage(`${name}-path`, svg, palette, "role trajectories unavailable"); return; }
   const map = topDownMap(sharedTrailBounds, TRAIL_PANEL.width, TRAIL_PANEL.height, TRAIL_PANEL.pad);
+  const place = markLanes(TRAIL_PANEL);
   let legendX = 8, unavailable = [], incomplete = [];
   for (const role of Object.keys(TRAIL_TOKENS)) {
     const bone = side.clip.trails[role];
@@ -442,7 +461,7 @@ function drawTrails(name, palette, phase) {
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-role-dot": role }));
     const ends = trackEnds(points);
-    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, TRAIL_PANEL, palette, "data-role-marker", role);
+    if (ends) appendTrackEnds(svg, [map(ends[0]), map(ends[1])], style, place, palette, "data-role-marker", role);
     const legend = finite === points.length ? spec.label : `${spec.label} incomplete`;
     svg.append(svgElement("text", { x: legendX, y: 14, fill: style.color }, legend));
     legendX += legendAdvance(spec.label);
