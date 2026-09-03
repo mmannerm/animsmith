@@ -88,6 +88,16 @@ group_digits() {
     done
     printf '%s%s' "$digits" "$grouped"
 }
+# The literals a module states, wherever they sit: the drift diagnosis and the
+# self-test both read a module through these, so neither is tied to the
+# generator's exact layout. A module stating a literal twice yields two lines
+# and matches nothing.
+declared_bytes_of() {
+    sed -nE 's/.*BEVY_READBACK_V1_LOCK_BYTES: u64 = ([0-9_]+);.*/\1/p' "$1" | tr -d '_'
+}
+declared_sha_of() {
+    sed -nE 's/.*"([0-9a-f]{64})".*/\1/p' "$1"
+}
 # The one renderer both modes use, so `--refresh` cannot write text the check
 # would then reject.
 render_module() {
@@ -120,8 +130,8 @@ render_module > "$expected"
 if ! cmp -s "$expected" "$generated"; then
     # Name the drift instead of printing a diff: these are distinct repository
     # states, and only the last one is a hand edit of a generated file.
-    declared_bytes="$(sed -nE 's/.*BEVY_READBACK_V1_LOCK_BYTES: u64 = ([0-9_]+);.*/\1/p' "$generated" | tr -d '_')"
-    declared_sha="$(sed -nE 's/.*"([0-9a-f]{64})".*/\1/p' "$generated")"
+    declared_bytes="$(declared_bytes_of "$generated")"
+    declared_sha="$(declared_sha_of "$generated")"
     if [ "$declared_bytes" != "$bytes" ]; then
         echo "bevy-readback lock byte drift: $generated declares ${declared_bytes:-no byte count}, $lock is $bytes bytes; run '$refresh_command'" >&2
         exit 1
@@ -223,18 +233,24 @@ expect_rejected "reflowed generated module" \
     "$work/Cargo.lock" "$work/reflowed.rs" \
     "module drift: $work/reflowed.rs carries the right identity but is not the text"
 
-# `--refresh` must write, from the lock it is handed, exactly the text the
-# check then accepts. A refresh that copied the committed module, wrote
-# nothing, or rendered differently from the check would pass every case above.
+# `--refresh` must state, as the module's own constants, the identity of the
+# lock it is handed, and must write text the check then accepts. The lock used
+# here differs from the committed one in both length and digest (a trailing
+# comment is valid TOML and moves neither a package version nor a Bevy patch),
+# so a refresh that copied the committed module, wrote nothing, mentioned the
+# digest only in passing, or rendered differently from the check is caught.
+{ cat "$lock"; echo "# a longer lock, for the refresh case below"; } > "$work/longer-Cargo.lock"
+longer_bytes="$(wc -c < "$work/longer-Cargo.lock" | tr -d ' ')"
+longer_sha="$(sha256sum "$work/longer-Cargo.lock" | awk '{print $1}')"
+test "$longer_bytes" -ne "$bytes" || fail "the longer lock kept the committed length"
 bash scripts/check-bevy-readback-lock.sh --refresh \
-    "$work/one-byte-Cargo.lock" "$work/refreshed.rs" > /dev/null \
+    "$work/longer-Cargo.lock" "$work/refreshed.rs" > /dev/null \
     || fail "--refresh failed on a valid lock"
-mutant_sha="$(sha256sum "$work/one-byte-Cargo.lock" | awk '{print $1}')"
-grep -Fq "$mutant_sha" "$work/refreshed.rs" \
+test "$(declared_bytes_of "$work/refreshed.rs")" = "$longer_bytes" \
+    || fail "--refresh did not state the byte count of the lock it was handed"
+test "$(declared_sha_of "$work/refreshed.rs")" = "$longer_sha" \
     || fail "--refresh did not state the digest of the lock it was handed"
-cmp -s "$generated" "$work/refreshed.rs" \
-    && fail "--refresh reproduced the committed module instead of reading its lock"
-bash scripts/check-bevy-readback-lock.sh "$work/one-byte-Cargo.lock" "$work/refreshed.rs" \
+bash scripts/check-bevy-readback-lock.sh "$work/longer-Cargo.lock" "$work/refreshed.rs" \
     || fail "the check rejected the module --refresh had just written"
 echo "ok: --refresh writes the module the check accepts"
 
