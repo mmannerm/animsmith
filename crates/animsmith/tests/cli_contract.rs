@@ -14,6 +14,7 @@ use animsmith_engine::{
     validate_bevy_readback_v1,
 };
 use animsmith_gltf::fix::{FixSession, Repair as GltfRepair};
+use animsmith_testkit::closed_stream::ClosedStream;
 use animsmith_testkit::{quats_from_angles, scaled_quat, two_bone_rotation_doc};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -8869,10 +8870,10 @@ fn non_finite_key_times_never_escape_as_schema_invalid_nulls() {
 /// --format json | head` still exits `1`. `diff`'s exit `1` for movement it
 /// really measured is the same claim.
 ///
-/// The pipe's read end is dropped **before** the child is spawned, so its
-/// stdout has no reader from the moment it exists: the write failure is a
-/// property of the setup rather than a race against how quickly the child
-/// reaches its write.
+/// [`ClosedStream::closed_stdout`] builds that stdout inside the child
+/// itself, so the write failure is a property of the setup rather than a race
+/// against how quickly the child reaches its write, or against what another
+/// test's concurrent spawn inherited.
 #[test]
 fn a_closed_stdout_is_diagnosed_without_rewriting_any_json_command_outcome() {
     #[cfg(feature = "fbx")]
@@ -8911,13 +8912,11 @@ fn a_closed_stdout_is_diagnosed_without_rewriting_any_json_command_outcome() {
     ));
 
     for (command, args, expected_exit) in cases {
-        let (reader, writer) = std::io::pipe().expect("creates a pipe");
-        drop(reader);
         let output = animsmith()
             .arg(command)
             .args(&args)
             .args(["--format", "json"])
-            .stdout(Stdio::from(writer))
+            .closed_stdout()
             .stderr(Stdio::piped())
             .spawn()
             .unwrap_or_else(|error| panic!("spawns animsmith {command}: {error}"))
@@ -9047,11 +9046,9 @@ fn a_closed_stdout_preserves_text_and_markdown_command_outcomes() {
     ));
 
     for (case, args, expected_exit) in cases {
-        let (reader, writer) = std::io::pipe().expect("creates a pipe");
-        drop(reader);
         let output = animsmith()
             .args(&args)
-            .stdout(Stdio::from(writer))
+            .closed_stdout()
             .stderr(Stdio::piped())
             .spawn()
             .unwrap_or_else(|error| panic!("spawns {case}: {error}"))
@@ -9074,12 +9071,10 @@ fn a_closed_stdout_preserves_text_and_markdown_command_outcomes() {
         assert!(!stderr.contains("panicked at"), "{case} stderr:\n{stderr}");
     }
 
-    let (reader, writer) = std::io::pipe().expect("creates a pipe");
-    drop(reader);
     let closed_both_input = example_asset("clip.glb");
     let status = animsmith()
         .args(["inspect", closed_both_input.to_str().unwrap()])
-        .stdout(Stdio::from(writer))
+        .closed_stdout()
         .stderr(Stdio::null())
         .status()
         .expect("runs inspect with both reporting streams unavailable");
@@ -9097,11 +9092,9 @@ fn closed_stdout_help_and_version_are_checked_successful_deliveries() {
         ("subcommand help", vec!["fix", "--help"]),
         ("version", vec!["--version"]),
     ] {
-        let (reader, writer) = std::io::pipe().expect("creates a pipe");
-        drop(reader);
         let output = animsmith()
             .args(args)
-            .stdout(Stdio::from(writer))
+            .closed_stdout()
             .stderr(Stdio::piped())
             .spawn()
             .unwrap_or_else(|error| panic!("spawns {case}: {error}"))
@@ -9141,11 +9134,9 @@ fn parser_and_json_reporting_survive_both_output_streams_being_closed() {
             ],
         ),
     ] {
-        let (reader, writer) = std::io::pipe().expect("creates a pipe");
-        drop(reader);
         let status = animsmith()
             .args(args)
-            .stdout(Stdio::from(writer))
+            .closed_stdout()
             .stderr(Stdio::null())
             .status()
             .unwrap_or_else(|error| panic!("runs {case} with both streams unavailable: {error}"));
@@ -9187,13 +9178,11 @@ fn forced_color_help_into_closed_stdout_is_diagnosed_without_a_panic() {
         ("root", vec!["--help"]),
         ("subcommand", vec!["fix", "--help"]),
     ] {
-        let (reader, writer) = std::io::pipe().expect("creates a pipe");
-        drop(reader);
         let output = animsmith()
             .args(args)
             .env_remove("NO_COLOR")
             .env("CLICOLOR_FORCE", "1")
-            .stdout(Stdio::from(writer))
+            .closed_stdout()
             .stderr(Stdio::piped())
             .spawn()
             .unwrap_or_else(|error| panic!("spawns forced-color {case} help: {error}"))
@@ -9217,8 +9206,6 @@ fn closed_stdout_fix_with_multiple_reports_is_diagnosed_once() {
     let dir = unique_temp_dir("closed-stdout-fix-multiple");
     let input = dir.path().join("distinct-repairs.glb");
     write_distinct_repair_glb(&input);
-    let (reader, writer) = std::io::pipe().expect("creates a pipe");
-    drop(reader);
     let output = animsmith()
         .args([
             "fix",
@@ -9227,7 +9214,7 @@ fn closed_stdout_fix_with_multiple_reports_is_diagnosed_once() {
             "--repair",
             "quat-norm,quat-flip",
         ])
-        .stdout(Stdio::from(writer))
+        .closed_stdout()
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawns fix")
@@ -9256,15 +9243,13 @@ fn closed_stdout_successful_fix_publishes_and_keeps_exit_0() {
     let input = dir.path().join("distinct-repairs.glb");
     let output = dir.path().join("fixed.glb");
     write_distinct_repair_glb(&input);
-    let (reader, writer) = std::io::pipe().expect("creates a pipe");
-    drop(reader);
     let result = animsmith()
         .arg("fix")
         .arg(&input)
         .arg("-o")
         .arg(&output)
         .args(["--repair", "quat-norm,quat-flip"])
-        .stdout(Stdio::from(writer))
+        .closed_stdout()
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawns fix")

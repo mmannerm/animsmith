@@ -25,6 +25,12 @@
 //! what the `stage_release_docs` example writes. [`glb_identity`] reads
 //! written GLBs back for the gates that must tell a release stamp apart
 //! from a payload change.
+//!
+//! [`closed_stream`] is the one piece here that shapes a process rather
+//! than data: the CLI contract tests that drive `animsmith` with an
+//! output stream nobody is reading share its construction, because
+//! building that stream correctly depends on how the platform inherits
+//! file descriptors across a spawn.
 
 use std::path::PathBuf;
 
@@ -38,6 +44,7 @@ pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+pub mod closed_stream;
 pub mod docs_html;
 pub mod docs_markdown;
 pub mod docs_transcripts;

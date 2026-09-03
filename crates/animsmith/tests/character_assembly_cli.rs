@@ -3,6 +3,7 @@
 #![cfg(feature = "fbx")]
 
 use animsmith_core::sha256_hex;
+use animsmith_testkit::closed_stream::ClosedStream;
 use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -56,15 +57,13 @@ fn run_args(dir: &Path, args: &[&str]) -> Output {
 
 /// `assemble` with a stdout nobody is reading.
 ///
-/// The pipe's read end is dropped **before** the child is spawned, so its
-/// stdout has no reader from the moment it exists: the write failure is a
-/// property of the setup rather than a race against how quickly the child
-/// reaches its write.
+/// [`ClosedStream::closed_stdout`] builds that stdout inside the child
+/// itself, so the write failure is a property of the setup rather than a race
+/// against how quickly the child reaches its write, or against what another
+/// test's concurrent spawn inherited.
 fn run_args_into_closed_stdout(dir: &Path, args: &[&str]) -> Output {
-    let (reader, writer) = std::io::pipe().expect("creates a pipe");
-    drop(reader);
     assemble_command(dir, args)
-        .stdout(Stdio::from(writer))
+        .closed_stdout()
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawns animsmith assemble")

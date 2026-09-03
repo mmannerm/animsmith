@@ -2,6 +2,7 @@
 
 #![cfg(feature = "fbx")]
 
+use animsmith_testkit::closed_stream::ClosedStream;
 use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -14,13 +15,8 @@ fn binary() -> Command {
 }
 
 fn into_closed_stdout(dir: &Path, args: &[&str], close_stderr: bool) -> Output {
-    let (reader, writer) = std::io::pipe().unwrap();
-    drop(reader);
     let mut command = binary();
-    command
-        .current_dir(dir)
-        .args(args)
-        .stdout(Stdio::from(writer));
+    command.current_dir(dir).args(args).closed_stdout();
     if close_stderr {
         command.stderr(Stdio::null());
     } else {
@@ -30,13 +26,11 @@ fn into_closed_stdout(dir: &Path, args: &[&str], close_stderr: bool) -> Output {
 }
 
 fn into_closed_stderr(dir: &Path, args: &[&str]) -> Output {
-    let (reader, writer) = std::io::pipe().unwrap();
-    drop(reader);
     binary()
         .current_dir(dir)
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::from(writer))
+        .closed_stderr()
         .spawn()
         .unwrap()
         .wait_with_output()

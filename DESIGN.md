@@ -318,7 +318,7 @@ animsmith/
 │   ├── animsmith-fbx/           # ufbx wrapper → core model; isolates the C build
 │   ├── animsmith-report/        # self-contained HTML report generation
 │   ├── animsmith/               # CLI binary (features: fbx, report — default on)
-│   └── animsmith-testkit/       # publish=false: fixture builders and documentation-source readers shared by tests + the example generators
+│   └── animsmith-testkit/       # publish=false: fixture builders, documentation-source readers, and CLI process helpers shared by tests + the example generators
 ├── assets/viewer/              # viewer JS/CSS, inlined via include_str!
 ├── fuzz/                       # cargo-fuzz targets for the untrusted-input loaders
 └── testdata/                   # CC0 rigs + procedurally corrupted fixtures
