@@ -140,6 +140,7 @@ dependencies = [
  "animsmith-core",
  "base64",
  "glam",
+ "libc",
  "libm",
  "pulldown-cmark",
  "serde_json",

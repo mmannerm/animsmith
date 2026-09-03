@@ -13,6 +13,7 @@
 use animsmith_core::sha256_hex;
 #[cfg(feature = "fbx")]
 use animsmith_core::{DEPENDENCY_CLOSURE_V1_MAX_EXTERNAL_RESOURCES, model::Property};
+use animsmith_testkit::closed_stream::ClosedStream;
 use animsmith_testkit::{
     clipless_mesh_scale_rig_glb, nodes_only_scale_rig_glb, oversized_proof_scale_rig_glb,
     rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, rotation_only_meshless_scale_rig_glb,
@@ -105,15 +106,11 @@ impl Fixture {
 
     /// `scale rest-bind` with a stdout nobody is reading.
     ///
-    /// The pipe's read end is dropped **before** the child is spawned, so its
-    /// stdout has no reader from the moment it exists: the write failure is a
-    /// property of the setup rather than a race against how quickly the child
-    /// reaches its write.
+    /// The reader-less stdout comes from [`ClosedStream::closed_stdout`],
+    /// which explains why it is built in the child rather than here.
     fn rest_bind_into_closed_stdout(&self, expected_factor: &str, format: &str) -> Output {
-        let (reader, writer) = std::io::pipe().expect("creates a pipe");
-        drop(reader);
         self.rest_bind_command(expected_factor, format)
-            .stdout(Stdio::from(writer))
+            .closed_stdout()
             .stderr(Stdio::piped())
             .spawn()
             .expect("spawns animsmith")

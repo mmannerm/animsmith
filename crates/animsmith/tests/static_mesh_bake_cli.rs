@@ -8,6 +8,7 @@ use animsmith_core::model::{
     NormalTextureAsset, Primitive, Property, SceneAsset, SceneAssets, Skeleton,
     SourceSkeletonAssets, TextureAsset, Track, TrackValues, Transform,
 };
+use animsmith_testkit::closed_stream::ClosedStream;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder};
 use serde_json::Value;
@@ -338,8 +339,6 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
     )
     .expect("writes material recipe");
 
-    let (reader, writer) = std::io::pipe().expect("creates a pipe");
-    drop(reader);
     let result = Command::new(env!("CARGO_BIN_EXE_animsmith"))
         .arg("convert")
         .arg(&input)
@@ -348,7 +347,7 @@ fn option_bearing_text_conversion_diagnoses_closed_stdout_once_after_publication
         .arg("--bake-static-mesh-transforms")
         .arg("--material-texture-recipe")
         .arg(&recipe)
-        .stdout(Stdio::from(writer))
+        .closed_stdout()
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawns option-bearing conversion")

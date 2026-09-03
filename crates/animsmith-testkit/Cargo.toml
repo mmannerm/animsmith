@@ -1,6 +1,6 @@
 [package]
 name = "animsmith-testkit"
-description = "Internal test support shared by animsmith's tests and the example asset generator: fixture builders and documentation-source readers (not published)."
+description = "Internal test support shared by animsmith's tests and the example asset generator: fixture builders, documentation-source readers, and CLI process helpers (not published)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -28,3 +28,9 @@ pulldown-cmark = { workspace = true }
 # release stamp it must digest around.
 serde_json = { workspace = true }
 toml = { workspace = true }
+
+# `closed_stream` builds the CLI's reader-less output pipe between `fork`
+# and `exec` in the spawned child, which needs the raw `pipe`/`dup2`/`close`
+# calls rather than a safe wrapper that allocates or closes on drop.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
