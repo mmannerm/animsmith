@@ -93,6 +93,14 @@ shipping is riskier than changing.
    cargo test -p animsmith --test examples_cookbook
    ```
 
+   That refresh moves the stamp and nothing else, so the
+   `PAYLOAD_IDENTITIES` pins in
+   [`crates/animsmith/tests/examples_cookbook.rs`](crates/animsmith/tests/examples_cookbook.rs)
+   must come through it untouched: the test above digests each asset around
+   its `asset.generator` string, and a pin that moves means the regenerated
+   animation changed rather than only its version. Do not edit those
+   literals as part of a release.
+
    The committed documentation visuals under `docs/visuals/` are rendered from
    those same assets, so regenerate and commit them in the same step:
 

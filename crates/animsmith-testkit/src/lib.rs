@@ -22,7 +22,9 @@
 //! are written in, so no two gates can disagree about what a page says.
 //! [`docs_versions`] closes the same loop for the current-version
 //! claims: the inventory it holds is what the release gate reads and
-//! what the `stage_release_docs` example writes.
+//! what the `stage_release_docs` example writes. [`glb_identity`] reads
+//! written GLBs back for the gates that must tell a release stamp apart
+//! from a payload change.
 
 use std::path::PathBuf;
 
@@ -41,6 +43,7 @@ pub mod docs_markdown;
 pub mod docs_transcripts;
 pub mod docs_versions;
 pub mod docs_visuals;
+pub mod glb_identity;
 
 use animsmith_core::model::*;
 use glam::{Quat, Vec3};
