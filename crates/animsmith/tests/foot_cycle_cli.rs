@@ -20,13 +20,42 @@ struct FootCycleFixture {
 
 impl FootCycleFixture {
     fn create() -> Self {
+        Self::create_with_cyclic_contacts(false)
+    }
+
+    fn create_with_cyclic_contacts(cyclic_contacts: bool) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().to_path_buf();
         fs::create_dir(root.join("assets")).unwrap();
         fs::create_dir(root.join("contacts")).unwrap();
         fs::create_dir(root.join("generated")).unwrap();
-        write_source(&root, "a", 2, 10);
-        write_source(&root, "b", 4, 12);
+        if cyclic_contacts {
+            write_source(
+                &root,
+                "a",
+                |index| index <= 4 || index >= 12,
+                |index| (3..=13).contains(&index),
+            );
+            write_source(
+                &root,
+                "b",
+                |index| index <= 5 || index >= 13,
+                |index| (4..=14).contains(&index),
+            );
+        } else {
+            write_source(
+                &root,
+                "a",
+                |index| (2..=4).contains(&index),
+                |index| (10..=12).contains(&index),
+            );
+            write_source(
+                &root,
+                "b",
+                |index| (4..=6).contains(&index),
+                |index| (12..=14).contains(&index),
+            );
+        }
         fs::write(
             root.join("config.toml"),
             "[rig]\nprofile = \"auto\"\nroles = { root = \"R0\", hips = \"H0\", left_foot = \"LF0\", right_foot = \"RF0\" }\n\n[clips.\"Take 001\"]\nloop = true\n",
@@ -180,7 +209,12 @@ fn assert_success(output: &Output) {
     );
 }
 
-fn write_source(root: &Path, stem: &str, left_start: usize, right_start: usize) {
+fn write_source(
+    root: &Path,
+    stem: &str,
+    left_contact: impl Fn(usize) -> bool,
+    right_contact: impl Fn(usize) -> bool,
+) {
     let frames = 17_usize;
     let mut bytes = Vec::new();
     for index in 0..frames {
@@ -200,7 +234,7 @@ fn write_source(root: &Path, stem: &str, left_start: usize, right_start: usize) 
     }
     let left_offset = bytes.len();
     for index in 0..frames {
-        let y = if (left_start..=left_start + 2).contains(&index) {
+        let y = if left_contact(index) {
             0.0_f32
         } else {
             0.1_f32
@@ -211,7 +245,7 @@ fn write_source(root: &Path, stem: &str, left_start: usize, right_start: usize) 
     }
     let right_offset = bytes.len();
     for index in 0..frames {
-        let y = if (right_start..=right_start + 2).contains(&index) {
+        let y = if right_contact(index) {
             0.0_f32
         } else {
             0.1_f32
@@ -397,6 +431,66 @@ fn public_command_publishes_exact_two_member_generation_and_stdout() {
 }
 
 #[test]
+fn public_command_admits_double_support_and_a_seam_split_stance() {
+    let fixture = FootCycleFixture::create_with_cyclic_contacts(true);
+    let result = fixture.run();
+    assert_success(&result);
+    assert!(
+        fixture
+            .destination
+            .join("aggregate-evidence.json")
+            .is_file()
+    );
+
+    let fragment: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .destination
+                .join("members/000000/contact-fragment.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let source_fragment: Value =
+        serde_json::from_slice(&fs::read(fixture.root.join("contacts/a.json")).unwrap()).unwrap();
+    assert_eq!(
+        fragment["events"], source_fragment["events"],
+        "the identity reference transform preserves every physical event"
+    );
+    let left_windows = fragment["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["role"] == "left_foot" && event.get("window").is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        left_windows.len(),
+        2,
+        "seam fragments stay physically linear"
+    );
+    assert!(
+        left_windows
+            .iter()
+            .any(|event| event["window"]["start"] == 0.0)
+    );
+    assert!(
+        left_windows
+            .iter()
+            .any(|event| event["window"]["end"] == 1.0)
+    );
+    assert_eq!(
+        fragment["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["role"] == "left_foot" && event.get("time").is_some())
+            .count(),
+        2,
+        "each physical seam fragment keeps its marker"
+    );
+}
+
+#[test]
 fn proof_stage_refusal_is_canonical_exit_one() {
     let fixture = FootCycleFixture::create();
     let parameterization = fs::read_to_string(&fixture.parameterization).unwrap();
@@ -459,6 +553,28 @@ fn public_command_splits_plan_and_source_refusals_from_operator_failures() {
     assert_eq!(refusal["rejection"]["stage"], "analysis");
     assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
     assert!(!unsupported.destination.exists());
+
+    let invalid_topology = FootCycleFixture::create();
+    rewrite_canonical_json(&invalid_topology.root.join("contacts/a.json"), |fragment| {
+        for event in fragment["events"].as_array_mut().unwrap() {
+            if event["role"] == "right_foot" {
+                event["role"] = json!("left_foot");
+            }
+        }
+    });
+    let result = invalid_topology.run();
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&result.stderr),
+        String::from_utf8_lossy(&result.stdout)
+    );
+    assert!(result.stderr.is_empty());
+    let refusal: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(refusal["rejection"]["stage"], "analysis");
+    assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
+    assert!(!invalid_topology.destination.exists());
 
     let invalid_asset = FootCycleFixture::create();
     fs::write(invalid_asset.root.join("assets/a.gltf"), b"{}").unwrap();

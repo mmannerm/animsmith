@@ -741,6 +741,13 @@ struct SupportWindow {
     end: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct LogicalSupportWindow {
+    side: Side,
+    onset: f64,
+    release: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BoundaryKind {
     side: Side,
@@ -1036,79 +1043,142 @@ fn topology(
     fragment: &ContactFragmentV1,
 ) -> Result<(Vec<BoundaryKind>, Vec<Boundary>, u64), FootCycleParameterizationError> {
     let detector = validate_detector_extension(fragment)?;
-    let mut windows = Vec::new();
-    let mut markers = Vec::new();
+    let mut windows = [Vec::new(), Vec::new()];
+    let mut markers = [Vec::new(), Vec::new()];
     for event in fragment.events() {
         let side = event_side(event.role(), detector.roles)
             .ok_or(FootCycleParameterizationError::InvalidDetectorProvenance)?;
+        let side_index = side_index(side);
         match (event.phase(), event.kind()) {
             (ContactPhaseV1::Begin, ContactEventKindV1::Window(window))
                 if window.start() < window.end() =>
             {
-                windows.push(SupportWindow {
+                windows[side_index].push(SupportWindow {
                     side,
                     start: window.start(),
                     end: window.end(),
                 });
             }
             (ContactPhaseV1::Marker, ContactEventKindV1::Point(time)) => {
-                markers.push((side, time));
+                markers[side_index].push(time);
             }
             _ => return Err(FootCycleParameterizationError::InvalidContactTopology),
         }
     }
-    if windows.is_empty() {
-        return Err(FootCycleParameterizationError::InvalidContactTopology);
+    let mut logical = Vec::new();
+    for (side_windows, side_markers) in windows.iter_mut().zip(&mut markers) {
+        side_windows.sort_by(|left, right| left.start.total_cmp(&right.start));
+        side_markers.sort_by(|left, right| left.total_cmp(right));
+        if side_windows.is_empty()
+            || side_windows.len() != side_markers.len()
+            || side_windows
+                .windows(2)
+                .any(|pair| pair[0].end >= pair[1].start)
+            || side_windows
+                .iter()
+                .zip(side_markers)
+                .any(|(window, marker)| *marker < window.start || *marker > window.end)
+        {
+            return Err(FootCycleParameterizationError::InvalidContactTopology);
+        }
+
+        let first = side_windows[0];
+        let last = side_windows[side_windows.len() - 1];
+        if first.start == 0.0 && last.end == 1.0 {
+            if side_windows.len() == 1 {
+                return Err(FootCycleParameterizationError::InvalidContactTopology);
+            }
+            logical.push(LogicalSupportWindow {
+                side: first.side,
+                onset: last.start,
+                release: first.end,
+            });
+            logical.extend(
+                side_windows[1..side_windows.len() - 1]
+                    .iter()
+                    .map(|window| LogicalSupportWindow {
+                        side: window.side,
+                        onset: window.start,
+                        release: window.end,
+                    }),
+            );
+        } else {
+            logical.extend(side_windows.iter().map(|window| LogicalSupportWindow {
+                side: window.side,
+                onset: window.start,
+                release: window.end,
+            }));
+        }
     }
-    windows.sort_by(|left, right| left.start.total_cmp(&right.start));
-    markers.sort_by(|left, right| left.1.total_cmp(&right.1));
-    let left_count = windows
+
+    let left_count = logical
         .iter()
         .filter(|window| window.side == Side::Left)
         .count();
-    let right_count = windows.len() - left_count;
+    let right_count = logical.len() - left_count;
     if left_count == 0 || left_count != right_count {
         return Err(FootCycleParameterizationError::InvalidContactTopology);
     }
-    for pair in windows.windows(2) {
-        if pair[0].end >= pair[1].start || pair[0].side == pair[1].side {
-            return Err(FootCycleParameterizationError::InvalidContactTopology);
-        }
-    }
-    if windows
-        .first()
-        .zip(windows.last())
-        .is_none_or(|(first, last)| {
-            first.side == last.side || first.start == 0.0 && last.end == 1.0
-        })
-    {
-        return Err(FootCycleParameterizationError::InvalidContactTopology);
-    }
-    if markers.len() != windows.len()
-        || windows.iter().zip(&markers).any(|(window, (side, time))| {
-            window.side != *side || *time < window.start || *time > window.end
-        })
+    logical.sort_by(|left, right| {
+        left.onset
+            .total_cmp(&right.onset)
+            .then_with(|| side_index(left.side).cmp(&side_index(right.side)))
+    });
+    if logical
+        .iter()
+        .zip(logical.iter().cycle().skip(1))
+        .take(logical.len())
+        .any(|(left, right)| left.side == right.side)
     {
         return Err(FootCycleParameterizationError::InvalidContactTopology);
     }
 
-    let origin = windows
-        .iter()
-        .position(|window| window.side == Side::Left)
-        .ok_or(FootCycleParameterizationError::InvalidContactTopology)?;
-    let mut signature = Vec::with_capacity(windows.len() * 2);
-    let mut boundaries = Vec::with_capacity(windows.len() * 2);
-    for window in windows.iter().cycle().skip(origin).take(windows.len()) {
-        for (edge, time) in [(Edge::Onset, window.start), (Edge::Release, window.end)] {
-            let kind = BoundaryKind {
+    let mut boundaries = Vec::with_capacity(logical.len() * 2);
+    for window in &logical {
+        boundaries.push(Boundary {
+            kind: BoundaryKind {
                 side: window.side,
-                edge,
-            };
-            signature.push(kind);
-            boundaries.push(Boundary { kind, time });
-        }
+                edge: Edge::Onset,
+            },
+            time: window.onset,
+        });
+        boundaries.push(Boundary {
+            kind: BoundaryKind {
+                side: window.side,
+                edge: Edge::Release,
+            },
+            time: window.release,
+        });
     }
+    boundaries.sort_by(|left, right| {
+        left.time
+            .total_cmp(&right.time)
+            .then_with(|| boundary_kind_key(left.kind).cmp(&boundary_kind_key(right.kind)))
+    });
+    let origin = boundaries
+        .iter()
+        .position(|boundary| boundary.kind.side == Side::Left && boundary.kind.edge == Edge::Onset)
+        .ok_or(FootCycleParameterizationError::InvalidContactTopology)?;
+    boundaries.rotate_left(origin);
+    let signature = boundaries.iter().map(|boundary| boundary.kind).collect();
     Ok((signature, boundaries, detector.contact_height_m_bits))
+}
+
+const fn side_index(side: Side) -> usize {
+    match side {
+        Side::Left => 0,
+        Side::Right => 1,
+    }
+}
+
+const fn boundary_kind_key(kind: BoundaryKind) -> (usize, usize) {
+    (
+        side_index(kind.side),
+        match kind.edge {
+            Edge::Onset => 0,
+            Edge::Release => 1,
+        },
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1271,18 +1341,29 @@ fn build_control_points(
     {
         return Err(FootCycleParameterizationError::TopologyMismatch);
     }
-    let needed = source
+    let mut points = source
         .iter()
         .zip(reference)
-        .filter(|(source, reference)| {
-            !((source.time == 0.0 && reference.time == 0.0)
-                || (source.time == 1.0 && reference.time == 1.0))
-        })
-        .try_fold(2_usize, |count, _| count.checked_add(1))
-        .ok_or(FootCycleParameterizationError::TooManyControlPoints {
-            found: usize::MAX,
-            max: FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS,
-        })?;
+        .map(|(source, reference)| (canonical_zero(source.time), canonical_zero(reference.time)))
+        .collect::<Vec<_>>();
+    points.push((0.0, 0.0));
+    points.push((1.0, 1.0));
+    points.sort_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.1.total_cmp(&right.1))
+    });
+    for group in points.chunk_by(|left, right| left.0 == right.0) {
+        if group
+            .first()
+            .zip(group.last())
+            .is_some_and(|(first, last)| first.1 != last.1)
+        {
+            return Err(FootCycleParameterizationError::NonMonotoneMapping);
+        }
+    }
+    points.dedup();
+    let needed = points.len();
     if needed > FOOT_CYCLE_PARAMETERIZATION_V1_MAX_CONTROL_POINTS {
         return Err(FootCycleParameterizationError::TooManyControlPoints {
             found: needed,
@@ -1290,21 +1371,6 @@ fn build_control_points(
         });
     }
 
-    let mut pairs = source
-        .iter()
-        .zip(reference)
-        .map(|(source, reference)| (source.time, reference.time))
-        .collect::<Vec<_>>();
-    pairs.sort_by(|left, right| left.0.total_cmp(&right.0));
-    let mut points = Vec::with_capacity(needed);
-    points.push((0.0, 0.0));
-    for (input, output) in pairs {
-        if input == 0.0 && output == 0.0 || input == 1.0 && output == 1.0 {
-            continue;
-        }
-        points.push((canonical_zero(input), canonical_zero(output)));
-    }
-    points.push((1.0, 1.0));
     for pair in points.windows(2) {
         let (x0, y0) = pair[0];
         let (x1, y1) = pair[1];
@@ -2148,19 +2214,34 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_simultaneous_repeated_and_missing_runs_refuse() {
+    fn same_side_overlap_touch_nonalternation_and_missing_runs_refuse() {
         let reference = [(Side::Left, 0.1, 0.2), (Side::Right, 0.6, 0.7)];
         for invalid in [
-            vec![(Side::Left, 0.1, 0.4), (Side::Right, 0.3, 0.6)],
-            vec![(Side::Left, 0.1, 0.3), (Side::Right, 0.3, 0.6)],
+            vec![
+                (Side::Left, 0.1, 0.3),
+                (Side::Left, 0.2, 0.4),
+                (Side::Right, 0.5, 0.6),
+                (Side::Right, 0.7, 0.8),
+            ],
+            vec![
+                (Side::Left, 0.1, 0.3),
+                (Side::Left, 0.3, 0.4),
+                (Side::Right, 0.5, 0.6),
+                (Side::Right, 0.7, 0.8),
+            ],
+            vec![
+                (Side::Left, 0.1, 0.15),
+                (Side::Left, 0.2, 0.25),
+                (Side::Right, 0.4, 0.45),
+                (Side::Right, 0.6, 0.65),
+            ],
             vec![
                 (Side::Left, 0.1, 0.2),
-                (Side::Left, 0.3, 0.4),
+                (Side::Left, 0.4, 0.5),
                 (Side::Right, 0.6, 0.7),
-                (Side::Right, 0.8, 0.9),
             ],
-            vec![(Side::Left, 0.0, 0.2), (Side::Right, 0.7, 1.0)],
             vec![(Side::Left, 0.1, 0.2)],
+            vec![(Side::Left, 0.0, 1.0), (Side::Right, 0.3, 0.7)],
         ] {
             for invalid_index in 0..2 {
                 let (manifest, manifest_input) = manifest();
@@ -2182,6 +2263,182 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn opposite_side_overlap_and_matching_touch_are_admitted() {
+        let (manifest, manifest_input) = manifest();
+        let declaration = declaration(&manifest_input, 0.01, 100.0);
+        let overlap = evidence(
+            &[(Side::Left, 0.1, 0.45), (Side::Right, 0.3, 0.7)],
+            &[(Side::Left, 0.15, 0.5), (Side::Right, 0.35, 0.75)],
+        );
+        assert!(
+            plan_foot_cycle_parameterization_v1(
+                &declaration,
+                InputIdentity::from_bytes(b"parameterization"),
+                &manifest,
+                manifest_input.clone(),
+                &overlap,
+            )
+            .is_ok()
+        );
+
+        let touching = evidence(
+            &[(Side::Left, 0.1, 0.3), (Side::Right, 0.3, 0.6)],
+            &[(Side::Left, 0.2, 0.4), (Side::Right, 0.4, 0.7)],
+        );
+        let plan = plan_foot_cycle_parameterization_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"parameterization"),
+            &manifest,
+            manifest_input,
+            &touching,
+        )
+        .unwrap();
+        assert_eq!(
+            points(&plan.members()[1]),
+            [(0.0, 0.0), (0.2, 0.1), (0.4, 0.3), (0.7, 0.6), (1.0, 1.0)]
+        );
+    }
+
+    #[test]
+    fn one_and_both_side_seam_stances_are_logically_coalesced() {
+        let (manifest, manifest_input) = manifest();
+        let declaration = declaration(&manifest_input, 0.01, 100.0);
+        let one_side = [
+            (Side::Left, 0.0, 0.3),
+            (Side::Right, 0.2, 0.8),
+            (Side::Left, 0.7, 1.0),
+        ];
+        let plan = plan_foot_cycle_parameterization_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"parameterization"),
+            &manifest,
+            manifest_input.clone(),
+            &evidence(&one_side, &one_side),
+        )
+        .unwrap();
+        assert_eq!(
+            points(&plan.members()[0]),
+            [
+                (0.0, 0.0),
+                (0.2, 0.2),
+                (0.3, 0.3),
+                (0.7, 0.7),
+                (0.8, 0.8),
+                (1.0, 1.0)
+            ]
+        );
+
+        let both_sides = [
+            (Side::Left, 0.0, 0.2),
+            (Side::Right, 0.0, 0.3),
+            (Side::Left, 0.7, 1.0),
+            (Side::Right, 0.8, 1.0),
+        ];
+        let plan = plan_foot_cycle_parameterization_v1(
+            &declaration,
+            InputIdentity::from_bytes(b"parameterization"),
+            &manifest,
+            manifest_input,
+            &evidence(&both_sides, &both_sides),
+        )
+        .unwrap();
+        assert_eq!(
+            points(&plan.members()[0]),
+            [
+                (0.0, 0.0),
+                (0.2, 0.2),
+                (0.3, 0.3),
+                (0.7, 0.7),
+                (0.8, 0.8),
+                (1.0, 1.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn seam_topology_contains_only_true_boundaries_in_cyclic_time_order() {
+        let fragment = fragment(
+            "member",
+            0,
+            &[
+                (Side::Left, 0.0, 0.3),
+                (Side::Right, 0.2, 0.8),
+                (Side::Left, 0.7, 1.0),
+            ],
+        );
+
+        let (signature, boundaries, _) = topology(&fragment).unwrap();
+        let observed = boundaries
+            .iter()
+            .map(|boundary| (boundary.kind.side, boundary.kind.edge, boundary.time))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            observed,
+            [
+                (Side::Left, Edge::Onset, 0.7),
+                (Side::Right, Edge::Release, 0.8),
+                (Side::Right, Edge::Onset, 0.2),
+                (Side::Left, Edge::Release, 0.3),
+            ]
+        );
+        assert_eq!(
+            signature,
+            observed
+                .iter()
+                .map(|&(side, edge, _)| BoundaryKind { side, edge })
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn simultaneous_boundary_groups_must_match_on_both_axes() {
+        let simultaneous = [(Side::Left, 0.1, 0.3), (Side::Right, 0.3, 0.6)];
+        let separated = [(Side::Left, 0.1, 0.25), (Side::Right, 0.3, 0.6)];
+        for (reference, member) in [
+            (&simultaneous[..], &separated[..]),
+            (&separated[..], &simultaneous[..]),
+        ] {
+            let (manifest, manifest_input) = manifest();
+            assert_eq!(
+                plan_foot_cycle_parameterization_v1(
+                    &declaration(&manifest_input, 0.01, 100.0),
+                    InputIdentity::from_bytes(b"parameterization"),
+                    &manifest,
+                    manifest_input,
+                    &evidence(reference, member),
+                ),
+                Err(FootCycleParameterizationError::NonMonotoneMapping)
+            );
+        }
+    }
+
+    #[test]
+    fn incompatible_wrap_and_nonwrap_correspondence_stays_nonmonotone() {
+        let left_wrap = [
+            (Side::Left, 0.0, 0.3),
+            (Side::Right, 0.2, 0.8),
+            (Side::Left, 0.7, 1.0),
+        ];
+        let right_wrap = [
+            (Side::Right, 0.0, 0.3),
+            (Side::Left, 0.2, 0.8),
+            (Side::Right, 0.7, 1.0),
+        ];
+        let (manifest, manifest_input) = manifest();
+        assert_eq!(
+            plan_foot_cycle_parameterization_v1(
+                &declaration(&manifest_input, 0.01, 100.0),
+                InputIdentity::from_bytes(b"parameterization"),
+                &manifest,
+                manifest_input,
+                &evidence(&left_wrap, &right_wrap),
+            ),
+            Err(FootCycleParameterizationError::NonMonotoneMapping)
+        );
     }
 
     #[test]
