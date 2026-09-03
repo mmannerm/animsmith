@@ -18,15 +18,25 @@
 //! carry yet:
 //!   cargo run -p animsmith --example stage_release_docs -- --version <next>
 
-use animsmith_testkit::docs_versions::{Version, stage_release_docs, workspace_version};
+use animsmith_testkit::docs_versions::{requested_version, stage_release_docs, workspace_version};
 use std::path::Path;
+use std::process::ExitCode;
 
-const USAGE: &str =
-    "usage: cargo run -p animsmith --example stage_release_docs [-- --version X.Y.Z]";
+fn main() -> ExitCode {
+    // The usage message spans lines, so the error is printed rather than
+    // returned from `main`, which would show it Debug-escaped.
+    match stage() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn stage() -> Result<(), String> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let target = match requested_version()? {
+    let target = match requested_version(std::env::args().skip(1))? {
         Some(version) => version,
         None => workspace_version(&repository)?,
     };
@@ -44,26 +54,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         changes.len()
     );
     Ok(())
-}
-
-/// The version named on the command line, if one was.
-///
-/// Only `--version X.Y.Z` is accepted: the release line to stage is the
-/// one decision this tool takes from its caller, and everything else it
-/// needs it reads from the repository.
-fn requested_version() -> Result<Option<Version>, String> {
-    let mut arguments = std::env::args().skip(1);
-    let Some(flag) = arguments.next() else {
-        return Ok(None);
-    };
-    if flag != "--version" {
-        return Err(format!("unexpected argument {flag:?}\n{USAGE}"));
-    }
-    let value = arguments
-        .next()
-        .ok_or_else(|| format!("--version needs a version\n{USAGE}"))?;
-    if let Some(extra) = arguments.next() {
-        return Err(format!("unexpected argument {extra:?}\n{USAGE}"));
-    }
-    Version::parse(&value).map(Some)
 }

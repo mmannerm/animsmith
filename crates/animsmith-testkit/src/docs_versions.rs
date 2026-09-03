@@ -720,6 +720,36 @@ pub fn stage(docs: &Snapshot, target: Version) -> Result<(Snapshot, Vec<Change>)
     Ok((staged, changes))
 }
 
+/// The version a `stage_release_docs` invocation targets, or `None` when
+/// it named none and the workspace manifest decides.
+///
+/// Only `--version X.Y.Z` is accepted: the release line to stage is the
+/// one decision the tool takes from its caller, and everything else it
+/// needs it reads from the repository. A malformed invocation is an
+/// error rather than a silently ignored argument.
+pub fn requested_version<I>(arguments: I) -> Result<Option<Version>, String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let usage = format!("usage: {STAGE_COMMAND} [-- --version X.Y.Z]");
+    let mut arguments = arguments.into_iter();
+    let Some(flag) = arguments.next() else {
+        return Ok(None);
+    };
+    if flag != "--version" {
+        return Err(format!("unexpected argument {flag:?}\n{usage}"));
+    }
+    let value = arguments
+        .next()
+        .ok_or_else(|| format!("--version needs a version\n{usage}"))?;
+    if let Some(extra) = arguments.next() {
+        return Err(format!("unexpected argument {extra:?}\n{usage}"));
+    }
+    Version::parse(&value)
+        .map(Some)
+        .map_err(|error| format!("--version: {error}\n{usage}"))
+}
+
 /// Rewrite every current-version claim under `root` to `target`, and
 /// report what moved.
 ///

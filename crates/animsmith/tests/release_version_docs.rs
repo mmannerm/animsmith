@@ -16,6 +16,7 @@
 
 use animsmith_testkit::docs_versions::{
     self as versions, DEPENDENCY_SNIPPETS, STAGE_COMMAND, Snapshot, TOOL_VERSION_SNIPPETS, Version,
+    requested_version,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -548,4 +549,45 @@ fn staging_refuses_a_version_outside_the_release_window() {
         before,
         "staging back to the manifest version restores the documents"
     );
+}
+
+#[test]
+fn the_staging_tool_takes_one_argument_and_refuses_every_other_invocation() {
+    let owned = |arguments: &[&str]| {
+        arguments
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        requested_version(owned(&[])),
+        Ok(None),
+        "no argument leaves the target to the workspace manifest"
+    );
+    assert_eq!(
+        requested_version(owned(&["--version", "1.2.3"])),
+        Ok(Some(Version {
+            major: 1,
+            minor: 2,
+            patch: 3
+        })),
+        "`--version X.Y.Z` names the release line to stage"
+    );
+
+    for refused in [
+        vec!["1.2.3"],
+        vec!["--target", "1.2.3"],
+        vec!["--version"],
+        vec!["--version", "1.2"],
+        vec!["--version", "v1.2.3"],
+        vec!["--version", "1.2.3", "0.1.0"],
+    ] {
+        let error = requested_version(owned(&refused))
+            .expect_err(&format!("{refused:?} is not a valid invocation"));
+        assert!(
+            error.contains(STAGE_COMMAND),
+            "the refusal of {refused:?} shows the usage: {error}"
+        );
+    }
 }
