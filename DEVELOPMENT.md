@@ -391,3 +391,34 @@ than only in CI:
 ```console
 $ just release-packaging
 ```
+
+## Bevy Readback Lock
+
+The isolated exact-Bevy probe under `tools/bevy-readback` is excluded from
+this workspace and owns its own `Cargo.lock`. That lock is the single
+repository-owned authority for the resolved graph the probe observes: the
+probe hashes it with `include_bytes!`, and the engine's strict reader
+rejects any readback whose recorded lock identity differs.
+
+The engine cannot include a file from outside its published crate, so it
+carries that identity in a generated module,
+`crates/animsmith-engine/src/bevy_readback_lock.rs`. Do not edit that module
+by hand; regenerate it from the lock:
+
+```console
+$ just bevy-readback-lock-refresh
+```
+
+`just bevy-readback-lock` (part of `just gates`) renders the same module text
+from the committed lock and fails when the two disagree, naming whether the
+byte count, the digest, or the rest of the generated text drifted. It also
+checks that the lock pins `animsmith-core` and `animsmith-engine` at the
+workspace version and every Bevy 0.19 release crate at `0.19.0`, and it
+self-tests those rejections on temporary mutated copies.
+
+The opt-in compile and runtime matrix for the probe itself needs Rust
+`1.95.0` and is not part of CI:
+
+```console
+$ just bevy-readback-test
+```

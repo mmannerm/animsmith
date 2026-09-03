@@ -17,8 +17,12 @@ The facade dependency is exact `0.19.0`, and the committed `Cargo.lock` is the
 single authority for the resolved graph: every Bevy 0.19 release crate in that
 lock is `0.19.0`. Independently-versioned helpers such as `bevy_mikktspace`
 remain on their own release line. The lock guard rejects any future Bevy
-release-crate patch drift. The harness records the lock identity and the
-engine-neutral reader pins it with a drift test. A build script records
+release-crate patch drift. The harness records the lock identity, and the
+engine-neutral reader rejects any readback that does not carry it. The
+reader's copy of that identity lives in a generated module,
+`crates/animsmith-engine/src/bevy_readback_lock.rs`, because the lock is
+outside the published crate; `just bevy-readback-lock-refresh` writes it and
+`just bevy-readback-lock` fails when it and this lock disagree. A build script records
 the compiler selected by Cargo and refuses compilation unless it is the exact
 official `rustc 1.95.0 (59807616e 2026-04-14)` build; the readback validates
 that observed compiler identity rather than filling a version string at run

@@ -7,6 +7,8 @@ use crate::{
     GltfAddressabilityNamedMapKindV2, GltfAddressabilityProjectionV2, GltfAddressabilityReadbackV2,
     GltfAnimationCoverageStateV1,
 };
+// Generated from the committed probe lock; see `bevy_readback_lock`.
+use crate::bevy_readback_lock::{BEVY_READBACK_V1_LOCK_BYTES, BEVY_READBACK_V1_LOCK_SHA256};
 use animsmith_core::InputIdentity;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
@@ -25,11 +27,6 @@ pub const BEVY_READBACK_V1_MAX_WORK: usize = 65_536;
 pub const BEVY_READBACK_V1_MAX_UPDATES: u64 = 4_096;
 /// Exact compiler identity required by the isolated harness build script.
 pub const BEVY_READBACK_V1_RUSTC: &str = "rustc 1.95.0 (59807616e 2026-04-14)";
-/// Frozen byte count of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = 86_392;
-/// Frozen SHA-256 of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_SHA256: &str =
-    "fd50f6f6f75f01cbd54dd1ca8f21a966dce25a6a8530733b824f55590e3dfefd";
 const MAX_TEXT_BYTES: usize = 1_024;
 
 /// Exact V2 document identity plus its canonical V4 provenance header.
@@ -965,26 +962,39 @@ mod tests {
     use super::*;
     use crate::GltfAddressabilityV2;
 
+    /// Build a lock identity from its lowercase hexadecimal digest, so a
+    /// digest this crate already spells is never transcribed a second time as
+    /// a byte array.
+    fn lock_identity(sha256: &str, bytes: u64) -> InputIdentity {
+        assert_eq!(
+            sha256.len(),
+            64,
+            "a SHA-256 digest is 64 hexadecimal digits"
+        );
+        let mut digest = [0u8; 32];
+        for (index, byte) in digest.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&sha256[index * 2..index * 2 + 2], 16)
+                .expect("lock digest is lowercase hexadecimal");
+        }
+        InputIdentity::from_sha256_digest(digest, bytes)
+    }
+
     fn frozen_lock_identity() -> InputIdentity {
-        InputIdentity::from_sha256_digest(
-            [
-                0xfd, 0x50, 0xf6, 0xf6, 0xf7, 0x5f, 0x01, 0xcb, 0xd5, 0x4d, 0xd1, 0xca, 0x8f, 0x21,
-                0xa9, 0x66, 0xdc, 0xe2, 0x5a, 0x6a, 0x85, 0x30, 0x73, 0x3b, 0x82, 0x4f, 0x55, 0x59,
-                0x0e, 0x3d, 0xfe, 0xfd,
-            ],
-            BEVY_READBACK_V1_LOCK_BYTES,
-        )
+        lock_identity(BEVY_READBACK_V1_LOCK_SHA256, BEVY_READBACK_V1_LOCK_BYTES)
+    }
+
+    #[test]
+    fn the_frozen_lock_identity_helper_round_trips_the_generated_constants() {
+        let identity = frozen_lock_identity();
+        assert_eq!(identity.sha256(), BEVY_READBACK_V1_LOCK_SHA256);
+        assert_eq!(identity.bytes(), BEVY_READBACK_V1_LOCK_BYTES);
     }
 
     #[test]
     fn strict_reader_rejects_the_previous_mixed_bevy_patch_graph() {
         let mut readback = valid_readback(false);
-        readback.harness.lock_identity = InputIdentity::from_sha256_digest(
-            [
-                0xe3, 0x45, 0x7e, 0x21, 0x69, 0x58, 0x74, 0xf9, 0x01, 0x10, 0xe5, 0xb9, 0x3a, 0x36,
-                0xd7, 0x68, 0x8c, 0x13, 0x4a, 0x3b, 0x92, 0x59, 0xcb, 0x1d, 0xc4, 0xd2, 0xd8, 0xe5,
-                0xf7, 0x41, 0xd1, 0xed,
-            ],
+        readback.harness.lock_identity = lock_identity(
+            "e3457e21695874f90110e5b93a36d7688c134a3b9259cb1dc4d2d8e5f741d1ed",
             86_390,
         );
         let bytes = serde_json::to_vec(&readback).unwrap();
