@@ -18,7 +18,7 @@ fn into_closed_stdout(dir: &Path, args: &[&str], close_stderr: bool) -> Output {
     let mut command = binary();
     command.current_dir(dir).args(args).closed_stdout();
     if close_stderr {
-        command.stderr(Stdio::null());
+        command.closed_stderr();
     } else {
         command.stderr(Stdio::piped());
     }

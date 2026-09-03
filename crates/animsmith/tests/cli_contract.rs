@@ -9075,7 +9075,7 @@ fn a_closed_stdout_preserves_text_and_markdown_command_outcomes() {
     let status = animsmith()
         .args(["inspect", closed_both_input.to_str().unwrap()])
         .closed_stdout()
-        .stderr(Stdio::null())
+        .closed_stderr()
         .status()
         .expect("runs inspect with both reporting streams unavailable");
     assert_eq!(
@@ -9137,7 +9137,7 @@ fn parser_and_json_reporting_survive_both_output_streams_being_closed() {
         let status = animsmith()
             .args(args)
             .closed_stdout()
-            .stderr(Stdio::null())
+            .closed_stderr()
             .status()
             .unwrap_or_else(|error| panic!("runs {case} with both streams unavailable: {error}"));
         assert_eq!(
