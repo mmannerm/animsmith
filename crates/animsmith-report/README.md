@@ -93,8 +93,8 @@ track remediation may leave the visible pose unchanged.
 
 ```toml
 [dependencies]
-animsmith-core = "0.12"
-animsmith-report = "0.12"
+animsmith-core = "0.13"
+animsmith-report = "0.13"
 ```
 
 The compiling render example lives in the crate-level API documentation.
