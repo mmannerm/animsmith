@@ -96,11 +96,13 @@ require_feature_isolation() {
     END { exit last == "just release-cli" ? 0 : 1 }
   ' justfile || fail "the justfile gates recipe must end with 'just release-cli' so no later recipe can replace the artifact it probed"
 
+  # Every executable step carries either `run:` or `uses:`, so the last of those
+  # in the job is the last step -- an appended action would be caught too.
   awk '
     /^  [[:alnum:]_-]+:$/ { job = $0; sub(/^  /, "", job); sub(/:$/, "", job) }
-    job == "test" && /^[[:space:]]+(- )?(name: .*|run: .*)$/ {
+    job == "test" {
       line = $0; sub(/^[[:space:]]+(- )?/, "", line)
-      if (line ~ /^run: /) last = line
+      if (line ~ /^(run|uses): /) last = line
     }
     END { exit last == "run: bash scripts/check-release-cli.sh" ? 0 : 1 }
   ' .github/workflows/checks.yml || fail "the checks.yml test job must end with 'run: bash scripts/check-release-cli.sh' so no later step can replace the artifact it probed"
