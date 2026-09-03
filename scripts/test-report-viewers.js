@@ -130,6 +130,10 @@ function run(parts, dataId, html, payload, options) {
   // nothing until a test asks for the next frame — and a test that asks can
   // observe exactly what one frame changed.
   const clock = { now: 0, next: 1, pending: new Map() };
+  // Every base64 decode the document performs, so a second copy of a pose
+  // grid — or an evidence-only document decoding anything at all — is
+  // observed rather than merely thought unlikely.
+  const decoded = { count: 0 };
   const location = {
     get hash() { return hash.value; },
     set hash(next) { hash.writes++; hash.value = next; },
@@ -160,12 +164,12 @@ function run(parts, dataId, html, payload, options) {
     // floor, which is what leaves a viewer with only its run number to stop
     // the chain it retired.
     cancelAnimationFrame: (handle) => { if (!settings.ignoreCancel) clock.pending.delete(handle); },
-    atob: value => Buffer.from(value, "base64").toString("binary"),
+    atob: value => { decoded.count++; return Buffer.from(value, "base64").toString("binary"); },
     Uint8Array, Float32Array, Buffer, Math, Map, Set, Array, Number, Object, Infinity, JSON, console,
   };
   vm.createContext(context);
   vm.runInContext(`${parts.shared}\n${parts.viewer}`, context);
-  return { nodes, root, listeners, context, charts, hash, media, settings, clock };
+  return { nodes, root, listeners, context, charts, hash, media, settings, clock, decoded };
 }
 
 // One animation frame, `seconds` after the last one. Returns how many
@@ -968,9 +972,20 @@ if (overlaid.lineDash.length) throw new Error("the overlay left the canvas dashe
 if (overlayRun.nodes["after-gl"].hidden !== true) throw new Error("the after pane still draws its own canvas while its skeleton is drawn over the before one");
 if (!overlayRun.nodes["after-pose-context"].textContent.includes("drawn over the before pane")) throw new Error(`the after pane does not say where its judged pose went: ${overlayRun.nodes["after-pose-context"].textContent}`);
 const overlaidLabel = overlayRun.nodes["before-pose-context"].textContent;
-for (const phrase of ["overlay", "before solid", "after dashed", "exact judged pose-grid frames"]) {
+// The legend names both line styles and both token colours, in the words the
+// loop-seam label in this same element already uses for the same two tokens.
+for (const phrase of ["overlay \u00b7 before solid blue, after dashed orange", "exact judged pose-grid frames"]) {
   if (!overlaidLabel.includes(phrase)) throw new Error(`the overlaid pane's label omits ${JSON.stringify(phrase)}: ${overlaidLabel}`);
 }
+// The after skeleton's joints are finer as well as dashed, so a joint the
+// repair did not move still reads as two dots rather than one.
+const jointRadii = (arcs) => new Set(arcs.map((arc) => arc.args[2]));
+const beforeRadii = [...jointRadii(overlaid.arcs.slice(0, bones))], afterRadii = [...jointRadii(overlaid.arcs.slice(bones))];
+if (beforeRadii.length !== 1 || afterRadii.length !== 1) throw new Error(`each pass draws its joints at one radius: ${beforeRadii} against ${afterRadii}`);
+if (!(afterRadii[0] < beforeRadii[0])) throw new Error(`the after skeleton's joints (r ${afterRadii[0]}) are not finer than the before one's (r ${beforeRadii[0]})`);
+// One grid per side, decoded once for the document: the overlay is a second
+// reading of what the panes already decoded, not a second copy of it.
+if (overlayRun.decoded.count !== 2) throw new Error(`the document decoded ${overlayRun.decoded.count} pose grids, not one per side`);
 
 // Switching it off restores the two panes and both of their labels.
 toggleOverlay(overlayRun, false);
@@ -982,6 +997,7 @@ for (const side of ["before", "after"]) {
   const label = overlayRun.nodes[`${side}-pose-context`].textContent;
   if (label !== "exact judged pose-grid frame") throw new Error(`the ${side} pane's label did not return to the two-pane one: ${label}`);
 }
+if (overlayRun.decoded.count !== 2) throw new Error(`switching the overlay decoded ${overlayRun.decoded.count - 2} further pose grid(s)`);
 assertNoHashWrites(overlayRun, "switching the overlay on and off");
 
 // Unequal judged frame counts: the after clip carries half the before clip's
@@ -1068,6 +1084,48 @@ if (seamSuspension.nodes["after-gl"].hidden !== true) throw new Error("scrubbing
 if (poseContext(seamSuspension, "before").strokeDashes.slice(SEGMENTS).some((dash) => dash !== "6,4")) throw new Error("the resumed overlay does not draw the after skeleton dashed");
 if (seamSuspension.nodes["before-pose-context"].textContent.includes("suspended")) throw new Error("the resumed overlay still calls itself suspended");
 assertNoHashWrites(seamSuspension, "suspending and resuming the overlay");
+
+// A side with no finite sampled position has no skeleton to draw, so the
+// overlay stands down for that too, from whichever side the hole is on. Both
+// panes are then drawn as they are with the overlay off — each keeping its
+// own availability disclosure, so the side that can still be drawn is not
+// taken away with the one that cannot — and the before label says why.
+for (const blank of ["before", "after"]) {
+  const payload = JSON.parse(JSON.stringify(data));
+  const buffer = Buffer.from(data[blank].clip.positions, "base64");
+  for (let offset = 0; offset < buffer.length; offset += 4) buffer.writeFloatLE(Number.NaN, offset);
+  payload[blank].clip.positions = buffer.toString("base64");
+  const drawn = blank === "before" ? "after" : "before";
+  const state = run(generated, "comparison-report-data", html, payload);
+  toggleOverlay(state, true);
+  if (state.nodes["after-gl"].hidden !== false) throw new Error(`an all-non-finite ${blank} side still hid the after pane behind an overlay it cannot draw`);
+  if (!poseContext(state, drawn).arcs.length) throw new Error(`the ${drawn} side lost its own drawing when the ${blank} side had none`);
+  if (!state.nodes[`${blank}-pose-context`].textContent.includes("pose drawing unavailable")) throw new Error(`the ${blank} pane stopped saying its sampled positions are non-finite`);
+  if (!state.nodes[`${drawn}-pose-context`].textContent.includes("exact judged pose-grid frame")) throw new Error(`the ${drawn} pane stopped reading as exact because the ${blank} side is non-finite`);
+  const why = state.nodes["before-pose-context"].textContent;
+  if (!why.includes("overlay suspended: one side has no finite sampled position to draw")) throw new Error(`a suspended overlay does not say why: ${why}`);
+  assertNoHashWrites(state, `overlaying an all-non-finite ${blank} side`);
+}
+
+// One non-finite bone in either selected frame is a drawing to caveat rather
+// than to call exact, and the overlaid pane says it for the pair.
+const holedPair = JSON.parse(JSON.stringify(data));
+const holedBuffer = Buffer.from(data.after.clip.positions, "base64");
+holedBuffer.writeFloatLE(Number.NaN, (1501 * bones * 3 + 1 * 3) * 4);
+holedPair.after.clip.positions = holedBuffer.toString("base64");
+const holedPairRun = run(generated, "comparison-report-data", html, holedPair);
+toggleOverlay(holedPairRun, true);
+holedPairRun.nodes.scrub.value = "1501";
+holedPairRun.nodes.scrub.listeners.input();
+const holedLabel = holedPairRun.nodes["before-pose-context"].textContent;
+if (!holedLabel.includes("selected frame contains non-finite positions")) throw new Error(`the overlay called a pair with a non-finite after frame exact: ${holedLabel}`);
+if (holedLabel.includes("exact judged pose-grid frames")) throw new Error(`the overlay claims two exact frames where one is non-finite: ${holedLabel}`);
+// The before side's own frame is finite, and says so again once the two
+// panes are drawn separately.
+toggleOverlay(holedPairRun, false);
+if (holedPairRun.nodes["before-pose-context"].textContent !== "exact judged pose-grid frame") throw new Error(`the before pane's own exact frame is mislabelled: ${holedPairRun.nodes["before-pose-context"].textContent}`);
+if (!holedPairRun.nodes["after-pose-context"].textContent.includes("selected frame contains non-finite positions")) throw new Error("the after pane stopped disclosing its own non-finite frame");
+assertNoHashWrites(holedPairRun, "overlaying a pair whose after frame is not finite");
 
 // The overlay is a canvas drawing like the panes it replaces, so a system
 // theme change repaints it through the same palette resolution.
@@ -1163,6 +1221,7 @@ evidenceNodes.overlay.listeners.change();
 for (const side of ["before", "after"]) {
   if (evidenceNodes[`${side}-pose-context`].textContent !== "") throw new Error(`an evidence-only comparison labelled its ${side} pose pane from a grid it does not carry`);
 }
+if (evidenceRun.decoded.count !== 0) throw new Error(`an evidence-only comparison decoded ${evidenceRun.decoded.count} grid(s) it does not carry`);
 if (evidenceNodes["before-findings"].children.length !== evidencePayload.before.findings.length) throw new Error("switching on the overlay of an evidence-only comparison dropped its findings");
 evidenceNodes.play.listeners.click();
 if (evidenceNodes.play.textContent === "⏸") throw new Error("an evidence-only comparison started playing a grid it does not carry");
