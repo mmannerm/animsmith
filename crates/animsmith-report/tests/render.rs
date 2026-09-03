@@ -4009,13 +4009,19 @@ fn the_comparison_can_overlay_the_after_skeleton_on_the_before_pane() {
         "a comparison carrying poses can overlay them: {overlay}"
     );
     // The control is named by the label that wraps it, so it has an
-    // accessible name without an attribute repeating one.
+    // accessible name without an attribute repeating one, and that name is
+    // the words a reader looks for rather than any text at all.
     let at = html.find("id=\"overlay\"").expect("the overlay control");
     let opens = html[..at].rfind('<').expect("its tag opens");
     assert!(
-        html[..opens].ends_with("<label>") && overlay.contains("Overlay"),
-        "the overlay checkbox is wrapped in the label naming it: {}",
-        &html[opens..at + 60.min(html.len() - at)]
+        html[..opens].ends_with("<label>"),
+        "the overlay checkbox is wrapped in the label naming it: {overlay}"
+    );
+    let name = overlay.split_once('>').expect("the tag closes").1;
+    assert_eq!(
+        name.trim(),
+        "Overlay after on before",
+        "the overlay control's visible name: {overlay}"
     );
 
     // With no pose grid there is nothing to overlay, so the control is

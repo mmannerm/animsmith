@@ -56,10 +56,11 @@ class Node {
   get classList(){const c=this.classes;return {add:x=>c.add(x),remove:x=>c.delete(x),contains:x=>c.has(x)}}
   getContext(kind){
     if (kind === "webgl2") { if (!this.gl) this.gl=webgl(); return this.gl; }
-    // `strokes` records the paint of every drawn segment and `strokeDashes`
-    // the dash pattern in force for it, so a pane that draws two skeletons
-    // can be read back as two: which colour, in which order, dashed or not.
-    if (!this.context) this.context={arcs:[],strokes:[],strokeDashes:[],lineDash:[],fillStyle:null,strokeStyle:null,setTransform(){},clearRect(){this.arcs=[];this.strokes=[];this.strokeDashes=[]},setLineDash(dash){this.lineDash=Array.from(dash)},beginPath(){},moveTo(){},lineTo(){},stroke(){this.strokes.push(this.strokeStyle);this.strokeDashes.push(this.lineDash.join(","))},arc(...args){this.arcs.push({args,fillStyle:this.fillStyle})},fill(){}};
+    // Every drawn segment is recorded with the geometry it was drawn from —
+    // its two endpoints — beside the paint and the dash in force for it, so a
+    // pane that draws two skeletons can be read back as two: which bones,
+    // from which grid, in which colour, dashed or not.
+    if (!this.context) this.context={arcs:[],strokes:[],segments:[],strokeDashes:[],lineDash:[],pen:null,fillStyle:null,strokeStyle:null,setTransform(){},clearRect(){this.arcs=[];this.strokes=[];this.segments=[];this.strokeDashes=[]},setLineDash(dash){this.lineDash=Array.from(dash)},beginPath(){this.pen=[]},moveTo(...point){this.pen=[point]},lineTo(...point){if(this.pen)this.pen.push(point)},stroke(){this.strokes.push(this.strokeStyle);this.strokeDashes.push(this.lineDash.join(","));this.segments.push({points:(this.pen||[]).map((point)=>point.slice()),strokeStyle:this.strokeStyle,dash:this.lineDash.join(",")})},arc(...args){this.arcs.push({args,fillStyle:this.fillStyle})},fill(){}};
     return this.context;
   }
   scrollIntoView(){this.scrolled=true}
@@ -935,15 +936,45 @@ assertNoHashWrites(followedAnchor, "following a comparison anchor");
 // ---- the overlay: both skeletons in one pane ---------------------------
 // The two panes already share one camera and one shared phase, so the overlay
 // is those same two drawings put in one box: the before skeleton solid, the
-// after one dashed over it, at exactly the frames the two panes drew. Every
-// assertion below is read off the recorded canvas calls, which is what a
-// reader sees.
+// after one dashed over it, at exactly the frames the panes drew. Everything
+// below is read off the recorded canvas calls, which is what a reader sees.
 const SEGMENTS = data.bones.filter((bone) => bone.parent >= 0).length;
 if (SEGMENTS < 2) throw new Error("the fixture must carry a skeleton of more than one segment");
-// Where a pane put its joints, in drawing order: the projection, the frame
-// and the skeleton, in the one form two runs can be compared through.
+const AFTER_DASH = "7,5";
+const OVERLAY_LEGEND = "overlay · before solid blue, after dashed orange";
+const OVERLAY_POINTER = "judged pose drawn over the before pane, as the dashed skeleton";
 const jointPositions = (context) => context.arcs.map((arc) => `${arc.args[0]},${arc.args[1]}`).join(";");
 const toggleOverlay = (state, on) => { state.nodes.overlay.checked = on; state.nodes.overlay.listeners.change(); };
+// Everything one pane drew, so two runs can be required to have drawn the
+// same picture: paint, dash, joint radii and every coordinate.
+const drawingOf = (state, side) => {
+  const context = poseContext(state, side);
+  return JSON.stringify({ arcs: context.arcs, strokes: context.strokes, dashes: context.strokeDashes, segments: context.segments });
+};
+// The pose panes' own projection, rebuilt from the payload: one camera over
+// both sides' finite X/Y, fitted to the canvas this harness gives every node.
+// It lets an overlaid joint be checked against a coordinate the fixture
+// defines — x = frame/1000 + bone, y = bone — rather than only against what
+// the viewer itself drew.
+const POSE_CANVAS = { width: 360, height: 270 };
+function poseProjection(payload) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const name of ["before", "after"]) {
+    const floats = decodeFloats(payload[name].clip.positions);
+    for (let index = 0; index < floats.length; index += 3) {
+      if (Number.isFinite(floats[index])) { minX = Math.min(minX, floats[index]); maxX = Math.max(maxX, floats[index]); }
+      if (Number.isFinite(floats[index + 1])) { minY = Math.min(minY, floats[index + 1]); maxY = Math.max(maxY, floats[index + 1]); }
+    }
+  }
+  const scale = Math.min(POSE_CANVAS.width / Math.max(.1, maxX - minX), POSE_CANVAS.height / Math.max(.1, maxY - minY)) * .72;
+  return (point) => [POSE_CANVAS.width / 2 + (point[0] - (minX + maxX) / 2) * scale, POSE_CANVAS.height / 2 - (point[1] - (minY + maxY) / 2) * scale];
+}
+const posePointOf = (payload, name, frame, bone) => {
+  const floats = decodeFloats(payload[name].clip.positions), base = (frame * bones + bone) * 3;
+  return [floats[base], floats[base + 1]];
+};
+const near = (left, right) => Math.abs(left - right) < 1e-9;
+const samePoint = (drawn, want) => drawn && near(drawn[0], want[0]) && near(drawn[1], want[1]);
 
 const overlayRun = run(generated, "comparison-report-data", html, data);
 const twoPaneBefore = jointPositions(poseContext(overlayRun, "before"));
@@ -959,7 +990,7 @@ if (twoPaneBefore !== twoPaneAfter) throw new Error("this fixture's two sides mu
 toggleOverlay(overlayRun, true);
 const overlaid = poseContext(overlayRun, "before");
 // The two panes' own skeletons, at their own projected coordinates: one
-// camera, the selected frames each pane used, no refit and no offset.
+// camera, the frames each pane used, no refit and no offset.
 if (jointPositions(overlaid) !== `${twoPaneBefore};${twoPaneAfter}`) throw new Error("the overlay does not draw the two panes' own skeletons at their own projected coordinates");
 if (overlaid.strokes.length !== 2 * SEGMENTS) throw new Error(`the overlay drew ${overlaid.strokes.length} segments, not two skeletons' ${2 * SEGMENTS}`);
 const beforePass = { strokes: overlaid.strokes.slice(0, SEGMENTS), dashes: overlaid.strokeDashes.slice(0, SEGMENTS) };
@@ -967,25 +998,25 @@ const afterPass = { strokes: overlaid.strokes.slice(SEGMENTS), dashes: overlaid.
 if (beforePass.strokes.some((paint) => paint !== palette.accent)) throw new Error(`the before skeleton is not drawn in the accent token: ${beforePass.strokes}`);
 if (afterPass.strokes.some((paint) => paint !== palette.warning)) throw new Error(`the after skeleton is not drawn in the warning token: ${afterPass.strokes}`);
 if (beforePass.dashes.some((dash) => dash !== "")) throw new Error("the before skeleton is dashed, so two coincident skeletons read as one");
-if (afterPass.dashes.some((dash) => dash !== "6,4")) throw new Error(`the after skeleton is not dashed, so where the two coincide the pane shows one: ${afterPass.dashes}`);
-if (overlaid.lineDash.length) throw new Error("the overlay left the canvas dashed for whatever is drawn next");
-if (overlayRun.nodes["after-gl"].hidden !== true) throw new Error("the after pane still draws its own canvas while its skeleton is drawn over the before one");
-if (!overlayRun.nodes["after-pose-context"].textContent.includes("drawn over the before pane")) throw new Error(`the after pane does not say where its judged pose went: ${overlayRun.nodes["after-pose-context"].textContent}`);
-const overlaidLabel = overlayRun.nodes["before-pose-context"].textContent;
-// The legend names both line styles and both token colours, in the words the
-// loop-seam label in this same element already uses for the same two tokens.
-for (const phrase of ["overlay \u00b7 before solid blue, after dashed orange", "exact judged pose-grid frames"]) {
-  if (!overlaidLabel.includes(phrase)) throw new Error(`the overlaid pane's label omits ${JSON.stringify(phrase)}: ${overlaidLabel}`);
-}
+if (afterPass.dashes.some((dash) => dash !== AFTER_DASH)) throw new Error(`the after skeleton is not dashed ${AFTER_DASH}, so where the two coincide the pane shows one: ${afterPass.dashes}`);
 // The after skeleton's joints are finer as well as dashed, so a joint the
 // repair did not move still reads as two dots rather than one.
-const jointRadii = (arcs) => new Set(arcs.map((arc) => arc.args[2]));
-const beforeRadii = [...jointRadii(overlaid.arcs.slice(0, bones))], afterRadii = [...jointRadii(overlaid.arcs.slice(bones))];
+const beforeRadii = [...new Set(overlaid.arcs.slice(0, bones).map((arc) => arc.args[2]))];
+const afterRadii = [...new Set(overlaid.arcs.slice(bones).map((arc) => arc.args[2]))];
 if (beforeRadii.length !== 1 || afterRadii.length !== 1) throw new Error(`each pass draws its joints at one radius: ${beforeRadii} against ${afterRadii}`);
 if (!(afterRadii[0] < beforeRadii[0])) throw new Error(`the after skeleton's joints (r ${afterRadii[0]}) are not finer than the before one's (r ${beforeRadii[0]})`);
 // One grid per side, decoded once for the document: the overlay is a second
 // reading of what the panes already decoded, not a second copy of it.
 if (overlayRun.decoded.count !== 2) throw new Error(`the document decoded ${overlayRun.decoded.count} pose grids, not one per side`);
+// The after pane keeps a visible label saying where its pose went; hiding it
+// with the canvas would leave its heading over an empty box.
+if (overlayRun.nodes["after-pose-context"].textContent !== OVERLAY_POINTER) throw new Error(`the hidden after pane's label is ${JSON.stringify(overlayRun.nodes["after-pose-context"].textContent)}`);
+if (overlayRun.nodes["after-pose-context"].hidden) throw new Error("the after pane's label is hidden with its canvas, so nothing says where its pose went");
+if (overlayRun.nodes["after-gl"].hidden !== true) throw new Error("the after pane still draws its own canvas while its skeleton is drawn over the before one");
+const overlaidLabel = overlayRun.nodes["before-pose-context"].textContent;
+// The legend names both line styles and both token colours, in the words the
+// loop-seam label in this same element already uses for the same two tokens.
+if (overlaidLabel !== `${OVERLAY_LEGEND} · exact judged pose-grid frames`) throw new Error(`the overlaid pane's label is ${JSON.stringify(overlaidLabel)}`);
 
 // Switching it off restores the two panes and both of their labels.
 toggleOverlay(overlayRun, false);
@@ -1032,100 +1063,174 @@ if (unequalBefore === unequalAfter) throw new Error("two different frames of thi
 toggleOverlay(unequalRun, true);
 if (jointPositions(poseContext(unequalRun, "before")) !== `${unequalBefore};${unequalAfter}`) throw new Error("the overlay drew frames of its own rather than the two the panes selected");
 if (unequalRun.nodes.times.textContent !== unequalTimes) throw new Error("the overlay changed the source times the shared phase labels");
+
+// And those coordinates are the ones this fixture defines, joint by joint and
+// segment by segment, through the panes' own camera — so a pass that drew the
+// after skeleton's bones out of the before grid, or at the before frame,
+// lands somewhere this says it should not.
+const unequalProject = poseProjection(unequal);
+const analyticJoints = ["before", "after"].flatMap((name) =>
+  Array.from({ length: bones }, (_, bone) => unequalProject(posePointOf(unequal, name, unequalFrame(name), bone))));
+const drawnJoints = poseContext(unequalRun, "before").arcs.map((arc) => [arc.args[0], arc.args[1]]);
+if (drawnJoints.length !== analyticJoints.length) throw new Error(`the overlay drew ${drawnJoints.length} joints, not the ${analyticJoints.length} the two grids hold`);
+drawnJoints.forEach((point, index) => {
+  if (!samePoint(point, analyticJoints[index])) throw new Error(`overlaid joint ${index} is at ${point}, not at the ${index < bones ? "before" : "after"} grid's own ${analyticJoints[index]}`);
+});
+const analyticSegments = (name) => data.bones
+  .map((row, bone) => ({ parent: row.parent, bone }))
+  .filter((row) => row.parent >= 0)
+  .map((row) => [
+    unequalProject(posePointOf(unequal, name, unequalFrame(name), row.parent)),
+    unequalProject(posePointOf(unequal, name, unequalFrame(name), row.bone)),
+  ]);
+const wantSegments = [...analyticSegments("before"), ...analyticSegments("after")];
+const drawnSegments = poseContext(unequalRun, "before").segments;
+if (drawnSegments.length !== wantSegments.length) throw new Error(`the overlay drew ${drawnSegments.length} segments, not the ${wantSegments.length} the two skeletons hold`);
+drawnSegments.forEach((segment, index) => {
+  const want = wantSegments[index], side = index < SEGMENTS ? "before" : "after";
+  if (segment.points.length !== 2 || !samePoint(segment.points[0], want[0]) || !samePoint(segment.points[1], want[1])) {
+    throw new Error(`overlaid segment ${index} runs ${JSON.stringify(segment.points)}, not the ${side} grid's own ${JSON.stringify(want)} at frame ${unequalFrame(side)}`);
+  }
+  if (segment.dash !== (side === "after" ? AFTER_DASH : "")) throw new Error(`overlaid segment ${index} of the ${side} skeleton is drawn ${JSON.stringify(segment.dash)}`);
+});
 assertNoHashWrites(unequalRun, "overlaying two clips of unequal length");
 
-// A selected finding marks its subject bone on its own side's skeleton
-// alone: the overlaid pane draws the before skeleton first and the after one
-// second, so the marked joint's place in that order says which side it
-// belongs to.
-const overlaySelection = run(generated, "comparison-report-data", html, data);
-toggleOverlay(overlaySelection, true);
-const markedJoints = (state) => poseContext(state, "before").arcs
-  .map((arc, index) => ({ index, arc }))
-  .filter((row) => row.arc.args[2] === 6);
-overlaySelection.nodes["after-findings"].children[afterIndex].listeners.click();
-const afterSubject = data.after.findings[afterIndex].subject_bone;
-const afterMarked = markedJoints(overlaySelection);
-if (afterMarked.length !== 1) throw new Error(`an after-side finding marked ${afterMarked.length} joints in the overlaid pane`);
-if (afterMarked[0].index !== bones + afterSubject) throw new Error(`an after-side finding marked joint ${afterMarked[0].index}, which belongs to the before skeleton's pass rather than the after one's`);
-if (afterMarked[0].arc.fillStyle !== palette.error) throw new Error("the subject bone is not marked with the error token");
-overlaySelection.nodes["before-findings"].children[structuralIndex].listeners.click();
-const beforeSubject = data.before.findings[structuralIndex].subject_bone;
-const beforeMarked = markedJoints(overlaySelection);
-if (beforeMarked.length !== 1) throw new Error(`a before-side finding marked ${beforeMarked.length} joints in the overlaid pane`);
-if (beforeMarked[0].index !== beforeSubject) throw new Error(`a before-side finding marked joint ${beforeMarked[0].index}, which belongs to the after skeleton's pass rather than the before one's`);
-// A structural context is about a finding rather than about which frames are
-// drawn, so it composes with the overlay: both are stated, and the after
-// skeleton stays in the before pane.
-const structuralOverlay = overlaySelection.nodes["before-pose-context"].textContent;
-if (!structuralOverlay.includes("structural evidence") || !structuralOverlay.includes("overlay")) throw new Error(`a structural context and the overlay do not compose: ${structuralOverlay}`);
-if (overlaySelection.nodes["after-gl"].hidden !== true) throw new Error("a structural selection suspended the overlay");
-assertNoHashWrites(overlaySelection, "selecting findings under the overlay");
+// A selected finding marks its subject bone on its own side's skeleton alone.
+// These two skeletons are drawn apart, so the marked joint's coordinate — not
+// its place in the draw order — says which one carries it, and nothing here
+// assumes every joint is finite or drawn in bone order.
+for (const [side, index] of [["after", afterIndex], ["before", structuralIndex]]) {
+  const panes = run(generated, "comparison-report-data", html, unequal);
+  panes.nodes[`${side}-findings`].children[index].listeners.click();
+  const own = new Set(jointPositions(poseContext(panes, side)).split(";"));
+  const other = new Set(jointPositions(poseContext(panes, side === "before" ? "after" : "before")).split(";"));
+  if ([...own].some((at) => other.has(at))) throw new Error(`this fixture must draw its two skeletons apart, or a coordinate cannot say which one is marked`);
+  const overlaidRun = run(generated, "comparison-report-data", html, unequal);
+  toggleOverlay(overlaidRun, true);
+  overlaidRun.nodes[`${side}-findings`].children[index].listeners.click();
+  const marks = poseContext(overlaidRun, "before").arcs.filter((arc) => arc.args[2] === 6);
+  if (marks.length !== 1) throw new Error(`a ${side}-side finding marked ${marks.length} joints in the overlaid pane, not one`);
+  const at = `${marks[0].args[0]},${marks[0].args[1]}`;
+  if (!own.has(at)) throw new Error(`a ${side}-side finding marked a joint at ${at}, which is not one the ${side} skeleton drew`);
+  if (other.has(at)) throw new Error(`a ${side}-side finding marked a joint of the other skeleton`);
+  if (marks[0].fillStyle !== palette.error) throw new Error("the subject bone is not marked with the error token");
+}
+
+// A structural context composes with the overlay on either side. The after
+// side is the case that matters: its pane is hidden, so its disclosure has to
+// travel with it, and the before pane must not adopt it as its own.
+const afterStructuralPayload = JSON.parse(JSON.stringify(data));
+const afterStructuralContext = {
+  check: structural.check, evidence_kind: "structural", finding_anchor: "finding-2222222222222222",
+  label: structural.label, source: structural.source, subject_bone_name: structural.subject_bone_name,
+};
+afterStructuralPayload.after.contexts.structural.push(afterStructuralContext);
+afterStructuralPayload.after.findings.push(Object.assign({}, structuralFinding, { anchor: afterStructuralContext.finding_anchor, time: 0.777 }));
+const afterStructuralRun = run(generated, "comparison-report-data", html, afterStructuralPayload);
+toggleOverlay(afterStructuralRun, true);
+afterStructuralRun.nodes["after-findings"].children[afterStructuralPayload.after.findings.length - 1].listeners.click();
+if (afterStructuralRun.nodes["after-gl"].hidden !== true) throw new Error("a structural selection on the after side suspended the overlay");
+const hiddenPaneLabel = afterStructuralRun.nodes["after-pose-context"].textContent;
+if (!hiddenPaneLabel.includes(structural.label)) throw new Error(`the after side's structural disclosure is dropped while its pane is hidden: ${JSON.stringify(hiddenPaneLabel)}`);
+if (!hiddenPaneLabel.includes(OVERLAY_POINTER)) throw new Error(`the hidden after pane stopped saying where its pose went: ${JSON.stringify(hiddenPaneLabel)}`);
+const overlaidUnderAfterStructural = afterStructuralRun.nodes["before-pose-context"].textContent;
+if (!overlaidUnderAfterStructural.includes(OVERLAY_LEGEND)) throw new Error(`the overlaid pane lost its legend: ${overlaidUnderAfterStructural}`);
+if (overlaidUnderAfterStructural.includes(structural.label)) throw new Error(`the before pane claimed the after side's structural context as its own: ${overlaidUnderAfterStructural}`);
+// The before side's own structural context still composes, and a structural
+// label already speaking for the pane still suppresses the exact-frame note.
+const beforeStructuralRun = run(generated, "comparison-report-data", html, data);
+toggleOverlay(beforeStructuralRun, true);
+beforeStructuralRun.nodes["before-findings"].children[structuralIndex].listeners.click();
+const beforeStructuralLabel = beforeStructuralRun.nodes["before-pose-context"].textContent;
+if (beforeStructuralLabel !== `${structural.label} · ${OVERLAY_LEGEND}`) throw new Error(`a before-side structural context and the overlay do not compose: ${JSON.stringify(beforeStructuralLabel)}`);
+if (beforeStructuralRun.nodes["after-pose-context"].textContent !== OVERLAY_POINTER) throw new Error("the after pane adopted the before side's structural context");
+assertNoHashWrites(afterStructuralRun, "overlaying an after-side structural context");
 
 // A loop-seam context is one side's own two endpoint frames rather than one
-// shared phase, so the overlay stands down for it: both panes come back, the
-// seam draws its endpoint poses as it does with the overlay off, and the
-// before label says the overlay is suspended. The next scrub clears the
-// selection and the overlay resumes without being switched on again.
-const seamSuspension = run(generated, "comparison-report-data", html, data);
-toggleOverlay(seamSuspension, true);
-if (seamSuspension.nodes["after-gl"].hidden !== true) throw new Error("the overlay never took effect");
-seamSuspension.nodes["before-findings"].children[seamIndex].listeners.click();
-if (seamSuspension.nodes["after-gl"].hidden !== false) throw new Error("a selected loop-seam context left the after pane hidden, so its own judged pose could not be seen");
-const seamLabel = seamSuspension.nodes["before-pose-context"].textContent;
-if (!seamLabel.includes("loop seam exact endpoint poses")) throw new Error(`a suspended overlay stopped the seam pane drawing its endpoint poses: ${seamLabel}`);
-if (!seamLabel.includes("overlay suspended while a loop-seam context is selected")) throw new Error(`the pane does not say the overlay stood down: ${seamLabel}`);
-const seamDraw = poseContext(seamSuspension, "before");
-if (seamDraw.strokes.length !== 2 * SEGMENTS) throw new Error("a suspended overlay did not draw the seam's two endpoint poses");
-if (seamDraw.strokeDashes.some((dash) => dash !== "")) throw new Error("a suspended overlay left the seam's endpoint poses dashed");
-seamSuspension.nodes.scrub.value = "700";
-seamSuspension.nodes.scrub.listeners.input();
-if (seamSuspension.nodes["after-gl"].hidden !== true) throw new Error("scrubbing away from the seam context did not resume the overlay");
-if (poseContext(seamSuspension, "before").strokeDashes.slice(SEGMENTS).some((dash) => dash !== "6,4")) throw new Error("the resumed overlay does not draw the after skeleton dashed");
-if (seamSuspension.nodes["before-pose-context"].textContent.includes("suspended")) throw new Error("the resumed overlay still calls itself suspended");
-assertNoHashWrites(seamSuspension, "suspending and resuming the overlay");
+// shared phase, so the overlay stands down for it: both panes come back and
+// draw exactly the picture they draw with the overlay switched off, and the
+// before label says the overlay is suspended. Any of the three ways a reader
+// leaves a selection — the scrub, a `#frame=` navigation, the next played
+// frame — resumes it without the box being touched.
+const seamOff = run(generated, "comparison-report-data", html, data);
+seamOff.nodes["before-findings"].children[seamIndex].listeners.click();
+for (const resume of ["scrub", "fragment", "play"]) {
+  const seamRun = run(generated, "comparison-report-data", html, data);
+  toggleOverlay(seamRun, true);
+  if (seamRun.nodes["after-gl"].hidden !== true) throw new Error("the overlay never took effect");
+  seamRun.nodes["before-findings"].children[seamIndex].listeners.click();
+  if (seamRun.nodes["after-gl"].hidden !== false) throw new Error("a selected loop-seam context left the after pane hidden, so its own judged pose could not be seen");
+  for (const side of ["before", "after"]) {
+    if (drawingOf(seamRun, side) !== drawingOf(seamOff, side)) throw new Error(`a suspended overlay draws the ${side} pane differently from the same selection with the overlay off`);
+  }
+  const seamLabel = seamRun.nodes["before-pose-context"].textContent;
+  if (!seamLabel.includes("loop seam exact endpoint poses")) throw new Error(`a suspended overlay stopped the seam pane drawing its endpoint poses: ${seamLabel}`);
+  if (!seamLabel.includes("overlay suspended while a loop-seam context is selected")) throw new Error(`the pane does not say the overlay stood down: ${seamLabel}`);
+  if (seamOff.nodes["before-pose-context"].textContent.includes("suspended")) throw new Error("a pane says the overlay is suspended when the box was never ticked");
+  if (resume === "scrub") {
+    seamRun.nodes.scrub.value = "700";
+    seamRun.nodes.scrub.listeners.input();
+  } else if (resume === "fragment") {
+    seamRun.hash.value = "#frame=700";
+    seamRun.listeners.hashchange();
+  } else {
+    seamRun.nodes.play.listeners.click();
+    if (!stepFrame(seamRun, data.before.clip.duration / 8)) throw new Error("playing scheduled no animation frame");
+  }
+  if (seamRun.nodes["after-gl"].hidden !== true) throw new Error(`leaving the seam context by ${resume} did not resume the overlay`);
+  if (poseContext(seamRun, "before").strokeDashes.slice(SEGMENTS).some((dash) => dash !== AFTER_DASH)) throw new Error(`the overlay resumed by ${resume} does not draw the after skeleton dashed`);
+  if (seamRun.nodes["before-pose-context"].textContent.includes("suspended")) throw new Error(`the overlay resumed by ${resume} still calls itself suspended`);
+  assertNoHashWrites(seamRun, `suspending and resuming the overlay by ${resume}`);
+}
 
 // A side with no finite sampled position has no skeleton to draw, so the
 // overlay stands down for that too, from whichever side the hole is on. Both
-// panes are then drawn as they are with the overlay off — each keeping its
-// own availability disclosure, so the side that can still be drawn is not
-// taken away with the one that cannot — and the before label says why.
+// panes are then drawn exactly as they are with the overlay off, each keeping
+// its own availability disclosure — the side that can still be drawn is not
+// taken away with the one that cannot, and neither pane restates in words
+// what the other one already says.
 for (const blank of ["before", "after"]) {
   const payload = JSON.parse(JSON.stringify(data));
   const buffer = Buffer.from(data[blank].clip.positions, "base64");
   for (let offset = 0; offset < buffer.length; offset += 4) buffer.writeFloatLE(Number.NaN, offset);
   payload[blank].clip.positions = buffer.toString("base64");
   const drawn = blank === "before" ? "after" : "before";
+  const off = run(generated, "comparison-report-data", html, payload);
   const state = run(generated, "comparison-report-data", html, payload);
   toggleOverlay(state, true);
   if (state.nodes["after-gl"].hidden !== false) throw new Error(`an all-non-finite ${blank} side still hid the after pane behind an overlay it cannot draw`);
   if (!poseContext(state, drawn).arcs.length) throw new Error(`the ${drawn} side lost its own drawing when the ${blank} side had none`);
+  if (drawingOf(state, drawn) !== drawingOf(off, drawn)) throw new Error(`a suspended overlay draws the ${drawn} pane differently from the overlay-off run`);
   if (!state.nodes[`${blank}-pose-context`].textContent.includes("pose drawing unavailable")) throw new Error(`the ${blank} pane stopped saying its sampled positions are non-finite`);
-  if (!state.nodes[`${drawn}-pose-context`].textContent.includes("exact judged pose-grid frame")) throw new Error(`the ${drawn} pane stopped reading as exact because the ${blank} side is non-finite`);
-  const why = state.nodes["before-pose-context"].textContent;
-  if (!why.includes("overlay suspended: one side has no finite sampled position to draw")) throw new Error(`a suspended overlay does not say why: ${why}`);
+  for (const side of ["before", "after"]) {
+    if (state.nodes[`${side}-pose-context`].textContent !== off.nodes[`${side}-pose-context`].textContent) throw new Error(`a suspended overlay changed the ${side} pane's label: ${JSON.stringify(state.nodes[`${side}-pose-context`].textContent)} against ${JSON.stringify(off.nodes[`${side}-pose-context`].textContent)}`);
+  }
   assertNoHashWrites(state, `overlaying an all-non-finite ${blank} side`);
 }
 
 // One non-finite bone in either selected frame is a drawing to caveat rather
-// than to call exact, and the overlaid pane says it for the pair.
-const holedPair = JSON.parse(JSON.stringify(data));
-const holedBuffer = Buffer.from(data.after.clip.positions, "base64");
-holedBuffer.writeFloatLE(Number.NaN, (1501 * bones * 3 + 1 * 3) * 4);
-holedPair.after.clip.positions = holedBuffer.toString("base64");
-const holedPairRun = run(generated, "comparison-report-data", html, holedPair);
-toggleOverlay(holedPairRun, true);
-holedPairRun.nodes.scrub.value = "1501";
-holedPairRun.nodes.scrub.listeners.input();
-const holedLabel = holedPairRun.nodes["before-pose-context"].textContent;
-if (!holedLabel.includes("selected frame contains non-finite positions")) throw new Error(`the overlay called a pair with a non-finite after frame exact: ${holedLabel}`);
-if (holedLabel.includes("exact judged pose-grid frames")) throw new Error(`the overlay claims two exact frames where one is non-finite: ${holedLabel}`);
-// The before side's own frame is finite, and says so again once the two
-// panes are drawn separately.
-toggleOverlay(holedPairRun, false);
-if (holedPairRun.nodes["before-pose-context"].textContent !== "exact judged pose-grid frame") throw new Error(`the before pane's own exact frame is mislabelled: ${holedPairRun.nodes["before-pose-context"].textContent}`);
-if (!holedPairRun.nodes["after-pose-context"].textContent.includes("selected frame contains non-finite positions")) throw new Error("the after pane stopped disclosing its own non-finite frame");
-assertNoHashWrites(holedPairRun, "overlaying a pair whose after frame is not finite");
+// than to call exact, and the overlaid pane says it for the pair whichever
+// side the hole is on.
+for (const holed of ["before", "after"]) {
+  const payload = JSON.parse(JSON.stringify(data));
+  const buffer = Buffer.from(data[holed].clip.positions, "base64");
+  buffer.writeFloatLE(Number.NaN, (1501 * bones * 3 + 1 * 3) * 4);
+  payload[holed].clip.positions = buffer.toString("base64");
+  const state = run(generated, "comparison-report-data", html, payload);
+  toggleOverlay(state, true);
+  state.nodes.scrub.value = "1501";
+  state.nodes.scrub.listeners.input();
+  const label = state.nodes["before-pose-context"].textContent;
+  if (!label.includes("selected frame contains non-finite positions")) throw new Error(`the overlay called a pair with a non-finite ${holed} frame exact: ${label}`);
+  if (label.includes("exact judged pose-grid frames")) throw new Error(`the overlay claims two exact frames where the ${holed} one is not: ${label}`);
+  // The other side's frame is finite, and says so again once the two panes
+  // are drawn separately.
+  const whole = holed === "before" ? "after" : "before";
+  toggleOverlay(state, false);
+  if (state.nodes[`${whole}-pose-context`].textContent !== "exact judged pose-grid frame") throw new Error(`the ${whole} pane's own exact frame is mislabelled: ${state.nodes[`${whole}-pose-context`].textContent}`);
+  if (!state.nodes[`${holed}-pose-context`].textContent.includes("selected frame contains non-finite positions")) throw new Error(`the ${holed} pane stopped disclosing its own non-finite frame`);
+  assertNoHashWrites(state, `overlaying a pair whose ${holed} frame is not finite`);
+}
 
 // The overlay is a canvas drawing like the panes it replaces, so a system
 // theme change repaints it through the same palette resolution.
