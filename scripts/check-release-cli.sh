@@ -168,8 +168,9 @@ default_feature_probes=(
   "report subcommand (report --help):probe_report_command"
 )
 
-# `--version` is the same line either way, which is exactly why it cannot be
-# the evidence; assert only that both builds are this checkout's version.
+# The version line names the compiled features, but a label the build stamps on
+# itself is not a capability -- the probes below are the evidence. Assert only
+# that both artifacts report this checkout's version.
 manifest_versions="$(sed -n 's/^version = "\(.*\)"$/\1/p' <(lines_of Cargo.toml))"
 manifest_version="${manifest_versions%%$'\n'*}"
 test -n "$manifest_version" || fail "Cargo.toml has no workspace version"

@@ -45,6 +45,20 @@ reference. The help output reflects compile-time features: a
 `--no-default-features` binary omits feature-gated commands such as
 `report`, `convert`, and `assemble`.
 
+`animsmith --version` states that same compile-time surface in one line:
+
+```text
+animsmith <version> (<git describe of the source>) [features: fbx, report]
+```
+
+The parenthesized part appears only for a binary built from a checkout whose
+commit is not exactly the release tag. `[features: ...]` names the Cargo
+features that were compiled in, alphabetically, and reads `[features: none]`
+for a `--no-default-features` build: `fbx` means the binary reads FBX input,
+`report` means it can render HTML reports. The line is a label the build
+stamps on itself, so treat it as identification rather than as proof — run the
+command you depend on when a build's capabilities have to be established.
+
 ## Commands
 
 ```console

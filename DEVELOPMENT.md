@@ -151,7 +151,7 @@ $ just release-cli
 release-cli: provenance of the retained default-feature CLI
   binary:       target/release/animsmith
   sha256:       <sha256 of that file>
-  version:      <the --version line>
+  version:      <the --version line, which names the compiled features>
   capabilities: <what the probes proved, not what the binary claims>
   commit:       <git rev-parse HEAD>
   describe:     <git describe --tags --dirty --always>
