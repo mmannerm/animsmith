@@ -23,6 +23,8 @@ libm = { workspace = true }
 pulldown-cmark = { workspace = true }
 # The current-version documentation inventory reads the workspace manifest
 # and the `tool` objects the output examples quote, so it parses both
-# formats rather than pattern-matching version-shaped text.
+# formats rather than pattern-matching version-shaped text; `glb_identity`
+# reads a written GLB's JSON chunk back through the same parser, to find the
+# release stamp it must digest around.
 serde_json = { workspace = true }
 toml = { workspace = true }

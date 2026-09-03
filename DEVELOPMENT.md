@@ -188,6 +188,13 @@ what surfaced it, as a macOS-only failure of
 Prefer fixing determinism at the source over loosening a byte comparison:
 the comparison is what makes a committed picture evidence.
 
+The one thing that byte comparison cannot answer is what changed across a
+release: the glTF writer stamps `animsmith <version>` into `asset.generator`,
+so every committed example asset changes when the version does.
+`PAYLOAD_IDENTITIES` in `crates/animsmith/tests/examples_cookbook.rs` pins
+each asset's content around that stamp, so a release refresh leaves the pins
+alone and a changed animation does not.
+
 ## Golden Tests
 
 Golden tests include an env-gated reference test against licensed assets

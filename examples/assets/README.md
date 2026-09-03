@@ -54,6 +54,14 @@ Pass an output directory to write elsewhere:
 cargo run -p animsmith --example gen_example_assets -- /some/dir
 ```
 
+The bytes carry the release that wrote them: the glTF writer records
+`animsmith <version>` in `asset.generator`, so every one of these files
+changes on a release. `PAYLOAD_IDENTITIES` in the test file below pins what
+each asset says *apart from* that stamp — the SHA-256 of its JSON chunk with
+the generator string replaced, and the SHA-256 of its binary chunk — so the
+version-only refresh in [RELEASING.md](../../RELEASING.md) leaves those pins
+alone and any change to the animation itself fails them.
+
 All eleven assets are deterministic. Both the generator and
 `example_assets_match_generator_output` in
 [`crates/animsmith/tests/examples_cookbook.rs`](../../crates/animsmith/tests/examples_cookbook.rs)
