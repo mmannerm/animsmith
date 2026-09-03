@@ -1,4 +1,5 @@
 use animsmith_core::InputIdentity;
+use animsmith_testkit::closed_stream::ClosedStream;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
@@ -616,23 +617,27 @@ fn public_runs_are_deterministic_and_destination_race_preserves_the_winner() {
     assert_eq!(snapshot(&first.destination), winner);
 }
 
+/// `collection transform-foot-cycle` with a stdout nobody is reading.
+///
+/// [`ClosedStream::closed_stdout`] builds that stdout inside the child, so the
+/// write failure is a property of the setup rather than a race against how
+/// quickly the child reaches its write, or against what another test's
+/// concurrent spawn inherited. Dropping the parent's read end after the spawn
+/// was open to both.
 #[test]
 fn closed_stdout_after_publication_keeps_success_and_recovery_files() {
     let fixture = FootCycleFixture::create();
-    let mut child = transform_command(&fixture.manifest, &fixture.parameterization)
-        .stdout(Stdio::piped())
+    let result = transform_command(&fixture.manifest, &fixture.parameterization)
+        .closed_stdout()
         .stderr(Stdio::piped())
-        .spawn()
+        .output()
         .unwrap();
-    drop(child.stdout.take());
-    let result = child.wait_with_output().unwrap();
     assert_eq!(
         result.status.code(),
         Some(0),
         "stderr: {}",
         String::from_utf8_lossy(&result.stderr)
     );
-    assert!(result.stdout.is_empty());
     assert!(String::from_utf8_lossy(&result.stderr).contains("cannot write JSON output to stdout"));
     assert_eq!(count_files(&fixture.destination), 7);
     let aggregate = fs::read(fixture.destination.join("aggregate-evidence.json")).unwrap();
