@@ -123,6 +123,16 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
    on top of one foot curve, and a solid line there would simply disappear. */
 .series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
+/* Where a top-down track starts and where it ends, in the track's own
+   colour: a hollow circle and a filled square, so a clip that walks out and
+   never returns is not the same picture as one that comes back over its own
+   line. The playhead dot keeps --error, so the current frame is never read
+   as either end. */
+.pathstart { fill: none; stroke: var(--pass); stroke-width: 1.5; }
+/* The end square carries the plot's own ground as a stroke, so it still
+   reads as a square where it lands on a dot or a line of its own colour. */
+.pathend { fill: var(--pass); stroke: var(--ground); stroke-width: 1; }
+.pathleader { fill: none; stroke: var(--pass); stroke-width: 1; }
 .axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
@@ -134,7 +144,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 <section id="viewer-panel">
 <div id="controls">
 <select id="clip-select"></select>
-<button id="play">▶</button>
+<button id="play" aria-label="Play the clip">▶</button>
 <input type="range" id="scrub" min="0" value="0" step="1">
 <span id="time"></span>
 </div>
@@ -149,7 +159,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 <h2>Engine predictions</h2>
 <ul id="predictions"></ul>
 <h2>Charts</h2>
-<div id="charts"><figure class="chart" data-clip="acceptance-matrix" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>acceptance-matrix — foot height relative to hips</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — foot height relative to hips over frames 0 to 4: L foot, R foot 0.00 to 0.30 m; L−R -0.30 to 0.30 m on its own right-hand axis"><title>acceptance-matrix — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="84.6" x2="94.6" y1="9" y2="9"/><text class="legend" x="97.6" y="12.0">R foot</text><line class="series-diff" x1="135.2" x2="145.2" y1="9" y2="9"/><text class="legend" x="148.2" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,134.0L107.0,134.0L180.0,56.7L253.0,18.0L326.0,134.0" fill="none"/><path class="series-right" d="M34.0,134.0L107.0,18.0L180.0,134.0L253.0,134.0L326.0,134.0" fill="none"/><path class="series-diff" d="M34.0,76.0L107.0,134.0L180.0,37.3L253.0,18.0L326.0,76.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">0.30 m</text><text class="axis" x="2.0" y="134.0">0.00 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.30 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.30 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 4</text></svg></figure><figure class="chart" data-clip="acceptance-matrix" data-kind="rootpath"><figcaption>acceptance-matrix — root path (top-down)</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — root path (top-down): X -0.02 to 0.02 m, Z 0.00 to 0.02 m, 5 frames on one uniform scale"><title>acceptance-matrix — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><path class="root-path" d="M180.0,105.0L238.0,105.0L180.0,47.0L122.0,105.0L180.0,105.0" fill="none"/><circle class="pathdot" r="3" cx="180.0" cy="105.0"/><text class="axis" x="2.0" y="146.0">X -0.02…0.02 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…0.02 m</text></svg><template class="pathpoints">180.0,105.0;238.0,105.0;180.0,47.0;122.0,105.0;180.0,105.0</template></figure></div>
+<div id="charts"><figure class="chart" data-clip="acceptance-matrix" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>acceptance-matrix — foot height relative to hips · what to look for: this clip is declared a loop, so the curves should end where they began; the foot-slide check judged stance intervals on this clip, and a foot that moves horizontally during a plant is the slide it reports</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — foot height relative to hips over frames 0 to 4: L foot, R foot 0.00 to 0.30 m; L−R -0.30 to 0.30 m on its own right-hand axis"><title>acceptance-matrix — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="84.6" x2="94.6" y1="9" y2="9"/><text class="legend" x="97.6" y="12.0">R foot</text><line class="series-diff" x1="135.2" x2="145.2" y1="9" y2="9"/><text class="legend" x="148.2" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,134.0L107.0,134.0L180.0,56.7L253.0,18.0L326.0,134.0" fill="none"/><path class="series-right" d="M34.0,134.0L107.0,18.0L180.0,134.0L253.0,134.0L326.0,134.0" fill="none"/><path class="series-diff" d="M34.0,76.0L107.0,134.0L180.0,37.3L253.0,18.0L326.0,76.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">0.30 m</text><text class="axis" x="2.0" y="134.0">0.00 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.30 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.30 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 4</text></svg></figure><figure class="chart" data-clip="acceptance-matrix" data-kind="rootpath"><figcaption>acceptance-matrix — root path (top-down) · what to look for: this clip is declared a loop, so its root path should end where it began; this clip declares who owns its horizontal travel and the in-place check judged the root against that declaration, so the path is the evidence for it · the dot is the current frame, the hollow circle where the track starts and the square where it ends · the path spans 0.040 m at its widest · the track closes on itself</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — root path (top-down): X -0.02 to 0.02 m, Z 0.00 to 0.02 m, 5 frames on one uniform scale"><title>acceptance-matrix — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><circle class="pathstart" cx="80.4" cy="9" r="6"/><text class="legend" x="88.4" y="12.0">start</text><rect class="pathend" x="123.4" y="6.0" width="6" height="6"/><text class="legend" x="134.4" y="12.0">end</text><path class="root-path" d="M180.0,105.0L238.0,105.0L180.0,47.0L122.0,105.0L180.0,105.0" fill="none"/><circle class="pathstart" cx="180.0" cy="105.0" r="6"/><line class="pathleader" x1="180.0" y1="105.0" x2="191.0" y2="94.0"/><rect class="pathend" x="188.0" y="91.0" width="6" height="6"/><circle class="pathdot" r="3" cx="180.0" cy="105.0"/><text class="axis" x="2.0" y="146.0">X -0.02…0.02 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…0.02 m</text></svg><template class="pathpoints">180.0,105.0;238.0,105.0;180.0,47.0;122.0,105.0;180.0,105.0</template></figure></div>
 </section>
 </main>
 <script>// animsmith report shared runtime — the pure helpers both generated viewers
@@ -265,6 +275,47 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
+
+// A frame loop with exactly one owner, for the transports both documents
+// carry. Playback in either is nothing but advancing one number per frame,
+// and both had the same defect: pausing left the callback it had scheduled
+// alive, and playing scheduled another, so every pause-then-play added a
+// redraw chain that ran for as long as the document stayed open.
+//
+// `stop` cancels the frame in flight, and the run number retires a callback
+// the browser hands back anyway — a browser that ignores the cancellation
+// still ends up with one loop, whether it was stopped or restarted.
+function animsmithFrameLoop(advance) {
+  const loop = { running: false, handle: 0, run: 0 };
+  function chain(mine) {
+    return function frame(now) {
+      // Stopped, or retired by a later start: this chain ends here rather
+      // than scheduling a successor.
+      if (!loop.running || mine !== loop.run) return;
+      advance(now);
+      loop.handle = requestAnimationFrame(frame);
+    };
+  }
+  return {
+    get running() { return loop.running; },
+    start() {
+      loop.running = true;
+      loop.run += 1;
+      loop.handle = requestAnimationFrame(chain(loop.run));
+    },
+    // Returns false when it was already stopped, so a caller can tell a real
+    // pause from a redundant one.
+    stop() {
+      if (!loop.running) return false;
+      loop.running = false;
+      if (loop.handle) {
+        cancelAnimationFrame(loop.handle);
+        loop.handle = 0;
+      }
+      return true;
+    },
+  };
+}
 </script>
 <script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"clips":[{"duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}}],"evidence_only":false,"file":"report-comparison-before.glb","findings":[{"bone":"hand","check":"constant-track","clip":"acceptance-matrix","message":"rotation track has 5 keys but never moves — export bloat","node":null,"severity":"note","time":null},{"bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":0.25},{"bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"prediction_provenance":null,"predictions":[],"profile":"custom"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
@@ -365,7 +416,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -520,25 +570,33 @@ function updateCharts() {
 }
 
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
-scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
-playBtn.addEventListener("click", () => {
-  if (!canvas) return;
-  playing = !playing;
-  playBtn.textContent = playing ? "⏸" : "▶";
-  if (playing) { last = performance.now(); requestAnimationFrame(tick); }
-});
+scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
 let last = 0;
-function tick(now) {
-  if (!playing || !clip) return;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
   const dt = (now - last) / 1000;
   last = now;
   const fps = (clip.frames - 1) / clip.duration;
   let f = frame + dt * fps;
   if (f > clip.frames - 1) f = 0; // wrap like the runtime does
   setFrame(f);
-  requestAnimationFrame(tick);
+});
+function pausePlayback() {
+  if (!playLoop.stop()) return;
+  playBtn.textContent = "▶";
+  playBtn.setAttribute("aria-label", "Play the clip");
 }
+playBtn.addEventListener("click", () => {
+  if (!canvas) return;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
+  playBtn.textContent = "⏸";
+  playBtn.setAttribute("aria-label", "Pause the clip");
+});
 
 // orbit controls
 let dragging = false, lastX = 0, lastY = 0;
@@ -575,6 +633,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -657,6 +716,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

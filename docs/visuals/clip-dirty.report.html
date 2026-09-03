@@ -123,6 +123,16 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
    on top of one foot curve, and a solid line there would simply disappear. */
 .series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
+/* Where a top-down track starts and where it ends, in the track's own
+   colour: a hollow circle and a filled square, so a clip that walks out and
+   never returns is not the same picture as one that comes back over its own
+   line. The playhead dot keeps --error, so the current frame is never read
+   as either end. */
+.pathstart { fill: none; stroke: var(--pass); stroke-width: 1.5; }
+/* The end square carries the plot's own ground as a stroke, so it still
+   reads as a square where it lands on a dot or a line of its own colour. */
+.pathend { fill: var(--pass); stroke: var(--ground); stroke-width: 1; }
+.pathleader { fill: none; stroke: var(--pass); stroke-width: 1; }
 .axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
@@ -134,7 +144,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 <section id="viewer-panel">
 <div id="controls">
 <select id="clip-select"></select>
-<button id="play">▶</button>
+<button id="play" aria-label="Play the clip">▶</button>
 <input type="range" id="scrub" min="0" value="0" step="1">
 <span id="time"></span>
 </div>
@@ -265,6 +275,47 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
+
+// A frame loop with exactly one owner, for the transports both documents
+// carry. Playback in either is nothing but advancing one number per frame,
+// and both had the same defect: pausing left the callback it had scheduled
+// alive, and playing scheduled another, so every pause-then-play added a
+// redraw chain that ran for as long as the document stayed open.
+//
+// `stop` cancels the frame in flight, and the run number retires a callback
+// the browser hands back anyway — a browser that ignores the cancellation
+// still ends up with one loop, whether it was stopped or restarted.
+function animsmithFrameLoop(advance) {
+  const loop = { running: false, handle: 0, run: 0 };
+  function chain(mine) {
+    return function frame(now) {
+      // Stopped, or retired by a later start: this chain ends here rather
+      // than scheduling a successor.
+      if (!loop.running || mine !== loop.run) return;
+      advance(now);
+      loop.handle = requestAnimationFrame(frame);
+    };
+  }
+  return {
+    get running() { return loop.running; },
+    start() {
+      loop.running = true;
+      loop.run += 1;
+      loop.handle = requestAnimationFrame(chain(loop.run));
+    },
+    // Returns false when it was already stopped, so a caller can tell a real
+    // pause from a redundant one.
+    stop() {
+      if (!loop.running) return false;
+      loop.running = false;
+      if (loop.handle) {
+        cancelAnimationFrame(loop.handle);
+        loop.handle = 0;
+      }
+      return true;
+    },
+  };
+}
 </script>
 <script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"spine","parent":0},{"name":"chest","parent":1}],"clips":[{"duration":1.0,"frames":5,"name":"swing","positions":"AAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAdXVMvUxcfz8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA92/LvdJyfT8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAAbU4XvndIej8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD8AAAAA12FHvlTldT8AAAAA","trails":{}}],"evidence_only":false,"file":"clip-dirty.glb","findings":[{"bone":"spine","check":"quat-norm","clip":"swing","message":"non-unit rotation key (worst at key 2)","node":null,"severity":"error","time":0.5},{"bone":"spine","check":"quat-flip","clip":"swing","message":"2 hemisphere flip(s) between adjacent rotation keys (first between keys 2 and 3) — engines without neighborhood correction will spin the long way","node":null,"severity":"warning","time":0.75}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"swing"}}],"prediction_provenance":null,"predictions":[],"profile":"unknown"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
@@ -365,7 +416,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -520,25 +570,33 @@ function updateCharts() {
 }
 
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
-scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
-playBtn.addEventListener("click", () => {
-  if (!canvas) return;
-  playing = !playing;
-  playBtn.textContent = playing ? "⏸" : "▶";
-  if (playing) { last = performance.now(); requestAnimationFrame(tick); }
-});
+scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
 let last = 0;
-function tick(now) {
-  if (!playing || !clip) return;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
   const dt = (now - last) / 1000;
   last = now;
   const fps = (clip.frames - 1) / clip.duration;
   let f = frame + dt * fps;
   if (f > clip.frames - 1) f = 0; // wrap like the runtime does
   setFrame(f);
-  requestAnimationFrame(tick);
+});
+function pausePlayback() {
+  if (!playLoop.stop()) return;
+  playBtn.textContent = "▶";
+  playBtn.setAttribute("aria-label", "Play the clip");
 }
+playBtn.addEventListener("click", () => {
+  if (!canvas) return;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
+  playBtn.textContent = "⏸";
+  playBtn.setAttribute("aria-label", "Pause the clip");
+});
 
 // orbit controls
 let dragging = false, lastX = 0, lastY = 0;
@@ -575,6 +633,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -657,6 +716,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

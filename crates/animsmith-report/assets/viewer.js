@@ -96,7 +96,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -251,25 +250,33 @@ function updateCharts() {
 }
 
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
-scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
-playBtn.addEventListener("click", () => {
-  if (!canvas) return;
-  playing = !playing;
-  playBtn.textContent = playing ? "⏸" : "▶";
-  if (playing) { last = performance.now(); requestAnimationFrame(tick); }
-});
+scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
 let last = 0;
-function tick(now) {
-  if (!playing || !clip) return;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
   const dt = (now - last) / 1000;
   last = now;
   const fps = (clip.frames - 1) / clip.duration;
   let f = frame + dt * fps;
   if (f > clip.frames - 1) f = 0; // wrap like the runtime does
   setFrame(f);
-  requestAnimationFrame(tick);
+});
+function pausePlayback() {
+  if (!playLoop.stop()) return;
+  playBtn.textContent = "▶";
+  playBtn.setAttribute("aria-label", "Play the clip");
 }
+playBtn.addEventListener("click", () => {
+  if (!canvas) return;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
+  playBtn.textContent = "⏸";
+  playBtn.setAttribute("aria-label", "Pause the clip");
+});
 
 // orbit controls
 let dragging = false, lastX = 0, lastY = 0;
@@ -306,6 +313,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -388,6 +396,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);

@@ -23,7 +23,15 @@ scrubbed to the first finding:
 
 [Open it full size](visuals/walk-dirty.report.html). Drag to orbit, use the
 wheel to zoom, and click a finding to jump to its frame. The charts share a
-playhead with the 3D view.
+playhead with the 3D view, and each chart caption says what to look for in
+it — derived from what your configuration declares for that clip and what the
+checks judged, not from an assumption about what the clip is. A clip declared
+`loop = true` is told its curves should end where they began; one that pins
+`speed_mps` with animation-owned travel is told the root should keep
+travelling at that speed, with no claim about the shape it travels; a clip
+that declares neither is told so, and named the checks that judged it. A root
+path is also marked where the track starts (a hollow circle) and where it ends
+(a filled square), and the caption states how far apart the two are.
 
 ## Compare before and after
 
@@ -37,12 +45,18 @@ $ animsmith --config examples/report-comparison.animsmith.toml report \
     --compare-after examples/assets/report-comparison-after.glb \
     --before-clip acceptance-matrix --after-clip acceptance-matrix \
     -o comparison.html
-wrote comparison.html (1 clip(s), 5 finding(s), 0.0 MB)   # exits 0
+wrote comparison.html (1 clip(s), 5 finding(s), 0.1 MB)   # exits 0
 ```
 
-[Open the comparison](visuals/foot-slide.comparison.html). The gait panel
-shades the sampled stance intervals, and the shared root chart uses one scale
-for both sides.
+[Open the comparison](visuals/foot-slide.comparison.html). Press play beside
+the shared phase to run both sides together, or scrub it by hand. The judged
+poses come first, then the shared root trajectory — fitted to its own panel,
+with a scale bar in the corner and the magnification against the
+role-trajectory panels in its caption, so a two-centimetre sway is legible
+and still reads as two centimetres — and then each side's trails and gait.
+The gait panel
+shades the sampled stance intervals, and every panel's caption says what to
+look for in it.
 
 ## Share evidence without sharing the asset
 

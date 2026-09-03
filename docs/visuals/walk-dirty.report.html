@@ -123,6 +123,16 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
    on top of one foot curve, and a solid line there would simply disappear. */
 .series-diff { stroke: var(--muted); stroke-dasharray: 4 3; }
 .root-path { stroke: var(--pass); }
+/* Where a top-down track starts and where it ends, in the track's own
+   colour: a hollow circle and a filled square, so a clip that walks out and
+   never returns is not the same picture as one that comes back over its own
+   line. The playhead dot keeps --error, so the current frame is never read
+   as either end. */
+.pathstart { fill: none; stroke: var(--pass); stroke-width: 1.5; }
+/* The end square carries the plot's own ground as a stroke, so it still
+   reads as a square where it lands on a dot or a line of its own colour. */
+.pathend { fill: var(--pass); stroke: var(--ground); stroke-width: 1; }
+.pathleader { fill: none; stroke: var(--pass); stroke-width: 1; }
 .axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
@@ -134,7 +144,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 <section id="viewer-panel">
 <div id="controls">
 <select id="clip-select"></select>
-<button id="play">▶</button>
+<button id="play" aria-label="Play the clip">▶</button>
 <input type="range" id="scrub" min="0" value="0" step="1">
 <span id="time"></span>
 </div>
@@ -149,7 +159,7 @@ section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
 <h2>Engine predictions</h2>
 <ul id="predictions"></ul>
 <h2>Charts</h2>
-<div id="charts"><figure class="chart" data-clip="walk" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>walk — foot height relative to hips</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk — foot height relative to hips over frames 0 to 32: L foot, R foot -1.05 to -0.95 m; L−R -0.10 to 0.10 m on its own right-hand axis"><title>walk — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="84.6" x2="94.6" y1="9" y2="9"/><text class="legend" x="97.6" y="12.0">R foot</text><line class="series-diff" x1="135.2" x2="145.2" y1="9" y2="9"/><text class="legend" x="148.2" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,76.0L43.1,67.5L52.2,59.2L61.4,51.2L70.5,43.8L79.6,37.0L88.8,31.2L97.9,26.3L107.0,22.4L116.1,19.7L125.2,18.3L134.4,18.1L143.5,19.1L152.6,21.4L161.8,24.8L170.9,29.4L180.0,35.0L189.1,41.4L198.2,48.7L207.4,56.5L216.5,64.7L225.6,73.2L234.8,81.7L243.9,90.1L253.0,98.2L262.1,105.8L271.2,112.8L280.4,119.0L289.5,124.2L298.6,128.4L307.8,131.5L316.9,133.4L326.0,134.0" fill="none"/><path class="series-right" d="M34.0,76.0L43.1,84.5L52.2,92.8L61.4,100.8L70.5,108.2L79.6,115.0L88.8,120.8L97.9,125.7L107.0,129.6L116.1,132.3L125.2,133.7L134.4,133.9L143.5,132.9L152.6,130.6L161.8,127.2L170.9,122.6L180.0,117.0L189.1,110.6L198.2,103.3L207.4,95.5L216.5,87.3L225.6,78.8L234.8,70.3L243.9,61.9L253.0,53.8L262.1,46.2L271.2,39.2L280.4,33.0L289.5,27.8L298.6,23.6L307.8,20.5L316.9,18.6L326.0,18.0" fill="none"/><path class="series-diff" d="M34.0,76.0L43.1,67.4L52.2,59.1L61.4,51.2L70.5,43.7L79.6,37.0L88.8,31.1L97.9,26.2L107.0,22.3L116.1,19.7L125.2,18.2L134.4,18.0L143.5,19.0L152.6,21.3L161.8,24.8L170.9,29.4L180.0,34.9L189.1,41.4L198.2,48.6L207.4,56.4L216.5,64.6L225.6,73.1L234.8,81.7L243.9,90.1L253.0,98.2L262.1,105.8L271.2,112.8L280.4,119.0L289.5,124.2L298.6,128.4L307.8,131.5L316.9,133.4L326.0,134.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">-0.95 m</text><text class="axis" x="2.0" y="134.0">-1.05 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.10 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.10 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 32</text></svg></figure><figure class="chart" data-clip="walk" data-kind="rootpath"><figcaption>walk — root path (top-down)</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk — root path (top-down): the root does not move, staying at X 0.00 m, Z 0.00 m for all 33 frames"><title>walk — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><path class="root-path" d="M180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0" fill="none"/><circle class="pathdot" r="3" cx="180.0" cy="76.0"/><text class="axis" x="180.0" y="66.0" text-anchor="middle">root stays at the origin</text><text class="axis" x="2.0" y="146.0">X 0.00…0.00 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…0.00 m</text></svg><template class="pathpoints">180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0</template></figure></div>
+<div id="charts"><figure class="chart" data-clip="walk" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>walk — foot height relative to hips · what to look for: this clip is declared a loop, so the curves should end where they began</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk — foot height relative to hips over frames 0 to 32: L foot, R foot -1.05 to -0.95 m; L−R -0.10 to 0.10 m on its own right-hand axis"><title>walk — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="84.6" x2="94.6" y1="9" y2="9"/><text class="legend" x="97.6" y="12.0">R foot</text><line class="series-diff" x1="135.2" x2="145.2" y1="9" y2="9"/><text class="legend" x="148.2" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,76.0L43.1,67.5L52.2,59.2L61.4,51.2L70.5,43.8L79.6,37.0L88.8,31.2L97.9,26.3L107.0,22.4L116.1,19.7L125.2,18.3L134.4,18.1L143.5,19.1L152.6,21.4L161.8,24.8L170.9,29.4L180.0,35.0L189.1,41.4L198.2,48.7L207.4,56.5L216.5,64.7L225.6,73.2L234.8,81.7L243.9,90.1L253.0,98.2L262.1,105.8L271.2,112.8L280.4,119.0L289.5,124.2L298.6,128.4L307.8,131.5L316.9,133.4L326.0,134.0" fill="none"/><path class="series-right" d="M34.0,76.0L43.1,84.5L52.2,92.8L61.4,100.8L70.5,108.2L79.6,115.0L88.8,120.8L97.9,125.7L107.0,129.6L116.1,132.3L125.2,133.7L134.4,133.9L143.5,132.9L152.6,130.6L161.8,127.2L170.9,122.6L180.0,117.0L189.1,110.6L198.2,103.3L207.4,95.5L216.5,87.3L225.6,78.8L234.8,70.3L243.9,61.9L253.0,53.8L262.1,46.2L271.2,39.2L280.4,33.0L289.5,27.8L298.6,23.6L307.8,20.5L316.9,18.6L326.0,18.0" fill="none"/><path class="series-diff" d="M34.0,76.0L43.1,67.4L52.2,59.1L61.4,51.2L70.5,43.7L79.6,37.0L88.8,31.1L97.9,26.2L107.0,22.3L116.1,19.7L125.2,18.2L134.4,18.0L143.5,19.0L152.6,21.3L161.8,24.8L170.9,29.4L180.0,34.9L189.1,41.4L198.2,48.6L207.4,56.4L216.5,64.6L225.6,73.1L234.8,81.7L243.9,90.1L253.0,98.2L262.1,105.8L271.2,112.8L280.4,119.0L289.5,124.2L298.6,128.4L307.8,131.5L316.9,133.4L326.0,134.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">-0.95 m</text><text class="axis" x="2.0" y="134.0">-1.05 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.10 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.10 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 32</text></svg></figure><figure class="chart" data-clip="walk" data-kind="rootpath"><figcaption>walk — root path (top-down) · what to look for: this clip is declared a loop, so its root path should end where it began; this clip declares who owns its horizontal travel and the in-place check judged the root against that declaration, so the path is the evidence for it · the dot is the current frame, the hollow circle where the track starts and the square where it ends · the path spans 0.000 m at its widest · the track closes on itself</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk — root path (top-down): the root does not move, staying at X 0.00 m, Z 0.00 m for all 33 frames"><title>walk — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><circle class="pathstart" cx="80.4" cy="9" r="6"/><text class="legend" x="88.4" y="12.0">start</text><rect class="pathend" x="123.4" y="6.0" width="6" height="6"/><text class="legend" x="134.4" y="12.0">end</text><path class="root-path" d="M180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0L180.0,76.0" fill="none"/><circle class="pathstart" cx="180.0" cy="76.0" r="6"/><line class="pathleader" x1="180.0" y1="76.0" x2="191.0" y2="87.0"/><rect class="pathend" x="188.0" y="84.0" width="6" height="6"/><circle class="pathdot" r="3" cx="180.0" cy="76.0"/><text class="axis" x="180.0" y="66.0" text-anchor="middle">root stays at the origin</text><text class="axis" x="2.0" y="146.0">X 0.00…0.00 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…0.00 m</text></svg><template class="pathpoints">180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0;180.0,76.0</template></figure></div>
 </section>
 </main>
 <script>// animsmith report shared runtime — the pure helpers both generated viewers
@@ -265,6 +275,47 @@ function animsmithApplyDocument(options) {
   }
   return options;
 }
+
+// A frame loop with exactly one owner, for the transports both documents
+// carry. Playback in either is nothing but advancing one number per frame,
+// and both had the same defect: pausing left the callback it had scheduled
+// alive, and playing scheduled another, so every pause-then-play added a
+// redraw chain that ran for as long as the document stayed open.
+//
+// `stop` cancels the frame in flight, and the run number retires a callback
+// the browser hands back anyway — a browser that ignores the cancellation
+// still ends up with one loop, whether it was stopped or restarted.
+function animsmithFrameLoop(advance) {
+  const loop = { running: false, handle: 0, run: 0 };
+  function chain(mine) {
+    return function frame(now) {
+      // Stopped, or retired by a later start: this chain ends here rather
+      // than scheduling a successor.
+      if (!loop.running || mine !== loop.run) return;
+      advance(now);
+      loop.handle = requestAnimationFrame(frame);
+    };
+  }
+  return {
+    get running() { return loop.running; },
+    start() {
+      loop.running = true;
+      loop.run += 1;
+      loop.handle = requestAnimationFrame(chain(loop.run));
+    },
+    // Returns false when it was already stopped, so a caller can tell a real
+    // pause from a redundant one.
+    stop() {
+      if (!loop.running) return false;
+      loop.running = false;
+      if (loop.handle) {
+        cancelAnimationFrame(loop.handle);
+        loop.handle = 0;
+      }
+      return true;
+    },
+  };
+}
 </script>
 <script type="application/json" id="report-data">{"bones":[{"name":"pelvis","parent":-1},{"name":"foot_l","parent":0},{"name":"foot_r","parent":0}],"clips":[{"duration":1.0,"frames":33,"name":"walk","positions":"AAAAAAAAgD8AAAAAzczMPQAAAAAAAAAAzczMvQAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPQBn8DtqTbQ8zczMvQBn8LtqTbS8AAAAAAAAgD8AAAAAzczMPQDNbTzVWTI9zczMvQDNbbzVWTK9AAAAAAAAgD8AAAAAzczMPWAgrzxNWIM9zczMvYAgr7xNWIO9AAAAAAAAgD8AAAAAzczMPcCP4zzTq6o9zczMvcCP47zTq6q9AAAAAAAAgD8AAAAAzczMPQCJCT2NTc49zczMvQCJCb2NTc69AAAAAAAAgD8AAAAAzczMPQBQHj0EeO09zczMvQBQHr0EeO29AAAAAAAAgD8AAAAAzczMPbCpLz1DvwM+zczMvaCpL71DvwO+AAAAAAAAgD8AAAAAzczMPeA1PT1s6A0+zczMveA1Pb1s6A2+AAAAAAAAgD8AAAAAzczMPZCpRj0v/xQ+zczMvaCpRr0v/xS+AAAAAAAAgD8AAAAAzczMPVDQSz1C3Bg+zczMvWDQS71C3Bi+AAAAAAAAgD8AAAAAzczMPaCNTD09ahk+zczMvaCNTL09ahm+AAAAAAAAgD8AAAAAzczMPWDdSD0MphY+zczMvWDdSL0Mpha+AAAAAAAAgD8AAAAAzczMPQDUQD0FnxA+zczMvQDUQL0FnxC+AAAAAAAAgD8AAAAAzczMPRCeND2Pdgc+zczMvSCeNL2Pdge+AAAAAAAAgD8AAAAAzczMPTB/JD3QvvY9zczMvUB/JL3Qvva9AAAAAAAAgD8AAAAAzczMPcDQED0kOdk9zczMvcDQEL0kOdm9AAAAAAAAgD8AAAAAzczMPaD/8zy0/7Y9zczMvYD/87y0/7a9AAAAAAAAgD8AAAAAzczMPYAVwTwm0JA9zczMvYAVwbwm0JC9AAAAAAAAgD8AAAAAzczMPYD9iTwy/E49zczMvYD9ibwy/E69AAAAAAAAgD8AAAAAzczMPYDRHzwduu88zczMvYDRH7wduu+8AAAAAAAAgD8AAAAAzczMPQDJIDttLfE7zczMvQDIILttLfG7AAAAAAAAgD8AAAAAzczMPQCXoLsO43C8zczMvYCXoDsO43A8AAAAAAAAgD8AAAAAzczMPYAMR7x7SRW9zczMvcAMRzx7SRU9AAAAAAAAgD8AAAAAzczMPUC/nLznHmu9zczMvUC/nDznHms9AAAAAAAAgD8AAAAAzczMPYCT0ryw7p29zczMvaCT0jyw7p09AAAAAAAAgD8AAAAAzczMPYDsAb244sK9zczMvYDsAT244sI9AAAAAAAAgD8AAAAAzczMPSC/F73FnuO9zczMvTC/Fz3FnuM9AAAAAAAAgD8AAAAAzczMPQBJKr1vbf+9zczMvfBIKj1vbf89AAAAAAAAgD8AAAAAzczMPSAjOb1P2gq+zczMvRAjOT1P2go+AAAAAAAAgD8AAAAAzczMPUD7Q71t/BK+zczMvUD7Qz1t/BI+AAAAAAAAgD8AAAAAzczMPWCVSr0B8Be+zczMvVCVSj0B8Bc+AAAAAAAAgD8AAAAAzczMPcDMTL2amRm+zczMvdDMTD2amRk+","trails":{"hips":0,"left_foot":1,"right_foot":2}}],"evidence_only":false,"file":"walk-dirty.glb","findings":[{"bone":"foot_r","check":"loop-closure","clip":"walk","message":"loop does not close in position: bone 'foot_r' is 0.1581 m from its first-frame model-space position (cap 0.0100 m)","node":null,"severity":"error","time":1.0},{"bone":null,"check":"loop-seam","clip":"walk","message":"loop seam pops: wrap discontinuity is 6.82× the neighbouring in-clip step (cap 1.60) — the clip does not close its cycle","node":null,"severity":"error","time":1.0},{"bone":"foot_r","check":"loop-seam-vel","clip":"walk","message":"loop velocity changes at the seam: bone 'foot_r' differs by 0.7972 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"severity":"error","time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"walk"}}],"prediction_provenance":null,"predictions":[],"profile":"ue-mannequin"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
@@ -365,7 +416,6 @@ if (canvas) {
 // ---- state ------------------------------------------------------------
 let clip = data.clips[0] || null;
 let frame = 0;
-let playing = false;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
@@ -520,25 +570,33 @@ function updateCharts() {
 }
 
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
-scrub.addEventListener("input", () => { playing = false; playBtn.textContent = "▶"; setFrame(+scrub.value); });
-playBtn.addEventListener("click", () => {
-  if (!canvas) return;
-  playing = !playing;
-  playBtn.textContent = playing ? "⏸" : "▶";
-  if (playing) { last = performance.now(); requestAnimationFrame(tick); }
-});
+scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
+// The frame loop's ownership lives in the shared runtime, so both documents
+// stop and restart playback the same way.
 let last = 0;
-function tick(now) {
-  if (!playing || !clip) return;
+const playLoop = animsmithFrameLoop((now) => {
+  if (!clip) return;
   const dt = (now - last) / 1000;
   last = now;
   const fps = (clip.frames - 1) / clip.duration;
   let f = frame + dt * fps;
   if (f > clip.frames - 1) f = 0; // wrap like the runtime does
   setFrame(f);
-  requestAnimationFrame(tick);
+});
+function pausePlayback() {
+  if (!playLoop.stop()) return;
+  playBtn.textContent = "▶";
+  playBtn.setAttribute("aria-label", "Play the clip");
 }
+playBtn.addEventListener("click", () => {
+  if (!canvas) return;
+  if (playLoop.running) { pausePlayback(); return; }
+  last = performance.now();
+  playLoop.start();
+  playBtn.textContent = "⏸";
+  playBtn.setAttribute("aria-label", "Pause the clip");
+});
 
 // orbit controls
 let dragging = false, lastX = 0, lastY = 0;
@@ -575,6 +633,7 @@ function selectFinding(index) {
   // An index this document cannot honour leaves nothing selected, which is
   // the default state, rather than keeping a previous selection.
   if (!f || !item) return;
+  pausePlayback();
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
@@ -657,6 +716,10 @@ for (const row of data.predictions) {
 function applyFragment() {
   const options = animsmithApplyDocument(animsmithFragmentOptions(location.hash));
   palette = animsmithPalette();
+  // A clip, a finding or a frame is a reader asking for one position, and a
+  // running loop overwrites it on the very next frame. Only `theme` and
+  // `embed` leave playback alone.
+  if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
     const known = data.clips.some((c) => c.name === options.clip);
     selectClip(known ? options.clip : data.clips[0].name);
