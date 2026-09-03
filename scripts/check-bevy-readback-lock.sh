@@ -84,15 +84,17 @@ if ! awk '
 ' "$lock"; then
     exit 1
 fi
+# GNU coreutils first, then the BSD tool macOS ships. Falling through on a
+# failing tool rather than only on a missing one keeps the second path
+# reachable, so the self-test below can prove it agrees with the first.
 sha256_of() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | cut -d' ' -f1
-    elif command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | cut -d' ' -f1
-    else
-        echo "no sha256sum or shasum on PATH" >&2
-        exit 1
+    local reported
+    if reported="$(sha256sum "$1" 2>/dev/null)" || reported="$(shasum -a 256 "$1" 2>/dev/null)"; then
+        printf '%s\n' "${reported%% *}"
+        return 0
     fi
+    echo "no working sha256sum or shasum for $1" >&2
+    exit 1
 }
 bytes="$(wc -c < "$lock" | tr -d ' ')"
 sha="$(sha256_of "$lock")"
@@ -155,6 +157,44 @@ grep -Fq "$work/identity.txt is not what $work/one-byte-Cargo.lock renders: $byt
 grep -Fq "$refresh_command" <<< "$rejection" \
     || fail "the rejection did not name the refresh command: $rejection"
 echo "ok: one modified lock byte rejected"
+
+# The identity file's count line alone: a comparison that read only the digest
+# would accept this. The digest half is covered by the lock mutation above.
+{ echo "$((bytes + 1))"; tail -n 1 "$identity"; } > "$work/wrong-count.txt"
+cmp -s "$identity" "$work/wrong-count.txt" && fail "the byte-count mutation changed nothing"
+set +e
+counted="$(bash "$script" "$work/Cargo.lock" "$work/wrong-count.txt" 2>&1)"
+counted_status=$?
+set -e
+test "$counted_status" -ne 0 || fail "the check accepted an identity file with the wrong byte count"
+grep -Fq "$work/wrong-count.txt is not what $work/Cargo.lock renders: $bytes bytes, $sha" <<< "$counted" \
+    || fail "the byte-count rejection did not name the identity the lock renders: $counted"
+echo "ok: wrong byte count rejected"
+
+# The BSD digest tool the fallback reaches for on macOS, standing in for a host
+# where `sha256sum` is missing or broken. It hashes independently, so accepting
+# the committed pair through it is two implementations agreeing on this lock.
+mkdir "$work/bin"
+cat > "$work/bin/sha256sum" <<'ABSENT'
+#!/usr/bin/env bash
+exit 127
+ABSENT
+cat > "$work/bin/shasum" <<'BSD'
+#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = "-a" && test "$2" = "256" || { echo "unexpected shasum arguments: $*" >&2; exit 1; }
+printf '%s  %s
+' "$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$3")" "$3"
+BSD
+chmod +x "$work/bin/sha256sum" "$work/bin/shasum"
+PATH="$work/bin:$PATH" bash "$script" "$work/Cargo.lock" "$work/identity.txt" \
+    || fail "the check rejected the committed pair when it fell back to shasum"
+set +e
+PATH="$work/bin:$PATH" bash "$script" "$work/one-byte-Cargo.lock" "$work/identity.txt" >/dev/null 2>&1
+fallback_status=$?
+set -e
+test "$fallback_status" -ne 0 || fail "the shasum fallback accepted a lock the identity file does not describe"
+echo "ok: the shasum fallback agrees with sha256sum"
 
 # `--refresh` must write, from the lock it is handed, exactly the two lines the
 # lock renders, and the check must then accept that pair. The lock here differs
