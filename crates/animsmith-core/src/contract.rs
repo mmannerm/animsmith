@@ -224,6 +224,28 @@ impl InputIdentity {
         }
     }
 
+    /// Construct an identity from an already-formatted lowercase hexadecimal
+    /// SHA-256 digest and exact byte count.
+    ///
+    /// Returns `None` unless `sha256` is exactly 64 lowercase hexadecimal
+    /// digits. Uppercase is refused rather than normalized, so every stored
+    /// digest keeps the one lowercase authority [`sha256_hex`] establishes and
+    /// the wire deserializers already require.
+    pub fn from_sha256_hex(sha256: &str, bytes: u64) -> Option<Self> {
+        let digits = sha256.as_bytes();
+        if digits.len() != 64
+            || !digits
+                .iter()
+                .all(|digit| digit.is_ascii_digit() || (b'a'..=b'f').contains(digit))
+        {
+            return None;
+        }
+        Some(Self {
+            sha256: sha256.to_owned(),
+            bytes,
+        })
+    }
+
     /// Lowercase hexadecimal SHA-256 digest of the source bytes.
     pub fn sha256(&self) -> &str {
         &self.sha256

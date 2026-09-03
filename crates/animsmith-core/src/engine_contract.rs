@@ -208,30 +208,11 @@ impl<'de> Deserialize<'de> for InputIdentity {
         }
 
         let wire = WireIdentity::deserialize(deserializer)?;
-        if wire.sha256.len() != 64
-            || !wire
-                .sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
-            return Err(D::Error::custom(
+        InputIdentity::from_sha256_hex(&wire.sha256, wire.bytes).ok_or_else(|| {
+            D::Error::custom(
                 "input identity sha256 must be exactly 64 lowercase hexadecimal digits",
-            ));
-        }
-        let mut digest = [0_u8; 32];
-        for (index, pair) in wire.sha256.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-            digest[index] = (hex_nibble(pair[0]).expect("validated hexadecimal") << 4)
-                | hex_nibble(pair[1]).expect("validated hexadecimal");
-        }
-        Ok(InputIdentity::from_sha256_digest(digest, wire.bytes))
-    }
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
+            )
+        })
     }
 }
 

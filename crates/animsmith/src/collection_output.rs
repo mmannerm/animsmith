@@ -1385,17 +1385,8 @@ impl CollectionOutputInput {
 fn identity_from_wire(
     wire: &IdentityWire,
 ) -> Result<InputIdentity, CollectionDirectionalSpeedEvaluationControlError> {
-    let mut digest = [0_u8; 32];
-    if wire.sha256.len() != 64 {
-        return Err(CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence);
-    }
-    for (index, chunk) in wire.sha256.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-        let text = std::str::from_utf8(chunk)
-            .map_err(|_| CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence)?;
-        digest[index] = u8::from_str_radix(text, 16)
-            .map_err(|_| CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence)?;
-    }
-    Ok(InputIdentity::from_sha256_digest(digest, wire.bytes))
+    InputIdentity::from_sha256_hex(&wire.sha256, wire.bytes)
+        .ok_or(CollectionDirectionalSpeedEvaluationControlError::ContradictoryEvidence)
 }
 
 fn summarize(

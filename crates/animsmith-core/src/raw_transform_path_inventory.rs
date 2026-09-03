@@ -1010,23 +1010,11 @@ where
     }
 
     let wire = WireIdentity::deserialize(deserializer)?;
-    let bytes = wire.sha256.as_bytes();
-    if bytes.len() != 64
-        || !bytes
-            .iter()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-    {
-        return Err(serde::de::Error::custom(
+    InputIdentity::from_sha256_hex(&wire.sha256, wire.bytes).ok_or_else(|| {
+        serde::de::Error::custom(
             "input identity sha256 must be exactly 64 lowercase hexadecimal digits",
-        ));
-    }
-    let mut digest = [0_u8; 32];
-    for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
-        let high = hex_nibble(pair[0]).expect("validated hexadecimal");
-        let low = hex_nibble(pair[1]).expect("validated hexadecimal");
-        digest[index] = (high << 4) | low;
-    }
-    Ok(InputIdentity::from_sha256_digest(digest, wire.bytes))
+        )
+    })
 }
 
 fn deserialize_sha256<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -1034,14 +1022,6 @@ where
     D: serde::Deserializer<'de>,
 {
     deserialize_capped_string(deserializer, 64)
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
 }
 
 #[derive(Deserialize)]
