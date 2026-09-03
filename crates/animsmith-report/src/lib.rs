@@ -1957,8 +1957,12 @@ const GAIT_GROUP_TITLE: &str = "L−R foot height by stride phase";
 
 /// What this run could measure about one declared member of a gait group.
 ///
-/// The cases mirror `gait-group`'s own rules, so a caption cannot present a
-/// member as measured where the check recorded a coverage gap instead.
+/// The rules are `gait-group`'s: the set of members that reach
+/// [`MemberPhase::Measured`] is the set the check counts, so a caption cannot
+/// present a member as measured where the check recorded a coverage gap
+/// instead. Only the wording differs — a rig that resolves a foot on one side
+/// only is `RolesUnresolved` here and a per-clip bilateral-roles gap there,
+/// and neither measures a phase.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MemberPhase {
     /// The document holds no clip of this name.
@@ -2089,7 +2093,7 @@ fn gait_group_chart(
         // The member bound is applied here, before a sampled series is
         // allocated for it: a state is a handful of numbers, a series is one
         // per judged frame.
-        let drawable = members.len() < GROUP_SERIES_CLASSES.len();
+        let has_colour = members.len() < GROUP_SERIES_CLASSES.len();
         let index = doc.clips.iter().position(|clip| &clip.name == clip_name);
         let (phase, series) = match (bilateral, index) {
             (_, None) => (MemberPhase::Absent, Vec::new()),
@@ -2109,7 +2113,7 @@ fn gait_group_chart(
                         Some(phase) => MemberPhase::Measured(phase),
                     },
                 };
-                let series = match grid.filter(|_| drawable) {
+                let series = match grid.filter(|_| has_colour) {
                     Some(grid) => lr_foot_height(&grid, hips, &left, &right),
                     None => Vec::new(),
                 };
@@ -2140,8 +2144,9 @@ fn gait_group_chart(
 
     let drawn: Vec<(usize, &GroupMember<'_>)> = members
         .iter()
+        .take(GROUP_SERIES_CLASSES.len())
         .enumerate()
-        .filter(|(index, member)| *index < GROUP_SERIES_CLASSES.len() && !member.series.is_empty())
+        .filter(|(_, member)| !member.series.is_empty())
         .collect();
     let series: Vec<Series<'_>> = drawn
         .iter()
