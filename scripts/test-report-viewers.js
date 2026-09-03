@@ -91,10 +91,18 @@ function documentIds(html) {
 // The charts the single-clip viewer syncs, built from the document's own
 // <figure> blocks: real data-* hooks, and the child elements the playhead and
 // path dot are moved through.
+// A browser hands `dataset` the decoded attribute value, so the double does
+// too: a clip or group name carrying an escapable character must reach the
+// viewer as the document's own text and not as its markup spelling.
+function decodeEntities(value) {
+  return value.replace(/&(amp|lt|gt|quot|#39);/g, (_, entity) =>
+    ({amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'"})[entity]);
+}
+
 function documentCharts(html) {
   return [...html.matchAll(/<figure class="chart"[\s\S]*?<\/figure>/g)].map(([figure]) => {
     const node = new Node("chart");
-    for (const [, name, value] of figure.matchAll(/data-([a-z]+)="([^"]*)"/g)) node.dataset[name] = value;
+    for (const [, name, value] of figure.matchAll(/data-([a-z]+)="([^"]*)"/g)) node.dataset[name] = decodeEntities(value);
     for (const name of ["playhead", "pathdot", "pathpoints"]) {
       if (!figure.includes(`class="${name}"`)) continue;
       const child = new Node(name);
@@ -1706,8 +1714,11 @@ const groupFigures = documentCharts(groupHtml).filter((figure) => figure.dataset
 if (groupFigures.length !== 1) throw new Error(`the gait-group fixture must render exactly one group figure, saw ${groupFigures.length}`);
 if (groupFigures[0].dataset.clip !== undefined) throw new Error("a group figure must carry no data-clip, or it would be hidden with its clip");
 if (groupFigures[0].dataset.group !== "run-ring") throw new Error(`the group figure names its group: ${groupFigures[0].dataset.group}`);
-const groupMembers = (groupFigures[0].dataset.members || "").split(",").filter(Boolean);
-if (groupMembers.length < 2) throw new Error(`the group figure names its members: ${groupFigures[0].dataset.members}`);
+if (groupFigures[0].dataset.members !== undefined) throw new Error("membership is payload data, not a delimited attribute a clip name can break");
+const declaredGroup = (groupPayload.groups || []).find((g) => g.name === groupFigures[0].dataset.group);
+if (!declaredGroup) throw new Error(`the payload declares the figure's group: ${groupFigures[0].dataset.group}`);
+const groupMembers = declaredGroup.members;
+if (groupMembers.length < 2) throw new Error(`the group names its members: ${JSON.stringify(groupMembers)}`);
 const groupPad = Number(groupFigures[0].dataset.pad), groupPlotW = Number(groupFigures[0].dataset.plotw);
 if (!(groupPad > 0) || !(groupPlotW > 0)) throw new Error("the group figure does not publish its plot rectangle");
 
@@ -1763,13 +1774,30 @@ const onFrames = groupPad + groupPlotW;
 if (Math.abs(onCycle - onFrames) < 1) throw new Error("the harness failed to make the two axes differ");
 if (Math.abs(groupPlayheadOf(shortRun) - onCycle) > 1e-6) throw new Error(`the group playhead follows the members' cycle, not the clip's frame count: ${groupPlayheadOf(shortRun)} against ${onCycle}`);
 
+// A declared member whose own name carries the separator a delimited
+// attribute would have used is still its group's member. Encoded as
+// "a,b" in an attribute it would split into two names, neither of them
+// itself, and its group's figure would vanish while it is selected.
+const awkward = JSON.parse(JSON.stringify(groupPayload));
+const comma = "run,left & \"quoted\"";
+const renamed = awkward.clips[1].name;
+awkward.clips[1].name = comma;
+for (const group of awkward.groups) group.members = group.members.map((m) => (m === renamed ? comma : m));
+const awkwardRun = runSingle(group, groupHtml, awkward);
+awkwardRun.nodes["clip-select"].value = comma;
+awkwardRun.nodes["clip-select"].listeners.change();
+if (awkwardRun.nodes["clip-select"].value !== comma) throw new Error("the harness failed to select the awkwardly named member");
+if (groupFigureOf(awkwardRun).style.display === "none") throw new Error("a member whose name carries the list separator lost its own group figure");
+
 // A clip outside the group is not what the figure draws, and its phase is
 // not the axis the caption describes. Selecting it hides the figure rather
 // than leaving it on screen driven by a clip it does not plot. The fixture
 // is all members, so the non-member is introduced here, in the payload the
 // viewer reads.
 const outsider = JSON.parse(JSON.stringify(groupPayload));
-const stranger = "clip-outside-the-ring";
+// A name carrying the separator a delimited attribute would have used, so a
+// membership encoded that way would split it and lose its own figure.
+const stranger = "clip,outside,the-ring";
 if (groupMembers.includes(stranger)) throw new Error("the harness picked a name the group declares");
 outsider.clips.push(Object.assign({}, outsider.clips[0], {name: stranger}));
 const outsiderRun = runSingle(group, groupHtml, outsider);

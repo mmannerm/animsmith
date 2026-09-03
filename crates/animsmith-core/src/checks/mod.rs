@@ -106,15 +106,7 @@ pub(crate) fn root_motion_gap(roles: &ResolvedRoles) -> Option<CoverageGap> {
 
 /// Return the typed prerequisite gap for gait work, if any.
 pub(crate) fn gait_gap(roles: &ResolvedRoles) -> Option<CoverageGap> {
-    let has_foot = [
-        Role::LeftFoot,
-        Role::LeftToe,
-        Role::RightFoot,
-        Role::RightToe,
-    ]
-    .iter()
-    .any(|&r| roles.get(r).is_some());
-    if roles.get(Role::Hips).is_some() && has_foot {
+    if crate::metrics::gait_roles_resolved(roles) {
         None
     } else {
         Some(CoverageGap::new(

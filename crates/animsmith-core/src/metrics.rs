@@ -141,10 +141,12 @@ fn bilateral_foot_roles(roles: &ResolvedRoles) -> bool {
 }
 
 /// Whether the rig resolves the roles any gait measurement needs: hips plus
-/// at least one foot. This is the prerequisite the gait checks report as a
-/// coverage gap when it fails, and the one a presentation states as the
-/// reason no member of a group could be measured.
-pub fn gait_roles_resolved(roles: &ResolvedRoles) -> bool {
+/// at least one foot.
+///
+/// This is the prerequisite the gait checks report as a coverage gap when it
+/// fails; [`gait_member_phase`] applies it, so a consumer reads the outcome
+/// rather than the predicate.
+pub(crate) fn gait_roles_resolved(roles: &ResolvedRoles) -> bool {
     let has_foot = [
         Role::LeftFoot,
         Role::LeftToe,
@@ -722,10 +724,12 @@ pub fn gait_phase_evidence(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<Gai
 
 /// Samples one stride cycle spans on a `frames`-sample metric grid.
 ///
-/// A grid over three frames repeats its first sample at the wrap, and that
-/// duplicate is not part of the cycle; a three-frame grid is too short to
-/// carry one. Sample `k` therefore sits at cycle position `k / cycle`, which
-/// is where a phase measured on that cycle can be drawn against it.
+/// A grid of more than three frames ends on a repeat of its first sample —
+/// the wrap — and that duplicate is not part of the cycle, so the cycle is
+/// `frames - 1`. A three-frame grid carries no such duplicate, and all three
+/// of its samples are the cycle. Sample `k` therefore sits at cycle position
+/// `k / cycle`, which is where a phase measured on that cycle is drawn
+/// against it.
 pub fn gait_cycle_samples(frames: usize) -> usize {
     if frames > 3 { frames - 1 } else { frames }
 }

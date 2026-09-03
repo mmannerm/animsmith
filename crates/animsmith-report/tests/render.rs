@@ -5615,47 +5615,86 @@ fn a_group_figure_describes_itself_and_grows_only_for_its_legend() {
     assert_figure_describes_itself(&wide_figure, "run-ring");
 }
 
-/// A group figure names the members it draws, because it is evidence about
-/// them and not about whichever clip is selected.
+/// The document names each group's members, because a group figure is
+/// evidence about them and not about whichever clip is selected.
 ///
-/// The viewer shows the figure while a member is selected and hides it
-/// otherwise; without the membership on the figure, a clip outside the group
-/// would keep it on screen and drive its playhead from a phase the figure
-/// does not plot.
+/// The membership is embedded data rather than a delimited attribute: a
+/// member's name is arbitrary authored text, and any separator that packs
+/// several names into one attribute is a name a document may legitimately
+/// contain. `data-group` is the key that joins the figure to its members.
 #[test]
-fn a_group_figure_carries_its_membership_and_no_clip() {
+fn the_document_names_each_groups_members_and_no_figure_names_a_clip() {
+    let awkward = "run,left & \"quoted\"";
     let doc = ring_fixture(
-        &[("run_forward", 0.0), ("run_left", 0.25), ("idle", 0.0)],
+        &[("run_forward", 0.0), (awkward, 0.25), ("idle", 0.0)],
         0.05,
     );
     let roles = ring_roles(&doc);
-    let config = ring_config("run-ring", &["run_forward", "run_left"], 0.15, 0.03);
-    let figure = group_figure(&doc, &roles, &config);
+    let config = ring_config("run-ring", &["run_forward", awkward], 0.15, 0.03);
+    let grids = MetricGrids::new(&doc);
+    let checks = matrix_evaluations(&grids, &roles, &config);
+    let html = animsmith_report::render(animsmith_report::ReportInputs {
+        grids: &grids,
+        roles: &roles,
+        checks: &checks,
+        config: &config,
+        prediction_provenance: None,
+        clip: None,
+        options: full(),
+    });
 
+    let figure = chart_figures(&html)
+        .into_iter()
+        .find(|figure| attribute(figure, "data-kind") == "gait-group")
+        .expect("the declared group is drawn");
     assert_eq!(attribute(&figure, "data-group"), "run-ring");
-    assert_eq!(
-        attribute(&figure, "data-members"),
-        "run_forward,run_left",
-        "the figure names its declared members, in order"
-    );
     assert_eq!(
         attribute_values(&figure, "data-clip"),
         Vec::<String>::new(),
         "a group figure belongs to no single clip: {figure}"
     );
-    // The clip that is not a member has its own gait figure and appears in
-    // no group's membership.
-    let (html, _) = group_figures(&doc, &roles, &config, None);
-    let idle = chart_figures(&html)
-        .into_iter()
-        .find(|figure| {
-            attribute(figure, "data-kind") == "gait"
-                && attribute_values(figure, "data-clip") == vec!["idle".to_owned()]
-        })
-        .expect("the non-member keeps its own gait chart");
     assert_eq!(
-        attribute_values(&idle, "data-members"),
-        Vec::<String>::new()
+        attribute_values(&figure, "data-members"),
+        Vec::<String>::new(),
+        "membership is data, not a delimited attribute: {figure}"
+    );
+
+    // The payload carries the declared membership, each name whole.
+    let data = report_data(&html);
+    let groups = data["groups"].as_array().expect("a groups array");
+    assert_eq!(groups.len(), 1, "one entry per drawn group");
+    assert_eq!(groups[0]["name"], "run-ring");
+    assert_eq!(
+        groups[0]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .map(|member| member.as_str().expect("a name").to_owned())
+            .collect::<Vec<_>>(),
+        vec!["run_forward".to_owned(), awkward.to_owned()],
+        "a member's name survives whole, separators and all"
+    );
+    // And the clip that is not a member appears in no membership.
+    assert!(
+        !groups[0]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .any(|member| member == "idle"),
+        "the non-member is not claimed by the group"
+    );
+    // The awkward name reaches the document as text, not as markup.
+    assert!(
+        !html.contains("run,left & \"quoted\""),
+        "an authored name is escaped wherever it is written"
+    );
+    assert_eq!(
+        figcaption(&figure)
+            .matches("run,left &amp; &quot;quoted&quot;")
+            .count(),
+        1,
+        "the caption names it once, escaped: {}",
+        figcaption(&figure)
     );
 }
 
@@ -5712,9 +5751,23 @@ fn a_clip_filtered_report_still_draws_the_whole_group() {
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait-group")
         .expect("the selected clip's group is drawn");
+    let data_groups = report_data(&html)["groups"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(
-        attribute(&group, "data-members"),
-        "run_forward,run_left,run_right"
+        data_groups[0]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .map(|member| member.as_str().expect("a name").to_owned())
+            .collect::<Vec<_>>(),
+        vec![
+            "run_forward".to_owned(),
+            "run_left".to_owned(),
+            "run_right".to_owned()
+        ],
+        "the membership a clip filter does not narrow"
     );
     for class in ["series-member-0", "series-member-1", "series-member-2"] {
         assert!(

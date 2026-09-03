@@ -344,7 +344,7 @@ function animsmithFrameLoop(advance) {
   };
 }
 </script>
-<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"clips":[{"cycle":4,"duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}}],"evidence_only":false,"file":"report-comparison-before.glb","findings":[{"bone":"hand","check":"constant-track","clip":"acceptance-matrix","message":"rotation track has 5 keys but never moves — export bloat","node":null,"severity":"note","time":null},{"bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":0.25},{"bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"prediction_provenance":null,"predictions":[],"profile":"custom"}</script>
+<script type="application/json" id="report-data">{"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"clips":[{"cycle":4,"duration":1.0,"frames":5,"name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}}],"evidence_only":false,"file":"report-comparison-before.glb","findings":[{"bone":"hand","check":"constant-track","clip":"acceptance-matrix","message":"rotation track has 5 keys but never moves — export bloat","node":null,"severity":"note","time":null},{"bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":0.25},{"bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"groups":[],"prediction_provenance":null,"predictions":[],"profile":"custom"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
 // Renders exactly the pose-grid frames the checks judged; no animation
 // sampling happens here.
@@ -560,6 +560,10 @@ function setFrame(f) {
   draw();
 }
 
+// Declared gait-group membership, keyed by the name each figure carries as
+// `data-group`.
+const groupMembers = new Map((data.groups || []).map((g) => [g.name, g.members]));
+
 function updateCharts() {
   if (!clip) return;
   const u = clip.frames > 1 ? frame / (clip.frames - 1) : 0;
@@ -573,7 +577,10 @@ function updateCharts() {
     // then. Its caption describes its members' own source phase, so a clip
     // outside the group must not drive its playhead, and a figure of a group
     // the reader is not looking at is not evidence about the clip they are.
-    const members = "members" in fig.dataset ? fig.dataset.members.split(",") : null;
+    // The membership comes from the payload rather than the markup: a clip
+    // name is arbitrary text, so no separator can pack several into one
+    // attribute without a legitimate name splitting into pieces.
+    const members = "group" in fig.dataset ? (groupMembers.get(fig.dataset.group) || []) : null;
     const active = members ? members.includes(clip.name) : fig.dataset.clip === clip.name;
     fig.style.display = active ? "" : "none";
     if (!active) continue;

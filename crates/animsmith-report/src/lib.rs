@@ -1694,10 +1694,10 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
     ];
 
     let mut clips_json: Vec<Value> = Vec::new();
-    // The cross-clip figures come first: they are the only ones a reader
-    // sees whichever clip is selected, so they open the Charts column rather
-    // than sitting under whichever clip happens to be shown.
-    let mut charts_html = gait_group_charts(grids, roles, config, clip_filter);
+    // The cross-clip figures come first: a group figure is evidence about
+    // its members rather than about one clip, so it opens the Charts column
+    // rather than sitting under whichever clip happens to be shown.
+    let (mut charts_html, group_members) = gait_group_charts(grids, roles, config, clip_filter);
     for (clip_index, clip) in doc.clips.iter().enumerate() {
         if clip_filter.is_some_and(|f| f != clip.name) {
             continue;
@@ -1795,6 +1795,10 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         "profile": roles.profile,
         "evidence_only": options.evidence_only,
         "bones": bones,
+        // The declared membership of every group this document draws, joined
+        // to its figure by `data-group`. The viewer shows a group figure only
+        // while one of these clips is selected.
+        "groups": group_members,
         "clips": clips_json,
         "findings": findings_json,
         "gaps": gaps_json,
@@ -2061,7 +2065,7 @@ fn gait_group_charts(
     roles: &ResolvedRoles,
     config: &Config,
     clip_filter: Option<&str>,
-) -> String {
+) -> (String, Vec<Value>) {
     let doc = grids.document();
     let drawable = |group: &GaitGroup| {
         group.clips.iter().any(|name| {
@@ -2073,12 +2077,17 @@ fn gait_group_charts(
     // is a property of the clip, not of the group reading it, and is
     // measured once here.
     let mut evidence: BTreeMap<usize, Option<Rc<GaitPhaseEvidence>>> = BTreeMap::new();
-    config
+    let mut html = String::new();
+    let mut membership = Vec::new();
+    for (name, group) in config
         .gait_groups
         .iter()
         .filter(|(_, group)| drawable(group))
-        .map(|(name, group)| gait_group_chart(name, group, grids, roles, &mut evidence))
-        .collect()
+    {
+        html.push_str(&gait_group_chart(name, group, grids, roles, &mut evidence));
+        membership.push(json!({ "name": name, "members": group.clips }));
+    }
+    (html, membership)
 }
 
 /// One declared gait group's members on a single figure.
@@ -2172,10 +2181,7 @@ fn gait_group_chart<'a>(
         .iter()
         .map(|entry| (Swatch::Line, entry.class, entry.label.to_owned()))
         .collect();
-    let subject = Subject::Group {
-        name: group_name,
-        members: &group.clips,
-    };
+    let subject = Subject::Group(group_name);
 
     let Some(range) = axis_range(&series, Side::Left) else {
         // Every member is absent, unsampled, or non-finite throughout. The
@@ -2486,39 +2492,31 @@ enum Subject<'a> {
     /// One clip of the rendered document.
     Clip(&'a str),
     /// One declared gait group, drawn from its members.
-    Group {
-        /// The group's declared name.
-        name: &'a str,
-        /// Its declared members, in order.
-        members: &'a [String],
-    },
+    Group(&'a str),
 }
 
 impl<'a> Subject<'a> {
     /// The name a caption and an `aria-label` open with.
     fn name(self) -> &'a str {
         match self {
-            Subject::Clip(name) => name,
-            Subject::Group { name, .. } => name,
+            Subject::Clip(name) | Subject::Group(name) => name,
         }
     }
 
-    /// The `data-*` attributes this figure is selected by.
+    /// The `data-*` attribute this figure is selected by.
     ///
     /// A group figure carries no `data-clip`, because it belongs to no single
-    /// clip; it carries the membership instead, so the viewer can show it
-    /// while a member is selected and hide it while a clip outside the group
-    /// is. Without that, a figure whose caption describes its members' own
-    /// source phase would stay on screen with its playhead driven by a clip
-    /// that is not drawn on it.
+    /// clip. Its membership is not an attribute either: a group's members are
+    /// authored clip names, and any separator that packs several of them into
+    /// one attribute is a name a document may legitimately contain — a member
+    /// called `run,left` in a comma-separated list is read as two members,
+    /// neither of them itself, and its own figure disappears while it is
+    /// selected. The membership travels in the embedded JSON instead, where
+    /// a name is a string, and `data-group` is the key that joins the two.
     fn attribute(self) -> String {
         match self {
             Subject::Clip(name) => format!("data-clip=\"{}\"", esc(name)),
-            Subject::Group { name, members } => format!(
-                "data-group=\"{}\" data-members=\"{}\"",
-                esc(name),
-                esc(&members.join(","))
-            ),
+            Subject::Group(name) => format!("data-group=\"{}\"", esc(name)),
         }
     }
 }
