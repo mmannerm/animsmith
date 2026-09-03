@@ -15,7 +15,7 @@
 //!    transcripts are pinned verbatim because they include the complete
 //!    written-artifact summary.
 
-use animsmith_core::model::TrackValues;
+use animsmith_core::model::{Property, TrackValues};
 use animsmith_testkit::docs_markdown::fenced_blocks;
 use animsmith_testkit::glb_identity;
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
@@ -145,6 +145,16 @@ fn pinned_identity(name: &str) -> (&'static str, &'static str) {
         .unwrap_or_else(|| panic!("{name} is a pinned example asset"))
 }
 
+/// The `.glb` file names directly in `dir`.
+fn glb_names(dir: &std::path::Path) -> BTreeSet<String> {
+    std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("reads {}: {e}", dir.display()))
+        .map(|entry| entry.expect("reads directory entry").file_name())
+        .filter_map(|name| name.to_str().map(str::to_owned))
+        .filter(|name| name.ends_with(".glb"))
+        .collect()
+}
+
 /// The release stamp the glTF writer puts in `asset.generator`. The
 /// publishable crates share one workspace version, so this crate's version
 /// is `animsmith-gltf`'s.
@@ -165,6 +175,25 @@ fn example_assets_match_generator_output() {
         animsmith_gltf::write::write(doc, path).map(|_| ())
     })
     .expect("writes example assets");
+
+    // The pinned list is the authority for what belongs here, so it has to
+    // be complete at both ends: a twelfth asset added to the generator, or
+    // a twelfth `.glb` committed by hand, would otherwise be guarded by
+    // nothing at all.
+    let pinned: BTreeSet<String> = PAYLOAD_IDENTITIES
+        .iter()
+        .map(|(name, _, _)| (*name).to_owned())
+        .collect();
+    assert_eq!(
+        glb_names(tmp.path()),
+        pinned,
+        "the generator writes exactly the assets PAYLOAD_IDENTITIES pins"
+    );
+    assert_eq!(
+        glb_names(&repo_path("examples/assets")),
+        pinned,
+        "examples/assets holds exactly the assets PAYLOAD_IDENTITIES pins"
+    );
 
     for (name, _, _) in PAYLOAD_IDENTITIES {
         let committed = std::fs::read(asset(name)).expect("reads committed asset");
@@ -206,6 +235,9 @@ fn example_assets_keep_their_pinned_payload_identity_under_this_release_stamp() 
     let stamp = release_stamp();
 
     for (name, json_sha256, bin_sha256) in PAYLOAD_IDENTITIES {
+        // Both arms, not just the committed one: the pin then holds the
+        // generator to the payload as well as the checked-in bytes, and it
+        // keeps saying so if the byte comparison above is ever narrowed.
         for (source, path) in [
             ("committed", asset(name)),
             ("regenerated", tmp.path().join(name)),
@@ -223,13 +255,15 @@ fn example_assets_keep_their_pinned_payload_identity_under_this_release_stamp() 
             assert_eq!(
                 identity.json_sha256, json_sha256,
                 "{source} {name}: the JSON chunk changed outside asset.generator. A release \
-                 bump does not do this — regenerating the assets must leave this pin alone."
+                 bump does not do this, so something else did: a deliberate fixture change, \
+                 or a change in what the writer emits. Say which in the PR — do not paste \
+                 the new digest."
             );
             assert_eq!(
                 identity.bin_sha256, bin_sha256,
-                "{source} {name}: the BIN chunk changed, so the animation payload changed. A \
-                 release bump does not do this — regenerating the assets must leave this pin \
-                 alone."
+                "{source} {name}: the BIN chunk changed. A release bump does not do this, so \
+                 something else did: a deliberate fixture change, or a change in what the \
+                 writer emits. Say which in the PR — do not paste the new digest."
             );
         }
     }
@@ -238,39 +272,35 @@ fn example_assets_keep_their_pinned_payload_identity_under_this_release_stamp() 
 /// Restamping a committed asset with another release's version leaves its
 /// payload identity untouched — the point of the pin.
 ///
-/// The rewritten stamp keeps its length, so the committed file's framing
-/// is reusable byte for byte. A real bump can also change the stamp's
-/// length (0.9.9 → 0.10.0 did), which moves the JSON chunk's padding and
-/// the container's length fields;
-/// `animsmith-testkit`'s `every_release_stamp_of_one_payload_shares_an_identity`
-/// covers that on hand-built containers.
+/// The replacement stamp is longer than this release's, so the JSON chunk,
+/// its four-byte padding, the container's length fields and the offset the
+/// BIN chunk starts at all move: that is what a bump like 0.9.9 → 0.10.0
+/// does to a committed file. The BIN chunk is then compared byte for byte
+/// across the two stamps, not only by digest.
 #[test]
 fn restamping_an_asset_with_another_release_version_keeps_its_identity() {
-    let stamp = release_stamp();
-    let restamped_stamp: String = stamp
-        .chars()
-        .map(|c| match c {
-            '9' => '8',
-            '0'..='8' => '9',
-            other => other,
-        })
-        .collect();
-    assert_ne!(restamped_stamp, stamp, "the rewrite must change the stamp");
+    let stamp = format!("{}-restamped", release_stamp());
 
     for (name, json_sha256, bin_sha256) in PAYLOAD_IDENTITIES {
-        let bytes = std::fs::read(asset(name)).expect("reads committed asset");
-        let restamped = glb_identity::replace_only_occurrence(
-            &bytes,
-            stamp.as_bytes(),
-            restamped_stamp.as_bytes(),
-        )
-        .unwrap_or_else(|| panic!("{name} carries {stamp} exactly once"));
+        let committed = std::fs::read(asset(name)).expect("reads committed asset");
+        let restamped = glb_identity::restamped(&committed, &stamp)
+            .unwrap_or_else(|e| panic!("restamps {name}: {e}"));
+        assert_ne!(
+            restamped.len(),
+            committed.len(),
+            "{name}: a longer stamp must re-frame the container"
+        );
+        assert_eq!(
+            glb_identity::bin_chunk(&restamped).expect("restamped GLB"),
+            glb_identity::bin_chunk(&committed).expect("committed GLB"),
+            "{name}: the BIN chunk must survive another release's stamp byte for byte"
+        );
+
         let identity = glb_identity::payload_identity(&restamped)
             .unwrap_or_else(|e| panic!("restamped {name} is a readable GLB: {e}"));
-
         assert_eq!(
             identity.generator.as_deref(),
-            Some(restamped_stamp.as_str()),
+            Some(stamp.as_str()),
             "{name}: the rewrite must reach asset.generator"
         );
         assert_eq!(
@@ -296,11 +326,11 @@ fn one_moved_keyframe_fails_the_pin_although_the_stamp_and_json_are_intact() {
     let track = doc.clips[0]
         .tracks
         .iter_mut()
-        .find(|track| matches!(track.values, TrackValues::Vec3s(_)))
-        .expect("the comparison input carries a translation track");
+        .find(|track| track.property == Property::Translation && !track.times.is_empty())
+        .expect("the comparison input carries a keyed translation track");
     match &mut track.values {
         TrackValues::Vec3s(values) => values[0].y += 0.5,
-        TrackValues::Quats(_) => unreachable!("the search selected a Vec3 track"),
+        TrackValues::Quats(_) => panic!("a translation track holds Vec3 values"),
     }
 
     let mutated = written_identity(&doc, name);
