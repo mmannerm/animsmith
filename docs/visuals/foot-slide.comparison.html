@@ -87,8 +87,11 @@ header, .disclosure, .sync { padding: .8rem 1rem }
 h1, h2, h3 { color: var(--accent) }
 h1 { font-size: 1.1rem }
 .warning { color: var(--warning) }
-.sync { background: var(--surface); display: flex; gap: 1rem; align-items: center }
-.sync input { min-width: 20rem }
+.sync { background: var(--surface); display: flex; gap: 1rem; align-items: center; flex-wrap: wrap }
+/* Only the shared-phase scrub wants the width; the overlay checkbox beside
+   it takes its own. The bar wraps rather than overflowing once both controls
+   and the source times are in it. */
+.sync input[type="range"] { min-width: 20rem }
 .sync button {
   background: var(--raised); color: var(--ink); border: 1px solid var(--line);
   border-radius: 5px; padding: .25rem .6rem; font: inherit; cursor: pointer;
@@ -99,7 +102,7 @@ h1 { font-size: 1.1rem }
 .shared-chart { grid-column: 1 / -1 }
 .shared-chart h2 { font-size: 1rem; margin: .2rem 0 }
 main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 1rem }
-@media (max-width: 900px) { main { grid-template-columns: 1fr } .sync input { min-width: 10rem } }
+@media (max-width: 900px) { main { grid-template-columns: 1fr } .sync input[type="range"] { min-width: 10rem } }
 .side { background: var(--surface); border-radius: 8px; padding: .8rem }
 canvas { width: 100%; aspect-ratio: 4/3; background: var(--ground); border-radius: 5px }
 svg { width: 100%; background: var(--ground); border-radius: 5px; margin-top: .6rem; color: var(--muted) }
@@ -120,7 +123,7 @@ pre { white-space: pre-wrap; word-break: break-word; color: var(--muted) }
 <body><header><h1>animsmith visual comparison</h1></header>
 <section class="disclosure"><p id="mapping"></p>
 <p class="warning">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>
-<section class="sync"><button id="play" aria-label="Play the shared phase">▶</button><label>Shared phase <input id="scrub" type="range" min="0" max="1000" value="0"></label><span id="times"></span></section>
+<section class="sync"><button id="play" aria-label="Play the shared phase">▶</button><label>Shared phase <input id="scrub" type="range" min="0" max="1000" value="0"></label><label><input type="checkbox" id="overlay"> Overlay after on before</label><span id="times"></span></section>
 <main><section class="side" id="before-panel"><span id="before-clip-99b66f0b76b27794"></span><h2 id="clip-before">Before</h2><p id="before-identity"></p><h3>Judged pose at the shared phase</h3><canvas id="before-gl"></canvas><p id="before-pose-context" class="context-label"></p></section>
 <section class="side" id="after-panel"><span id="after-clip-99b66f0b76b27794"></span><h2 id="clip-after">After</h2><p id="after-identity"></p><h3>Judged pose at the shared phase</h3><canvas id="after-gl"></canvas><p id="after-pose-context" class="context-label"></p></section>
 <section class="side shared-chart" id="root-panel"><h2 id="root-panel-title">Root path, before over after</h2><svg id="comparison-root-path" viewBox="0 0 720 180"></svg><p id="comparison-root-path-caption" class="context-label"></p></section>
@@ -302,7 +305,11 @@ q("mapping").textContent = data.correspondence.disclosure;
 const parents = data.bones.map((bone) => bone.parent);
 const sharedFrameMax = Math.max(data.before.clip.frames, data.after.clip.frames) - 1;
 q("scrub").max = sharedFrameMax;
-if (posesOmitted) q("scrub").disabled = true;
+// The transport and the overlay all drive the sampled poses, so a document
+// that carries none leaves every one of them disabled rather than offering a
+// control that does nothing when it is used.
+const overlayToggle = q("overlay");
+if (posesOmitted) { q("scrub").disabled = true; overlayToggle.disabled = true; }
 let selectedFrames = null;
 let selectedContext = null;
 // Canvas and SVG paint comes from the shared design tokens, so both panels
@@ -365,6 +372,37 @@ const frameFinite = (side, frame) => {
 };
 const sharedRootBounds = boundsFor(["root"]);
 const sharedTrailBounds = boundsFor(["root", "hips", "left_foot", "right_foot"]);
+// The frame one side draws at the shared phase: the one a selected finding
+// pinned, or the sampled frame that phase lands on in this side's own grid.
+// Every panel asks this one question, so the pose pane, the trails and the
+// gait of a side always draw the same frame — and the overlay, drawing both
+// sides in one pane, draws exactly the two frames the two panes would.
+function frameFor(name, phase) {
+  return selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, data[name].clip.frames - 1));
+}
+// The overlay: the after skeleton drawn over the before one in the before
+// pane, at the same two frames and through the same shared camera, so a
+// repair reads as one picture instead of two. Off by default — the document
+// is about its two panes, and this is a way of looking at them.
+//
+// Two selections have nothing to overlay, and both suspend it rather than
+// drawing something the label would then have to explain away: a loop-seam
+// context is one side's own two endpoint frames rather than one shared phase,
+// and a side whose sampled positions are all non-finite has no skeleton to
+// draw at all. Suspended, the two panes are drawn exactly as they are with
+// the overlay off, and the before pane's label says so.
+const OVERLAY_LEGEND = "overlay · before solid blue, after dashed orange";
+const OVERLAY_AFTER_DASH = [6, 4];
+const INCOMPLETE_FRAME = "pose drawing incomplete: selected frame contains non-finite positions; findings and coverage remain listed";
+function overlaySuspension() {
+  if (selectedContext && selectedContext.kind === "seam") return "overlay suspended while a loop-seam context is selected";
+  if (!sidePoseBounds.before || !sidePoseBounds.after) return "overlay suspended: one side has no finite sampled position to draw";
+  return null;
+}
+const overlayActive = () => Boolean(overlayToggle.checked) && !overlaySuspension();
+// A pane's label is what it can say about its own drawing, in the order a
+// reader needs it; anything it has nothing to say about is left out.
+const contextLabel = (...parts) => parts.filter(Boolean).join(" · ");
 
 function svgElement(tag, attrs, label) {
   const element = document.createElementNS(svgNs, tag);
@@ -459,58 +497,95 @@ function pathData(points, map) {
   return path;
 }
 
-function drawSide(name, palette, phase, highlighted) {
+function drawSide(name, palette, phase) {
   const side = data[name];
-  const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
+  const frame = frameFor(name, phase);
   const canvas = q(`${name}-gl`);
-  if (!canvas) return frame;
+  const overlaid = overlayActive();
+  // While the overlay is on, the after side's skeleton is drawn over the
+  // before one and its own canvas is hidden, so there is nothing to draw
+  // here — its frame still labels its own source time.
+  if (!canvas || (overlaid && name === "after")) return frame;
   const context = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1, width = canvas.clientWidth * dpr, height = canvas.clientHeight * dpr;
   if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
   context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   const structural = selectedContext && selectedContext.name === name && selectedContext.kind === "structural" ? selectedContext.value : null;
+  // Only the before pane carries the overlay, so only it reports that the
+  // overlay a reader switched on is standing down for this selection.
+  const suspended = name === "before" && overlayToggle.checked ? overlaySuspension() : null;
   const bounds = sidePoseBounds[name];
   if (!bounds) {
     const unavailable = "pose drawing unavailable: sampled X/Y positions are non-finite; findings and coverage remain listed";
-    q(`${name}-pose-context`).textContent = structural ? `${structural.label} · ${unavailable}` : unavailable;
+    q(`${name}-pose-context`).textContent = contextLabel(structural && structural.label, unavailable, suspended);
     return frame;
   }
   const [minX, maxX] = sharedPoseBounds.x, [minY, maxY] = sharedPoseBounds.y;
   const scale = Math.min(canvas.clientWidth / Math.max(.1, maxX - minX), canvas.clientHeight / Math.max(.1, maxY - minY)) * .72;
   const project = (point) => [canvas.clientWidth / 2 + (point[0] - (minX + maxX) / 2) * scale, canvas.clientHeight / 2 - (point[1] - (minY + maxY) / 2) * scale];
-  const drawFrame = (poseFrame, stroke, fill, subject) => {
-    context.lineWidth = 2; context.strokeStyle = stroke;
+  // One skeleton, drawn through this pane's projection: any side's grid, any
+  // judged frame of it, in the paint the caller names. The dash belongs to
+  // the skeleton being drawn — the overlay's after pass is dashed — so it is
+  // set here and cleared again, and whatever is drawn next is solid.
+  const drawFrame = (poseSide, poseFrame, style) => {
+    context.setLineDash(style.dash || []);
+    context.lineWidth = 2; context.strokeStyle = style.stroke;
     for (let bone = 0; bone < parents.length; bone++) if (parents[bone] >= 0) {
-      const a = project(posePoint(side, poseFrame, parents[bone])), b = project(posePoint(side, poseFrame, bone));
+      const a = project(posePoint(poseSide, poseFrame, parents[bone])), b = project(posePoint(poseSide, poseFrame, bone));
       if (!finitePoint(a) || !finitePoint(b)) continue;
       context.beginPath(); context.moveTo(...a); context.lineTo(...b); context.stroke();
     }
     for (let bone = 0; bone < data.bones.length; bone++) {
-      const point = project(posePoint(side, poseFrame, bone));
+      const point = project(posePoint(poseSide, poseFrame, bone));
       if (!finitePoint(point)) continue;
-      context.fillStyle = bone === subject ? palette.error : fill;
-      context.beginPath(); context.arc(...point, bone === subject ? 6 : 3, 0, Math.PI * 2); context.fill();
+      context.fillStyle = bone === style.subject ? palette.error : style.fill;
+      context.beginPath(); context.arc(...point, bone === style.subject ? 6 : style.radius, 0, Math.PI * 2); context.fill();
     }
+    context.setLineDash([]);
   };
   const seam = selectedContext && selectedContext.name === name && selectedContext.kind === "seam" ? selectedContext.value : null;
   if (seam) {
-    drawFrame(seam.first_frame, palette.accent, palette.accent, seam.subject_bone);
-    drawFrame(seam.last_frame, palette.warning, palette.warning, seam.subject_bone);
+    drawFrame(side, seam.first_frame, { stroke: palette.accent, fill: palette.accent, subject: seam.subject_bone, radius: 3 });
+    drawFrame(side, seam.last_frame, { stroke: palette.warning, fill: palette.warning, subject: seam.subject_bone, radius: 3 });
     const exact = frameFinite(side, seam.first_frame) && frameFinite(side, seam.last_frame);
-    q(`${name}-pose-context`).textContent = exact
+    q(`${name}-pose-context`).textContent = contextLabel(exact
       ? `loop seam exact endpoint poses — first ${seam.first_s.toFixed(3)}s blue · last ${seam.last_s.toFixed(3)}s orange · affected ${seam.subject_bone_name || "bone unavailable"}`
-      : `loop seam pose drawing incomplete: an endpoint contains non-finite positions; finding and coverage evidence remain listed · affected ${seam.subject_bone_name || "bone unavailable"}`;
+      : `loop seam pose drawing incomplete: an endpoint contains non-finite positions; finding and coverage evidence remain listed · affected ${seam.subject_bone_name || "bone unavailable"}`, suspended);
+  } else if (overlaid) {
+    // Both skeletons, in the pane's own projection and at the frames the two
+    // panes would have drawn: a selected finding's subject bone is marked on
+    // its own side's skeleton alone, so highlighting one never implicates the
+    // other.
+    const afterFrame = frameFor("after", phase);
+    drawFrame(data.before, frame, { stroke: palette.accent, fill: palette.accent, subject: highlight.before, radius: 3 });
+    drawFrame(data.after, afterFrame, { stroke: palette.warning, fill: palette.warning, subject: highlight.after, radius: 2, dash: OVERLAY_AFTER_DASH });
+    q(`${name}-pose-context`).textContent = contextLabel(
+      structural && structural.label,
+      OVERLAY_LEGEND,
+      frameFinite(data.before, frame) && frameFinite(data.after, afterFrame) ? "exact judged pose-grid frames" : INCOMPLETE_FRAME,
+    );
   } else {
-    drawFrame(frame, palette.muted, palette.ink, highlighted);
-    q(`${name}-pose-context`).textContent = structural
-      ? frameFinite(side, frame)
-        ? structural.label
-        : `${structural.label} · pose drawing incomplete: selected frame contains non-finite positions; findings and coverage remain listed`
-      : frameFinite(side, frame)
-        ? "exact judged pose-grid frame"
-        : "pose drawing incomplete: selected frame contains non-finite positions; findings and coverage remain listed";
+    drawFrame(side, frame, { stroke: palette.muted, fill: palette.ink, subject: highlight[name], radius: 3 });
+    const exact = frameFinite(side, frame);
+    q(`${name}-pose-context`).textContent = contextLabel(
+      structural && structural.label,
+      // A structural label already speaks for the pane; the note beside it is
+      // the caveat that the frame it drew is not exact.
+      exact ? (structural ? null : "exact judged pose-grid frame") : INCOMPLETE_FRAME,
+      suspended,
+    );
   }
   return frame;
+}
+// The after pane while its skeleton is drawn over the before one: the canvas
+// is hidden, and the pane's own label says where its pose went. Its heading,
+// identity and evidence stay — and so does the rule the rest of the document
+// follows, that a surface which is not drawn says so rather than standing as
+// an empty box.
+function showAfterPose(shown) {
+  const canvas = q("after-gl");
+  if (canvas) canvas.hidden = !shown;
+  if (!shown) q("after-pose-context").textContent = "judged pose drawn over the before pane, as the dashed skeleton";
 }
 
 // The two root tracks a comparison draws, and the facts about them the
@@ -566,7 +641,7 @@ function drawRootComparison(palette, phase) {
     const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-root-side": name };
     if (style.dash) path["stroke-dasharray"] = style.dash;
     svg.append(svgElement("path", path));
-    const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
+    const frame = frameFor(name, phase);
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-root-dot": name }));
     // Every track carries its own marks, including an after track the repair
@@ -739,7 +814,7 @@ function drawTrails(name, palette, phase) {
     const path = { d: pathData(points, map), fill: "none", stroke: style.color, "stroke-width": style.width, opacity: style.opacity, "data-role": role };
     if (spec.dash) path["stroke-dasharray"] = spec.dash;
     svg.append(svgElement("path", path));
-    const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, points.length - 1));
+    const frame = frameFor(name, phase);
     const selected = map(points[frame]);
     if (finitePoint(selected)) svg.append(svgElement("circle", { cx: selected[0], cy: selected[1], r: style.radius, fill: style.color, "data-role-dot": role }));
     const ends = trackEnds(points);
@@ -790,7 +865,7 @@ function drawGait(name, palette, phase) {
     const points = series[label].map((value, frame) => [x(frame), y(value)]);
     svg.append(svgElement("path", { d: pathData(points, (point) => point), fill: "none", stroke: color, "stroke-width": 2, "data-gait-side": label }));
   }
-  const frame = selectedFrames ? selectedFrames[name] : Math.round(phase * Math.max(0, side.clip.frames - 1));
+  const frame = frameFor(name, phase);
   svg.append(svgElement("line", { x1: x(frame), x2: x(frame), y1: 20, y2: 154, stroke: palette.error, "stroke-width": 1 }));
   const roleLabel = (role) => role.replace("_", " ");
   let legendX = 8;
@@ -813,7 +888,8 @@ let highlight = { before: null, after: null };
 function update() {
   const palette = documentPalette;
   const phase = Number(q("scrub").value) / Math.max(1, sharedFrameMax);
-  const beforeFrame = drawSide("before", palette, phase, highlight.before), afterFrame = drawSide("after", palette, phase, highlight.after);
+  showAfterPose(!overlayActive());
+  const beforeFrame = drawSide("before", palette, phase), afterFrame = drawSide("after", palette, phase);
   drawRootComparison(palette, phase); drawTrails("before", palette, phase); drawTrails("after", palette, phase); drawGait("before", palette, phase); drawGait("after", palette, phase);
   const time = (side, frame) => Number.isFinite(side.clip.times[frame]) ? side.clip.times[frame].toFixed(3) : "unavailable";
   q("times").textContent = `before ${time(data.before, beforeFrame)}s · after ${time(data.after, afterFrame)}s (normalized phase; not a time warp)`;
@@ -938,6 +1014,10 @@ playButton.addEventListener("click", () => {
   playButton.setAttribute("aria-label", "Pause the shared phase");
 });
 q("scrub").addEventListener("input", () => { pausePlayback(); selectedFrames = null; selectedContext = null; update(); });
+// The overlay is a way of looking at the same two frames, so switching it
+// changes nothing else: the selection, the shared phase and playback all
+// stand, and the next draw simply puts both skeletons in one pane.
+overlayToggle.addEventListener("change", update);
 window.addEventListener("resize", update);
 animsmithOnSchemeChange(() => { documentPalette = animsmithPalette(); update(); });
 window.addEventListener("hashchange", () => { applyFragment(); selectHash(); update(); });

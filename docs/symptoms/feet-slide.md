@@ -27,7 +27,8 @@ interval.
 [Open the interactive comparison](../visuals/foot-slide.comparison.html) to
 see the before and after side by side, or the
 [single-clip report of the defective clip](../visuals/foot-slide-before.report.html).
-Press play beside the shared phase to run both sides together. This clip
+Press play beside the shared phase to run both sides together, or tick
+**Overlay after on before** to put the two skeletons in one pane. This clip
 declares a loop and a `speed_mps` pin, so the gait panel's caption says its
 curves should end where they began and that the shaded bands are the stance
 intervals `foot-slide` judged: a foot that moves horizontally inside its band

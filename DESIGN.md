@@ -672,6 +672,11 @@ The explicit comparison spelling is a separate presentation producer: it
 preflights named/indexed skeleton correspondence, selected metric-grid work,
 and input text before either side's checks run; writes atomically only to an
 output distinct from both inputs; and uses one shared coordinate/path scale.
+Both judged poses are drawn through that one camera: side by side by default,
+and at the reader's option overlaid in a single pane with the after skeleton
+dashed over the before one at the same two selected frames. The overlay is a
+second reading of the embedded grids — no second copy of the pose data, no
+refit, and no new authority.
 Its phase synchronization labels both source times and never claims a retime.
 Findings, coverage, prediction provenance, and immutable identities remain
 side-specific, so a missing finding cannot read as acceptance.

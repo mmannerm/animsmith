@@ -3974,6 +3974,60 @@ fn the_comparison_can_play_its_shared_phase() {
     );
 }
 
+/// The two judged poses can be drawn in one pane instead of two.
+///
+/// The overlay draws the same two skeletons the panes already draw, in one
+/// box, so its control belongs beside the shared phase they are drawn at
+/// rather than inside a pane. The two-pane layout stays the document's
+/// default: the box is emitted unchecked, and a document with no pose grid
+/// disables it exactly as it disables the scrub and playback.
+#[test]
+fn the_comparison_can_overlay_the_after_skeleton_on_the_before_pane() {
+    let html = comparison_documents(full());
+    let sync = html
+        .split_once("<section class=\"sync\">")
+        .expect("the shared-phase controls")
+        .1
+        .split_once("</section>")
+        .expect("the controls close")
+        .0;
+    assert!(
+        sync.contains("id=\"overlay\""),
+        "the overlay toggle sits beside the shared phase it draws at: {sync}"
+    );
+    let overlay = element_with_id(&html, "overlay");
+    assert!(
+        overlay.contains("type=\"checkbox\""),
+        "the overlay is a checkbox: {overlay}"
+    );
+    assert!(
+        !overlay.contains("checked"),
+        "the two-pane layout stays the default: {overlay}"
+    );
+    assert!(
+        !overlay.contains("disabled"),
+        "a comparison carrying poses can overlay them: {overlay}"
+    );
+    // The control is named by the label that wraps it, so it has an
+    // accessible name without an attribute repeating one.
+    let at = html.find("id=\"overlay\"").expect("the overlay control");
+    let opens = html[..at].rfind('<').expect("its tag opens");
+    assert!(
+        html[..opens].ends_with("<label>") && overlay.contains("Overlay"),
+        "the overlay checkbox is wrapped in the label naming it: {}",
+        &html[opens..at + 60.min(html.len() - at)]
+    );
+
+    // With no pose grid there is nothing to overlay, so the control is
+    // disabled in the document rather than left to do nothing when it is
+    // used — the same as the scrub and playback beside it.
+    let evidence = comparison_documents(evidence_only());
+    assert!(
+        element_with_id(&evidence, "overlay").contains("disabled"),
+        "an evidence-only comparison leaves the overlay enabled"
+    );
+}
+
 /// A walking rig whose feet alternate and whose root travels along +X, so
 /// every guidance variant below differs only in what its configuration
 /// declares rather than in what the clip contains.
