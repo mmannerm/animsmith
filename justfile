@@ -126,13 +126,13 @@ package-inventory:
     bash scripts/check-package-inventory.sh
 
 # Verify the isolated exact-Bevy lock remains bound by the normal-workspace
-# contract, and that the generated engine module still states that lock's
-# identity. Self-tests its own rejections.
+# contract, and that the engine's committed copy of that lock's identity still
+# matches it. Self-tests its own rejections.
 bevy-readback-lock:
     bash scripts/check-bevy-readback-lock.sh
 
-# Rewrite crates/animsmith-engine/src/bevy_readback_lock.rs from the committed
-# probe lock. The only supported way to change that generated module.
+# Rewrite crates/animsmith-engine/src/bevy_readback_lock.txt from the committed
+# probe lock. The only supported way to change that identity file.
 bevy-readback-lock-refresh:
     bash scripts/check-bevy-readback-lock.sh --refresh
 

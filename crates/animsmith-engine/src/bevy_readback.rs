@@ -962,48 +962,38 @@ mod tests {
     use super::*;
     use crate::GltfAddressabilityV2;
 
-    /// Build a lock identity from its lowercase hexadecimal digest, so a
-    /// digest this crate already spells is never transcribed a second time as
-    /// a byte array.
-    fn lock_identity(sha256: &str, bytes: u64) -> InputIdentity {
-        assert_eq!(
-            sha256.len(),
-            64,
-            "a SHA-256 digest is 64 hexadecimal digits"
-        );
-        let mut digest = [0u8; 32];
-        for (index, byte) in digest.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&sha256[index * 2..index * 2 + 2], 16)
-                .expect("lock digest is lowercase hexadecimal");
-        }
-        InputIdentity::from_sha256_digest(digest, bytes)
-    }
-
     fn frozen_lock_identity() -> InputIdentity {
-        lock_identity(BEVY_READBACK_V1_LOCK_SHA256, BEVY_READBACK_V1_LOCK_BYTES)
+        InputIdentity::from_sha256_hex(BEVY_READBACK_V1_LOCK_SHA256, BEVY_READBACK_V1_LOCK_BYTES)
+            .expect("the committed lock identity is a lowercase digest")
     }
 
     #[test]
-    fn the_frozen_lock_identity_helper_round_trips_the_generated_constants() {
-        let identity = frozen_lock_identity();
-        assert_eq!(identity.sha256(), BEVY_READBACK_V1_LOCK_SHA256);
-        assert_eq!(identity.bytes(), BEVY_READBACK_V1_LOCK_BYTES);
-    }
-
-    #[test]
-    fn strict_reader_rejects_the_previous_mixed_bevy_patch_graph() {
-        let mut readback = valid_readback(false);
-        readback.harness.lock_identity = lock_identity(
-            "e3457e21695874f90110e5b93a36d7688c134a3b9259cb1dc4d2d8e5f741d1ed",
-            86_390,
-        );
-        let bytes = serde_json::to_vec(&readback).unwrap();
-        assert!(matches!(
-            validate_bevy_readback_v1(bytes.as_slice()),
-            Err(BevyReadbackV1Error::Contract(
-                "invalid frozen harness tuple"
-            ))
-        ));
+    fn strict_reader_rejects_the_previous_mixed_bevy_patch_graph_by_digest_or_by_size() {
+        // The previous graph differed from the frozen one in both size and
+        // digest. Each difference alone must reject, so neither half of the
+        // comparison can be dropped and neither half can be inferred from the
+        // other.
+        let previous_digest = "e3457e21695874f90110e5b93a36d7688c134a3b9259cb1dc4d2d8e5f741d1ed";
+        let previous_bytes = 86_390;
+        for (sha256, bytes) in [
+            (previous_digest, previous_bytes),
+            (previous_digest, BEVY_READBACK_V1_LOCK_BYTES),
+            (BEVY_READBACK_V1_LOCK_SHA256, previous_bytes),
+        ] {
+            let mut readback = valid_readback(false);
+            readback.harness.lock_identity = InputIdentity::from_sha256_hex(sha256, bytes)
+                .expect("both digests are lowercase hexadecimal");
+            let encoded = serde_json::to_vec(&readback).unwrap();
+            assert!(
+                matches!(
+                    validate_bevy_readback_v1(encoded.as_slice()),
+                    Err(BevyReadbackV1Error::Contract(
+                        "invalid frozen harness tuple"
+                    ))
+                ),
+                "accepted lock identity {sha256} at {bytes} bytes"
+            );
+        }
     }
 
     fn valid_readback(warnings_truncated: bool) -> BevyReadbackV1 {

@@ -84,9 +84,10 @@ workspace because its isolated build records and enforces the exact official
 compiler identity `rustc 1.95.0 (59807616e 2026-04-14)`; see
 `tools/bevy-readback/README.md`. Its `Cargo.lock` is therefore outside this
 crate, so `BEVY_READBACK_V1_LOCK_BYTES` and `BEVY_READBACK_V1_LOCK_SHA256` are
-generated from that lock into `src/bevy_readback_lock.rs` rather than written
-by hand; the repository's `just bevy-readback-lock` gate regenerates the module
-and fails when it and the lock disagree.
+parsed at compile time from `src/bevy_readback_lock.txt`, two lines written
+from that lock by the repository's `just bevy-readback-lock-refresh` rather
+than by hand. The `just bevy-readback-lock` gate renders those lines from the
+lock and compares them; it never rewrites the committed file.
 
 Resolved settings V1 materializes at most 4,096 actual clip rows. Inputs above
 that bound return a typed `ResolutionError::ResolvedSettingsContract`; callers

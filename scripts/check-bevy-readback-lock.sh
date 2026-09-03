@@ -2,20 +2,24 @@
 # One repository-owned source of truth for the isolated exact-Bevy probe's
 # resolved dependency graph: `tools/bevy-readback/Cargo.lock`.
 #
-# The probe itself hashes that lock with `include_bytes!`. The engine cannot,
-# because the lock lives outside the published crate, so the engine carries a
-# generated module holding the same identity. This script renders that module
-# from the lock and either writes it (`--refresh`) or fails when the committed
-# module disagrees (default; `just bevy-readback-lock` inside `just gates`).
+# The probe hashes that lock with `include_bytes!`. The engine cannot, because
+# the lock lives outside the published crate, so the engine carries the same
+# identity as two lines in `bevy_readback_lock.txt`. This script renders those
+# lines from the lock and either writes them (`--refresh`) or fails when the
+# committed file differs (default; `just bevy-readback-lock` inside `just gates`).
 #
 # Usage:
-#   check-bevy-readback-lock.sh            check the committed pair, then self-test
-#   check-bevy-readback-lock.sh --refresh  rewrite the generated module
-#   check-bevy-readback-lock.sh LOCK [MODULE]
-#                                          check one explicit pair, no self-test
+#   check-bevy-readback-lock.sh                     check the committed pair, then self-test
+#   check-bevy-readback-lock.sh --refresh           rewrite the committed identity file
+#   check-bevy-readback-lock.sh --refresh LOCK OUT  write LOCK's identity to OUT
+#   check-bevy-readback-lock.sh LOCK [IDENTITY]     check one explicit pair, no self-test
+#
+# Refreshing from a lock other than the committed one requires an explicit
+# destination, so a probe of a foreign lock cannot overwrite the tracked file.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
+cd "$(dirname "$script")/.."
 
 refresh=0
 if [ "${1:-}" = "--refresh" ]; then
@@ -28,8 +32,12 @@ fi
 # runs do not recurse.
 explicit_pair=$#
 lock="${1:-tools/bevy-readback/Cargo.lock}"
-generated="${2:-crates/animsmith-engine/src/bevy_readback_lock.rs}"
+identity="${2:-crates/animsmith-engine/src/bevy_readback_lock.txt}"
 refresh_command="just bevy-readback-lock-refresh"
+if [ "$refresh" = 1 ] && [ "$explicit_pair" -eq 1 ]; then
+    echo "refreshing from $lock needs an explicit destination: --refresh LOCK OUT" >&2
+    exit 1
+fi
 test -f "$lock" || { echo "bevy-readback lock missing" >&2; exit 1; }
 
 workspace_version="$(awk '
@@ -76,108 +84,53 @@ if ! awk '
 ' "$lock"; then
     exit 1
 fi
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        echo "no sha256sum or shasum on PATH" >&2
+        exit 1
+    fi
+}
 bytes="$(wc -c < "$lock" | tr -d ' ')"
-sha="$(sha256sum "$lock" | awk '{print $1}')"
-# Underscore-grouped digits, matching the hand-written bounds this generated
-# module sits beside in the engine crate.
-group_digits() {
-    local digits="$1" grouped=""
-    while [ "${#digits}" -gt 3 ]; do
-        grouped="_${digits: -3}$grouped"
-        digits="${digits:0:${#digits}-3}"
-    done
-    printf '%s%s' "$digits" "$grouped"
-}
-# The literals a module states, wherever they sit: the drift diagnosis and the
-# self-test both read a module through these, so neither is tied to the
-# generator's exact layout. A module stating a literal twice yields two lines
-# and matches nothing.
-declared_bytes_of() {
-    sed -nE 's/.*BEVY_READBACK_V1_LOCK_BYTES: u64 = ([0-9_]+);.*/\1/p' "$1" | tr -d '_'
-}
-declared_sha_of() {
-    sed -nE 's/.*"([0-9a-f]{64})".*/\1/p' "$1"
-}
-# The one renderer both modes use, so `--refresh` cannot write text the check
-# would then reject.
-render_module() {
-    cat <<RUST
-//! Frozen identity of the committed \`tools/bevy-readback/Cargo.lock\`.
-//!
-//! Generated from that lock; do not edit by hand. Regenerate it with
-//! \`$refresh_command\`. \`just bevy-readback-lock\` renders the
-//! same text and fails when this module and the lock disagree.
-
-/// Frozen byte count of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = $(group_digits "$bytes");
-/// Frozen SHA-256 of the committed excluded-tool lock graph.
-pub const BEVY_READBACK_V1_LOCK_SHA256: &str =
-    "$sha";
-RUST
-}
+sha="$(sha256_of "$lock")"
 if [ "$refresh" = 1 ]; then
-    render_module > "$generated"
-    echo "refreshed $generated from $lock"
+    # Write beside the destination and rename, so an interrupted refresh cannot
+    # leave a tracked file truncated.
+    staged="$identity.refresh.$$"
+    printf '%s\n%s\n' "$bytes" "$sha" > "$staged"
+    mv "$staged" "$identity"
+    echo "refreshed $identity from $lock"
     exit 0
 fi
-test -f "$generated" || {
-    echo "bevy-readback lock module missing: $generated; run '$refresh_command'" >&2
-    exit 1
-}
 expected="$(mktemp)"
 trap 'rm -f "$expected"' EXIT
-render_module > "$expected"
-if ! cmp -s "$expected" "$generated"; then
-    # Name the drift instead of printing a diff: these are distinct repository
-    # states, and only the last one is a hand edit of a generated file.
-    declared_bytes="$(declared_bytes_of "$generated")"
-    declared_sha="$(declared_sha_of "$generated")"
-    if [ "$declared_bytes" != "$bytes" ]; then
-        echo "bevy-readback lock byte drift: $generated declares ${declared_bytes:-no byte count}, $lock is $bytes bytes; run '$refresh_command'" >&2
-        exit 1
-    fi
-    if [ "$declared_sha" != "$sha" ]; then
-        echo "bevy-readback lock hash drift: $generated declares ${declared_sha:-no digest}, $lock hashes to $sha; run '$refresh_command'" >&2
-        exit 1
-    fi
-    echo "bevy-readback lock module drift: $generated carries the right identity but is not the text '$refresh_command' generates; run it" >&2
+printf '%s\n%s\n' "$bytes" "$sha" > "$expected"
+if ! cmp -s "$expected" "$identity" 2>/dev/null; then
+    echo "$identity is not what $lock renders: $bytes bytes, $sha; run '$refresh_command'" >&2
+    diff -u "$identity" "$expected" >&2 || true
     exit 1
 fi
 test "$explicit_pair" -eq 0 || exit 0
 
-# Self-test: prove the comparison above rejects each way the generated module
-# and the lock can disagree. The control run proves the mutants are rejected
-# for their mutation rather than because the harness itself is broken.
+# Self-test: prove the comparison above rejects a lock the identity file does
+# not describe, and that `--refresh` writes exactly what it accepts. The
+# control run proves a rejection below is the mutation and not a broken
+# harness. Version and Bevy-patch drift are exercised by the opt-in matrix in
+# test-bevy-readback.sh, which has a lock fixture for them.
 work="$(mktemp -d "${TMPDIR:-/tmp}/animsmith-bevy-readback-lock.XXXXXX")"
 trap 'rm -f "$expected"; rm -rf "$work"' EXIT
 fail() {
     echo "FAIL: $*" >&2
     exit 1
 }
-# Each case names its lock, its module, and the message the check must print.
-expect_rejected() {
-    local name="$1" case_lock="$2" case_module="$3" wanted="$4" output status
-    set +e
-    output="$(bash scripts/check-bevy-readback-lock.sh "$case_lock" "$case_module" 2>&1)"
-    status=$?
-    set -e
-    test "$status" -ne 0 || fail "$name: the check accepted the mutation"
-    grep -Fq "$wanted" <<< "$output" \
-        || fail "$name: expected a message containing '$wanted', got: $output"
-    grep -Fq "$refresh_command" <<< "$output" \
-        || fail "$name: the message did not name the refresh command: $output"
-    echo "ok: $name rejected"
-}
-zeros="$(printf '%064d' 0)"
 cp "$lock" "$work/Cargo.lock"
-cp "$generated" "$work/bevy_readback_lock.rs"
-bash scripts/check-bevy-readback-lock.sh "$work/Cargo.lock" "$work/bevy_readback_lock.rs" \
-    || fail "control: the check rejected an unmodified lock and module pair"
+cp "$identity" "$work/identity.txt"
+bash "$script" "$work/Cargo.lock" "$work/identity.txt" \
+    || fail "control: the check rejected an unmodified lock and identity pair"
 echo "ok: control accepted"
-
-expect_rejected "missing generated module" \
-    "$work/Cargo.lock" "$work/absent.rs" \
-    "module missing: $work/absent.rs"
 
 # One flipped hex digit inside the first checksum: the lock keeps its length
 # and its package versions, so only the digest can catch it.
@@ -192,66 +145,48 @@ awk '
 test "$(wc -c < "$work/one-byte-Cargo.lock" | tr -d ' ')" -eq "$bytes" \
     || fail "the one-byte lock mutation changed the lock's length"
 cmp -s "$lock" "$work/one-byte-Cargo.lock" && fail "the one-byte lock mutation changed nothing"
-expect_rejected "one modified lock byte" \
-    "$work/one-byte-Cargo.lock" "$work/bevy_readback_lock.rs" \
-    "hash drift: $work/bevy_readback_lock.rs declares $sha, $work/one-byte-Cargo.lock hashes to"
+set +e
+rejection="$(bash "$script" "$work/one-byte-Cargo.lock" "$work/identity.txt" 2>&1)"
+rejection_status=$?
+set -e
+test "$rejection_status" -ne 0 || fail "the check accepted a lock the identity file does not describe"
+grep -Fq "$work/identity.txt is not what $work/one-byte-Cargo.lock renders: $bytes bytes, $(sha256_of "$work/one-byte-Cargo.lock")" <<< "$rejection" \
+    || fail "the rejection did not name the file, the lock and the identity it renders: $rejection"
+grep -Fq "$refresh_command" <<< "$rejection" \
+    || fail "the rejection did not name the refresh command: $rejection"
+echo "ok: one modified lock byte rejected"
 
-# The right digest beside a wrong byte count.
-sed -E "s/^(pub const BEVY_READBACK_V1_LOCK_BYTES: u64 = )[0-9_]+;$/\1$(group_digits "$((bytes + 1))");/" \
-    "$generated" > "$work/wrong-count.rs"
-cmp -s "$generated" "$work/wrong-count.rs" && fail "the byte-count mutation changed nothing"
-expect_rejected "wrong declared byte count" \
-    "$work/Cargo.lock" "$work/wrong-count.rs" \
-    "byte drift: $work/wrong-count.rs declares $((bytes + 1)), $work/Cargo.lock is $bytes bytes"
-
-# The right byte count beside a wrong digest.
-sed -E "s/^    \"[0-9a-f]{64}\";$/    \"$zeros\";/" "$generated" > "$work/wrong-digest.rs"
-cmp -s "$generated" "$work/wrong-digest.rs" && fail "the digest mutation changed nothing"
-expect_rejected "wrong declared digest" \
-    "$work/Cargo.lock" "$work/wrong-digest.rs" \
-    "hash drift: $work/wrong-digest.rs declares $zeros, $work/Cargo.lock hashes to $sha"
-
-# Both literals right, but the module is no longer the text the generator
-# writes: the "do not edit by hand" marker has been edited away.
-grep -v 'do not edit by hand' "$generated" > "$work/hand-edited.rs"
-cmp -s "$generated" "$work/hand-edited.rs" && fail "the hand-edit mutation changed nothing"
-expect_rejected "hand-edited generated module" \
-    "$work/Cargo.lock" "$work/hand-edited.rs" \
-    "module drift: $work/hand-edited.rs carries the right identity but is not the text"
-
-# The identity intact but reflowed onto one line, as a future rustfmt could
-# leave it. The diagnosis must still be module drift, so the diagnostic has to
-# read both literals wherever they sit rather than only where the generator
-# puts them.
-awk '
-    /BEVY_READBACK_V1_LOCK_SHA256: &str =$/ { printf "%s ", $0; next }
-    /^    "/ { sub(/^ +/, ""); print; next }
-    { print }
-' "$generated" > "$work/reflowed.rs"
-cmp -s "$generated" "$work/reflowed.rs" && fail "the reflow mutation changed nothing"
-expect_rejected "reflowed generated module" \
-    "$work/Cargo.lock" "$work/reflowed.rs" \
-    "module drift: $work/reflowed.rs carries the right identity but is not the text"
-
-# `--refresh` must state, as the module's own constants, the identity of the
-# lock it is handed, and must write text the check then accepts. The lock used
-# here differs from the committed one in both length and digest (a trailing
-# comment is valid TOML and moves neither a package version nor a Bevy patch),
-# so a refresh that copied the committed module, wrote nothing, mentioned the
-# digest only in passing, or rendered differently from the check is caught.
+# `--refresh` must write, from the lock it is handed, exactly the two lines the
+# lock renders, and the check must then accept that pair. The lock here differs
+# from the committed one in both length and digest (a trailing comment is valid
+# TOML and moves neither a package version nor a Bevy patch).
 { cat "$lock"; echo "# a longer lock, for the refresh case below"; } > "$work/longer-Cargo.lock"
 longer_bytes="$(wc -c < "$work/longer-Cargo.lock" | tr -d ' ')"
-longer_sha="$(sha256sum "$work/longer-Cargo.lock" | awk '{print $1}')"
 test "$longer_bytes" -ne "$bytes" || fail "the longer lock kept the committed length"
-bash scripts/check-bevy-readback-lock.sh --refresh \
-    "$work/longer-Cargo.lock" "$work/refreshed.rs" > /dev/null \
+printf '%s\n%s\n' "$longer_bytes" "$(sha256_of "$work/longer-Cargo.lock")" > "$work/wanted.txt"
+bash "$script" --refresh "$work/longer-Cargo.lock" "$work/refreshed.txt" > /dev/null \
     || fail "--refresh failed on a valid lock"
-test "$(declared_bytes_of "$work/refreshed.rs")" = "$longer_bytes" \
-    || fail "--refresh did not state the byte count of the lock it was handed"
-test "$(declared_sha_of "$work/refreshed.rs")" = "$longer_sha" \
-    || fail "--refresh did not state the digest of the lock it was handed"
-bash scripts/check-bevy-readback-lock.sh "$work/longer-Cargo.lock" "$work/refreshed.rs" \
-    || fail "the check rejected the module --refresh had just written"
-echo "ok: --refresh writes the module the check accepts"
+cmp -s "$work/wanted.txt" "$work/refreshed.txt" \
+    || fail "--refresh did not write the identity of the lock it was handed"
+bash "$script" "$work/longer-Cargo.lock" "$work/refreshed.txt" \
+    || fail "the check rejected the file --refresh had just written"
+echo "ok: --refresh writes the identity the check accepts"
+
+# A refresh from a foreign lock must name its destination rather than silently
+# rewriting the tracked file.
+set +e
+foreign="$(bash "$script" --refresh "$work/longer-Cargo.lock" 2>&1)"
+foreign_status=$?
+set -e
+# Repair before judging, so a regression in that guard cannot leave the tracked
+# file rewritten behind this run.
+if ! cmp -s "$expected" "$identity"; then
+    cp "$expected" "$identity"
+    fail "--refresh from a foreign lock rewrote $identity"
+fi
+test "$foreign_status" -ne 0 || fail "--refresh from a foreign lock did not refuse"
+grep -Fq "needs an explicit destination" <<< "$foreign" \
+    || fail "the refusal did not name the missing destination: $foreign"
+echo "ok: --refresh from a foreign lock refuses without a destination"
 
 echo "bevy-readback lock identity agrees with $lock"
