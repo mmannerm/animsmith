@@ -166,7 +166,13 @@ preserves any existing output. The two panels synchronize by
 normalized sampled-frame phase and display both source times — that display
 mapping is not an authored time warp. Findings, coverage gaps, prediction
 provenance, and identities remain separate per side. Selecting a finding
-scrubs the linked time and highlights its uniquely mapped bone. The
+scrubs the linked time and highlights its uniquely mapped bone. One toggle
+beside the shared phase draws the two judged poses in a single pane instead
+of two — the before skeleton solid, the after one dashed over it, at the same
+two selected frames and through the same shared camera — and the two-pane
+layout stays the default. The overlay stands down while a loop-seam context
+is selected, because that context is one side's own two endpoint frames
+rather than one shared phase. The
 report is evidence for troubleshooting, not an artistic, gameplay, engine, or
 retargeting acceptance verdict.
 
@@ -177,7 +183,8 @@ licensed clip carries that clip. Both forms keep their findings, coverage gaps
 and engine predictions; the comparison also keeps both sides' input identities,
 and the single-clip report its profile and source path (when the document
 has one). Both show a notice where each pose view would be and disable
-playback, so the document can be attached
+playback; the comparison also disables its pose overlay, which draws the same
+grid. So the document can be attached
 to an issue,
 published, or sent to a vendor where the source asset itself may not go (see the
 [licensed-asset policy](../DEVELOPMENT.md#golden-tests)). Nothing else about the

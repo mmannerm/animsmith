@@ -45,6 +45,12 @@ each selected clip. The viewer displays both complete closure identities. Its
 normalized-phase display labels both source times and does not claim an authored
 retime or artistic/engine acceptance.
 
+Its two judged poses are drawn side by side, and one toggle beside the shared
+phase draws them in a single pane instead: the before skeleton solid, the after
+one dashed over it, at the same two selected frames and through the same shared
+camera. The two-pane layout is the default, and the overlay stands down while a
+loop-seam context — one side's own two endpoint frames — is selected.
+
 The comparison view reuses typed seam findings and `foot-slide` evaluated
 scopes. The latter are projected through the shared sampled-stance classifier
 with the run's effective contact threshold, so the report can show endpoint

@@ -43,8 +43,10 @@
 //! bone. [`render_comparison`]'s panels are viewer drawings made from the pose
 //! grid, so an evidence-only comparison replaces every one of them — both
 //! trajectory panels, both gait panels, and the shared root chart — with the
-//! omission notice; findings, gaps, predictions, identities, clip metadata,
-//! and contexts stay as the full comparison embeds them. What neither form
+//! omission notice, and disables the controls that would drive them: the
+//! shared-phase transport and the pose overlay. Findings, gaps, predictions,
+//! identities, clip metadata, and contexts stay as the full comparison embeds
+//! them. What neither form
 //! carries is the per-frame grid a viewer could re-export as animation.
 //!
 //! [licensed-asset policy]: https://github.com/mmannerm/animsmith/blob/main/DEVELOPMENT.md#golden-tests
@@ -424,6 +426,13 @@ pub fn preflight_comparison_sources(
 /// or pose/report work beyond its fixed budgets.  It deliberately uses
 /// normalized frame phase for unequal durations and labels both source times;
 /// it does not infer an authored time warp.
+///
+/// The two judged poses are drawn side by side, and one toggle in the shared
+/// phase bar draws them in a single pane instead: the before skeleton solid,
+/// the after one dashed over it, at the same two selected frames and through
+/// the same shared camera.  The two-pane layout is the default, and the
+/// overlay stands down while a loop-seam context — one side's own two
+/// endpoint frames — is selected.
 pub fn render_comparison(
     before: ComparisonSide<'_>,
     after: ComparisonSide<'_>,
@@ -532,8 +541,10 @@ pub fn render_comparison(
     );
     let shared_js = shared_runtime();
     // Every comparison panel is drawn from the pose grid, so an
-    // evidence-only document has no shared phase left to scrub or play.
-    let scrub_state = if options.evidence_only {
+    // evidence-only document has no shared phase left to scrub, play, or
+    // overlay: all three controls are disabled in the markup itself rather
+    // than left to do nothing when they are used.
+    let disabled_without_poses = if options.evidence_only {
         " disabled"
     } else {
         ""
@@ -545,7 +556,7 @@ pub fn render_comparison(
          <body><header><h1>animsmith visual comparison</h1></header>\n\
          <section class=\"disclosure\"><p id=\"mapping\"></p>\n\
          <p class=\"warning\">This comparison presents checked evidence only. An absent finding is not artistic, gameplay, or engine acceptance.</p></section>\n\
-         <section class=\"sync\"><button id=\"play\" aria-label=\"Play the shared phase\"{scrub_state}>▶</button><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{scrub_state}></label><span id=\"times\"></span></section>\n\
+         <section class=\"sync\"><button id=\"play\" aria-label=\"Play the shared phase\"{disabled_without_poses}>▶</button><label>Shared phase <input id=\"scrub\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\"{disabled_without_poses}></label><label><input type=\"checkbox\" id=\"overlay\"{disabled_without_poses}> Overlay after on before</label><span id=\"times\"></span></section>\n\
          <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><h3>Judged pose at the shared phase</h3>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p></section>\n\
          <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><h3>Judged pose at the shared phase</h3>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p></section>\n\
          <section class=\"side shared-chart\" id=\"root-panel\"><h2 id=\"root-panel-title\">Root path, before over after</h2>{shared_pose}</section>\n\
