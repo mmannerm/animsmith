@@ -39,10 +39,12 @@ nominated as the reference: the check judges the set's spread, so the figure
 names the members whose anchors fall outside the band and leaves the choice of
 which one to re-anchor to the project.
 
-<iframe src="../visuals/run-ring.report.html#embed=1&finding=0" title="AnimSmith report for the four-member run-ring, scrubbed to the judged frame" width="100%" height="520" loading="lazy"></iframe>
+<iframe src="../visuals/run-ring.report.html#embed=1&clip=run_forward&with=run_left" title="AnimSmith report for the four-member run-ring, playing run_forward and the shifted run_left side by side" width="100%" height="520" loading="lazy"></iframe>
 
-[Open the interactive report](../visuals/run-ring.report.html) to switch
-between the four members and compare their stride anchors.
+[Open the interactive report](../visuals/run-ring.report.html) to play the two
+members together at one phase; the `with` selector pairs any two members, and
+both source times are labelled because the pairing is a presentation mapping
+between two timelines rather than a retime.
 
 ## What the finding looks like
 

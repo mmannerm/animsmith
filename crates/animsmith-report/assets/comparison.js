@@ -88,8 +88,9 @@ const frameFinite = (side, frame) => {
 const sharedRootBounds = boundsFor(["root"]);
 const sharedTrailBounds = boundsFor(["root", "hips", "left_foot", "right_foot"]);
 // The frame a side draws at a phase of its own judged grid: one rule, in one
-// place, for every panel of both sides.
-const phaseFrame = (name, phase) => Math.round(phase * Math.max(0, data[name].clip.frames - 1));
+// place, for every panel of both sides — and that rule is the shared runtime's,
+// so the two documents cannot drift on how a phase becomes a frame.
+const phaseFrame = (name, phase) => animsmithFrameAtPhase(data[name].clip.frames, phase);
 // What a side draws now: the frame a selected finding pinned, or the one the
 // shared phase lands on. `update` asks this once per side and hands the pair
 // to every panel, so the pose panes, the trails, the gait and the overlay
@@ -617,14 +618,14 @@ function drawGait(name, palette, frames) {
 let highlight = { before: null, after: null };
 function update() {
   const palette = documentPalette;
-  const phase = Number(q("scrub").value) / Math.max(1, sharedFrameMax);
+  const phase = animsmithPhaseOf(sharedFrameMax + 1, Number(q("scrub").value));
   const frames = { before: frameFor("before", phase), after: frameFor("after", phase) };
   const overlay = overlayState();
   showAfterPose(!overlay.active);
   drawSide("before", palette, frames, overlay); drawSide("after", palette, frames, overlay);
   drawRootComparison(palette, frames); drawTrails("before", palette, frames); drawTrails("after", palette, frames); drawGait("before", palette, frames); drawGait("after", palette, frames);
   const time = (side, frame) => Number.isFinite(side.clip.times[frame]) ? side.clip.times[frame].toFixed(3) : "unavailable";
-  q("times").textContent = `before ${time(data.before, frames.before)}s · after ${time(data.after, frames.after)}s (normalized phase; not a time warp)`;
+  q("times").textContent = `before ${time(data.before, frames.before)}s · after ${time(data.after, frames.after)}s (${ANIMSMITH_PHASE_DISCLOSURE})`;
 }
 function summary(side) { return `primary ${side.identity.sha256} · ${side.identity.bytes} bytes · complete closure ${side.dependency_closure_identity.sha256} · clip ${side.clip.name}`; }
 function subjectBone(row) {
@@ -636,7 +637,7 @@ function nearestFrame(side, time) {
 function selectFinding(name, index) {
   const row = data[name].findings[index], side = data[name]; if (!row) return;
   pausePlayback();
-  const frame = nearestFrame(side, row.time == null ? 0 : row.time), phase = frame / Math.max(1, side.clip.frames - 1);
+  const frame = nearestFrame(side, row.time == null ? 0 : row.time), phase = animsmithPhaseOf(side.clip.frames, frame);
   // Each side lands where a scrub to this phase would, and the finding's own
   // side lands exactly on its own judged frame.
   selectedFrames = { before: phaseFrame("before", phase), after: phaseFrame("after", phase) };

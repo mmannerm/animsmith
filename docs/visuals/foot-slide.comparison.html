@@ -165,8 +165,10 @@ function animsmithRgb(hex) {
 
 // Bounded, total parser for a report's URL fragment: `&`-separated
 // `key=value` pairs. `embed` strips the page chrome for an iframe, `theme`
-// pins light or dark, and `clip`, `frame`, and `finding` are the deep-link
-// selectors.
+// pins light or dark, and `clip`, `with`, `frame`, and `finding` are the
+// deep-link selectors. `with` names a second clip of the same document to
+// show beside the selected one; an empty or unusable value is the default,
+// which is the selected clip alone.
 //
 // Each option has three states, because a fragment is navigated as well as
 // loaded: `undefined` when the key never appeared (leave that state alone),
@@ -195,6 +197,7 @@ function animsmithFragmentOptions(hash) {
       case "embed": options.embed = value === "1" || value === "true"; break;
       case "theme": options.theme = value === "light" || value === "dark" ? value : null; break;
       case "clip": options.clip = animsmithDecoded(value); break;
+      case "with": options.with = animsmithDecoded(value); break;
       case "frame": options.frame = animsmithIndex(value); break;
       case "finding": options.finding = animsmithIndex(value); break;
       default: break;
@@ -213,6 +216,33 @@ function animsmithDecoded(value) {
 // count, so no separate length rule is needed here.
 function animsmithIndex(value) {
   return /^[0-9]+$/.test(value) ? Number(value) : null;
+}
+
+// Two clips shown together are shown at one normalized phase, and both
+// documents place the second one against the first the same way: the grid
+// frame nearest that phase, in the frame count the clip actually has.
+//
+// It selects a sample the checks already judged — it never resamples,
+// interpolates, or retimes — which is what the disclosure says wherever a
+// document shows two timelines at once. Both viewers label the mapping with
+// that one sentence, and both label both source times beside it, so the
+// reader is never shown one clock for two clips.
+const ANIMSMITH_PHASE_DISCLOSURE = "normalized phase, not a time warp";
+
+// Where a frame sits in its own clip, on [0, 1]. A clip with fewer than two
+// frames has no span to sit in, so every frame of it is phase 0 rather than
+// a division by zero.
+function animsmithPhaseOf(frames, at) {
+  return frames > 1 ? at / (frames - 1) : 0;
+}
+
+// The inverse: the clip's own grid frame nearest a phase. A phase past the
+// end lands on the last frame, and anything unreadable — a negative, a NaN
+// from an empty clip — lands on the first, so the result is always a frame
+// the clip has.
+function animsmithFrameAtPhase(frames, phase) {
+  if (!(frames > 1) || !(phase > 0)) return 0;
+  return Math.min(frames - 1, Math.round(phase * (frames - 1)));
 }
 
 // Repaint hook for a reader who switches their system theme with the report
@@ -373,8 +403,9 @@ const frameFinite = (side, frame) => {
 const sharedRootBounds = boundsFor(["root"]);
 const sharedTrailBounds = boundsFor(["root", "hips", "left_foot", "right_foot"]);
 // The frame a side draws at a phase of its own judged grid: one rule, in one
-// place, for every panel of both sides.
-const phaseFrame = (name, phase) => Math.round(phase * Math.max(0, data[name].clip.frames - 1));
+// place, for every panel of both sides — and that rule is the shared runtime's,
+// so the two documents cannot drift on how a phase becomes a frame.
+const phaseFrame = (name, phase) => animsmithFrameAtPhase(data[name].clip.frames, phase);
 // What a side draws now: the frame a selected finding pinned, or the one the
 // shared phase lands on. `update` asks this once per side and hands the pair
 // to every panel, so the pose panes, the trails, the gait and the overlay
@@ -902,14 +933,14 @@ function drawGait(name, palette, frames) {
 let highlight = { before: null, after: null };
 function update() {
   const palette = documentPalette;
-  const phase = Number(q("scrub").value) / Math.max(1, sharedFrameMax);
+  const phase = animsmithPhaseOf(sharedFrameMax + 1, Number(q("scrub").value));
   const frames = { before: frameFor("before", phase), after: frameFor("after", phase) };
   const overlay = overlayState();
   showAfterPose(!overlay.active);
   drawSide("before", palette, frames, overlay); drawSide("after", palette, frames, overlay);
   drawRootComparison(palette, frames); drawTrails("before", palette, frames); drawTrails("after", palette, frames); drawGait("before", palette, frames); drawGait("after", palette, frames);
   const time = (side, frame) => Number.isFinite(side.clip.times[frame]) ? side.clip.times[frame].toFixed(3) : "unavailable";
-  q("times").textContent = `before ${time(data.before, frames.before)}s · after ${time(data.after, frames.after)}s (normalized phase; not a time warp)`;
+  q("times").textContent = `before ${time(data.before, frames.before)}s · after ${time(data.after, frames.after)}s (${ANIMSMITH_PHASE_DISCLOSURE})`;
 }
 function summary(side) { return `primary ${side.identity.sha256} · ${side.identity.bytes} bytes · complete closure ${side.dependency_closure_identity.sha256} · clip ${side.clip.name}`; }
 function subjectBone(row) {
@@ -921,7 +952,7 @@ function nearestFrame(side, time) {
 function selectFinding(name, index) {
   const row = data[name].findings[index], side = data[name]; if (!row) return;
   pausePlayback();
-  const frame = nearestFrame(side, row.time == null ? 0 : row.time), phase = frame / Math.max(1, side.clip.frames - 1);
+  const frame = nearestFrame(side, row.time == null ? 0 : row.time), phase = animsmithPhaseOf(side.clip.frames, frame);
   // Each side lands where a scrub to this phase would, and the finding's own
   // side lands exactly on its own judged frame.
   selectedFrames = { before: phaseFrame("before", phase), after: phaseFrame("after", phase) };

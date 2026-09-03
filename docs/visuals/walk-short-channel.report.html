@@ -92,14 +92,19 @@ header h1 { font-size: 1.05rem; color: var(--accent); }
 main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 1rem; padding: 0 1rem 1rem; }
 @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
 section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
-#controls { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.6rem; }
+#controls { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.6rem; }
 #controls select, #controls button {
   background: var(--raised); color: var(--ink); border: 1px solid var(--line);
   border-radius: 5px; padding: 0.25rem 0.6rem; font: inherit; cursor: pointer;
 }
+#controls label { color: var(--muted); font-size: 0.8rem; }
 #scrub { flex: 1; accent-color: var(--accent); }
-#time { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+#time { color: var(--muted); font-size: 0.8rem; }
 #gl { width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; background: var(--ground); cursor: grab; }
+/* Which slice of the pose view is which clip. The viewer writes each name in
+   the token that half's skeleton is drawn in, so the key cannot name a half
+   in a colour that half is not painted in. */
+#pane-labels { display: flex; gap: 1rem; font-size: 0.78rem; margin-top: 0.4rem; }
 .hint { color: var(--muted); font-size: 0.75rem; margin-top: 0.4rem; }
 #side h2 { font-size: 0.9rem; color: var(--accent); margin: 0.4rem 0; }
 #findings { list-style: none; max-height: 34vh; overflow-y: auto; }
@@ -170,13 +175,17 @@ path.series-member-5 { stroke-dasharray: 1 4; }
 <main>
 <section id="viewer-panel">
 <div id="controls">
+<label for="clip-select">clip</label>
 <select id="clip-select"></select>
+<label for="with-select">with</label>
+<select id="with-select"></select>
 <button id="play" aria-label="Play the clip">▶</button>
 <input type="range" id="scrub" min="0" value="0" step="1">
 <span id="time"></span>
 </div>
 <canvas id="gl"></canvas>
-<p class="hint">drag to orbit · wheel to zoom · frames shown are exactly the grid the checks judged</p>
+<p id="pane-labels"></p>
+<p class="hint">drag to orbit · wheel to zoom · with plays a second clip of this document beside the first at the same normalized phase · frames shown are exactly the grid the checks judged</p>
 </section>
 <section id="side">
 <h2>Findings</h2>
@@ -225,8 +234,10 @@ function animsmithRgb(hex) {
 
 // Bounded, total parser for a report's URL fragment: `&`-separated
 // `key=value` pairs. `embed` strips the page chrome for an iframe, `theme`
-// pins light or dark, and `clip`, `frame`, and `finding` are the deep-link
-// selectors.
+// pins light or dark, and `clip`, `with`, `frame`, and `finding` are the
+// deep-link selectors. `with` names a second clip of the same document to
+// show beside the selected one; an empty or unusable value is the default,
+// which is the selected clip alone.
 //
 // Each option has three states, because a fragment is navigated as well as
 // loaded: `undefined` when the key never appeared (leave that state alone),
@@ -255,6 +266,7 @@ function animsmithFragmentOptions(hash) {
       case "embed": options.embed = value === "1" || value === "true"; break;
       case "theme": options.theme = value === "light" || value === "dark" ? value : null; break;
       case "clip": options.clip = animsmithDecoded(value); break;
+      case "with": options.with = animsmithDecoded(value); break;
       case "frame": options.frame = animsmithIndex(value); break;
       case "finding": options.finding = animsmithIndex(value); break;
       default: break;
@@ -273,6 +285,33 @@ function animsmithDecoded(value) {
 // count, so no separate length rule is needed here.
 function animsmithIndex(value) {
   return /^[0-9]+$/.test(value) ? Number(value) : null;
+}
+
+// Two clips shown together are shown at one normalized phase, and both
+// documents place the second one against the first the same way: the grid
+// frame nearest that phase, in the frame count the clip actually has.
+//
+// It selects a sample the checks already judged — it never resamples,
+// interpolates, or retimes — which is what the disclosure says wherever a
+// document shows two timelines at once. Both viewers label the mapping with
+// that one sentence, and both label both source times beside it, so the
+// reader is never shown one clock for two clips.
+const ANIMSMITH_PHASE_DISCLOSURE = "normalized phase, not a time warp";
+
+// Where a frame sits in its own clip, on [0, 1]. A clip with fewer than two
+// frames has no span to sit in, so every frame of it is phase 0 rather than
+// a division by zero.
+function animsmithPhaseOf(frames, at) {
+  return frames > 1 ? at / (frames - 1) : 0;
+}
+
+// The inverse: the clip's own grid frame nearest a phase. A phase past the
+// end lands on the last frame, and anything unreadable — a negative, a NaN
+// from an empty clip — lands on the first, so the result is always a frame
+// the clip has.
+function animsmithFrameAtPhase(frames, phase) {
+  if (!(frames > 1) || !(phase > 0)) return 0;
+  return Math.min(frames - 1, Math.round(phase * (frames - 1)));
 }
 
 // Repaint hook for a reader who switches their system theme with the report
@@ -371,7 +410,23 @@ function decodePositions(b64) {
 // there is nothing to decode, play back, or draw. Findings, coverage gaps,
 // charts, and the source path are unchanged either way.
 const canvas = document.getElementById("gl");
-for (const clip of data.clips) clip.pos = canvas ? decodePositions(clip.positions) : null;
+
+// The box a clip's whole pose grid occupies, computed once here rather than
+// rescanned whenever the selection changes: fitting a camera to two clips is
+// then merging two boxes.
+function poseBounds(pos) {
+  const min = [1e9, 1e9, 1e9], max = [-1e9, -1e9, -1e9];
+  for (let i = 0; i < pos.length; i += 3)
+    for (let c = 0; c < 3; c++) {
+      min[c] = Math.min(min[c], pos[i + c]);
+      max[c] = Math.max(max[c], pos[i + c]);
+    }
+  return { min, max };
+}
+for (const clip of data.clips) {
+  clip.pos = canvas ? decodePositions(clip.positions) : null;
+  clip.bounds = clip.pos ? poseBounds(clip.pos) : null;
+}
 
 const boneCount = data.bones.length;
 const parents = data.bones.map((b) => b.parent);
@@ -441,19 +496,56 @@ if (canvas) {
 }
 
 // ---- state ------------------------------------------------------------
+// `clip` is the clip the transport drives and `withClip` the optional second
+// clip of the same document shown beside it; null is the default, the
+// selected clip alone. `frame` is the transport's own position, which
+// playback advances continuously.
 let clip = data.clips[0] || null;
+let withClip = null;
 let frame = 0;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
 
+// The panes on screen, and everything that tells them apart: which clip,
+// which of its own grid frames, the tokens its skeleton is painted in, how
+// the colour key names it, and what precedes and follows its time in the
+// label. The pose view, the key, the time label, the charts and the camera
+// all read this one list, so none of them can disagree about which clip is
+// shown at which frame.
+let shown = [];
+
+function refreshShown() {
+  const phase = clip ? animsmithPhaseOf(clip.frames, frame) : 0;
+  // Paired, the two halves are told apart by the report's own left/right
+  // tokens; alone, the skeleton keeps the muted bones and ink joints it has
+  // always had.
+  const paint = withClip
+    ? [[clip, "accent", "accent"], [withClip, "warning", "warning"]]
+    : [[clip, "muted", "ink"]];
+  shown = paint.filter(([c]) => c).map(([c, bones, joints], index) => {
+    const key = index === 0 ? c.name : "with " + c.name;
+    return {
+      clip: c,
+      // Every pane is at the same phase, in its own frame count.
+      at: animsmithFrameAtPhase(c.frames, phase),
+      bones,
+      joints,
+      key,
+      lead: index === 0 ? "" : key + " ",
+      trail: index === 0 ? "" : " · " + ANIMSMITH_PHASE_DISCLOSURE,
+    };
+  });
+}
+
+// One camera for whatever is on screen, fitted to the shown clips' bounds
+// merged, so a pair is drawn at one scale and a skeleton that travels
+// further is visibly the one that travels further. Orbit and zoom move that
+// one camera, so both halves turn together.
 function fitCamera() {
-  if (!clip || !clip.pos) return;
-  let min = [1e9, 1e9, 1e9], max = [-1e9, -1e9, -1e9];
-  for (let i = 0; i < clip.pos.length; i += 3)
-    for (let c = 0; c < 3; c++) {
-      min[c] = Math.min(min[c], clip.pos[i + c]);
-      max[c] = Math.max(max[c], clip.pos[i + c]);
-    }
+  const boxes = shown.map((pane) => pane.clip.bounds).filter(Boolean);
+  if (!boxes.length) return;
+  const min = [0, 1, 2].map((c) => Math.min(...boxes.map((box) => box.min[c])));
+  const max = [0, 1, 2].map((c) => Math.max(...boxes.map((box) => box.max[c])));
   center = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
   dist = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 0.5) * 1.8;
 }
@@ -462,12 +554,16 @@ function fitCamera() {
 // 3D view follows the light/dark theme with the rest of the document.
 const TRAIL_TOKENS = { root: "pass", hips: "accent", left_foot: "warning", right_foot: "error" };
 
-function buildVertices(palette) {
-  const boneColor = animsmithRgb(palette.muted);
-  const jointColor = animsmithRgb(palette.ink);
-  // interleaved pos+color: bone lines, joint points appended after.
+// One pane's pose: bone lines, then joint points, then the role trails, as
+// one interleaved position+colour buffer. Every colour is a design token the
+// pane names, so the same function draws a lone skeleton and either half of
+// a pair.
+function buildVertices(palette, pane) {
+  const clip = pane.clip;
+  const boneColor = animsmithRgb(palette[pane.bones]);
+  const jointColor = animsmithRgb(palette[pane.joints]);
   const verts = [];
-  const f = Math.round(frame);
+  const f = pane.at;
   const base = f * boneCount * 3;
   const p = (b) => [clip.pos[base + b * 3], clip.pos[base + b * 3 + 1], clip.pos[base + b * 3 + 2]];
   for (let b = 0; b < boneCount; b++) {
@@ -478,7 +574,6 @@ function buildVertices(palette) {
   for (let b = 0; b < boneCount; b++) verts.push(...p(b), ...jointColor);
   const pointVerts = boneCount;
   // trails: full path of tracked bones up to the current frame.
-  let trailStart = lineVerts + pointVerts;
   const trailRanges = [];
   for (const [name, bone] of Object.entries(clip.trails || {})) {
     const color = animsmithRgb(palette[TRAIL_TOKENS[name]] || palette.muted);
@@ -486,56 +581,125 @@ function buildVertices(palette) {
     for (let tf = 0; tf <= f; tf++) {
       const tb = tf * boneCount * 3 + bone * 3;
       verts.push(clip.pos[tb], clip.pos[tb + 1], clip.pos[tb + 2], ...color);
-      if (tf > 0 && tf <= f - 0) {
-        // line strip emulation: duplicate interior points for GL_LINES
-        if (tf < f) {
-          verts.push(clip.pos[tb], clip.pos[tb + 1], clip.pos[tb + 2], ...color);
-        }
-      }
+      // line strip emulation: duplicate interior points for GL_LINES
+      if (tf < f) verts.push(clip.pos[tb], clip.pos[tb + 1], clip.pos[tb + 2], ...color);
     }
     trailRanges.push([start, verts.length / 6 - start]);
   }
-  return { verts: new Float32Array(verts), lineVerts, pointVerts, trailStart, trailRanges };
+  return { verts: new Float32Array(verts), lineVerts, pointVerts, trailRanges };
 }
 
+// Each pane gets an equal, scissored slice of the one canvas, left to right,
+// so a pair is two viewports rather than two canvases and the document's own
+// decision that there is no pose view — an evidence-only report carries no
+// #gl at all — keeps working unchanged.
 function draw() {
-  if (!clip || !gl) return;
+  if (!gl || !shown.length) return;
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-  gl.viewport(0, 0, w, h);
   const ground = animsmithRgb(palette.ground);
-  gl.clearColor(ground[0], ground[1], ground[2], 1);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
   const eye = [
     center[0] + dist * Math.cos(pitch) * Math.sin(yaw),
     center[1] + dist * Math.sin(pitch),
     center[2] + dist * Math.cos(pitch) * Math.cos(yaw),
   ];
-  const mvp = mul4(perspective(0.9, w / h, 0.01, 100), lookAt(eye, center, [0, 1, 0]));
-  gl.uniformMatrix4fv(uMvp, false, new Float32Array(mvp));
+  gl.enable(gl.SCISSOR_TEST);
+  const wide = Math.floor(w / shown.length);
+  shown.forEach((pane, index) => {
+    const x = index * wide, pw = index === shown.length - 1 ? w - x : wide;
+    // Scissoring keeps each pane's clear inside its own slice, so neither
+    // pose can paint over the other's.
+    gl.viewport(x, 0, pw, h);
+    gl.scissor(x, 0, pw, h);
+    gl.clearColor(ground[0], ground[1], ground[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const mvp = mul4(perspective(0.9, pw / h, 0.01, 100), lookAt(eye, center, [0, 1, 0]));
+    gl.uniformMatrix4fv(uMvp, false, new Float32Array(mvp));
 
-  const { verts, lineVerts, pointVerts, trailRanges } = buildVertices(palette);
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
-  gl.uniform1f(uPointSize, 5 * dpr);
-  gl.drawArrays(gl.LINES, 0, lineVerts);
-  gl.drawArrays(gl.POINTS, lineVerts, pointVerts);
-  for (const [start, count] of trailRanges) gl.drawArrays(gl.LINE_STRIP, start, count);
+    const { verts, lineVerts, pointVerts, trailRanges } = buildVertices(palette, pane);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+    gl.uniform1f(uPointSize, 5 * dpr);
+    gl.drawArrays(gl.LINES, 0, lineVerts);
+    gl.drawArrays(gl.POINTS, lineVerts, pointVerts);
+    for (const [start, count] of trailRanges) gl.drawArrays(gl.LINE_STRIP, start, count);
+  });
 }
 
 // ---- UI ----------------------------------------------------------------
 const clipSelect = document.getElementById("clip-select");
+const withSelect = document.getElementById("with-select");
 const scrub = document.getElementById("scrub");
 const playBtn = document.getElementById("play");
 const timeLabel = document.getElementById("time");
+// The colour key naming the two halves of the pose view. An evidence-only
+// report has no pose view, so it carries no key either; the pairing itself
+// still selects which clips' charts are shown.
+const paneLabels = document.getElementById("pane-labels");
 
-for (const c of data.clips) {
+const option = (value, text) => {
   const opt = document.createElement("option");
-  opt.value = c.name;
-  opt.textContent = c.name;
-  clipSelect.appendChild(opt);
+  opt.value = value;
+  opt.textContent = text;
+  return opt;
+};
+for (const c of data.clips) clipSelect.appendChild(option(c.name, c.name));
+
+// The chrome that follows the selection rather than the transport: the
+// second select's own options, which never offer the clip already selected,
+// and the colour key naming each half in the token its skeleton is drawn in.
+// Both are rebuilt when the selection changes, not on every frame.
+function refreshPairing() {
+  const chosen = withClip ? withClip.name : "";
+  withSelect.replaceChildren();
+  withSelect.appendChild(option("", "alone"));
+  for (const c of data.clips) {
+    if (clip && c.name === clip.name) continue;
+    withSelect.appendChild(option(c.name, c.name));
+  }
+  withSelect.value = chosen;
+  // A document with one clip has nothing to pair it with.
+  withSelect.disabled = data.clips.length < 2;
+  // An evidence-only document draws no halves, so it carries no key to fill.
+  if (paneLabels) {
+    paneLabels.replaceChildren();
+    for (const pane of shown) {
+      // textContent throughout: clip names come from the linted asset. The
+      // colour is the pane's own token, so the key cannot name a half in a
+      // colour that half is not drawn in.
+      const span = document.createElement("span");
+      span.textContent = pane.key;
+      span.style.color = "var(--" + pane.bones + ")";
+      paneLabels.appendChild(span);
+    }
+  }
+}
+
+// One clip's position in its own timeline, as the label states it.
+const stamp = (pane) =>
+  (animsmithPhaseOf(pane.clip.frames, pane.at) * pane.clip.duration).toFixed(3) + "s / " +
+  pane.clip.duration.toFixed(3) + "s (frame " + pane.at + ")";
+
+// The transport moved: rebuild the panes and everything that reads them.
+// Every source time the label carries is the time of a frame actually drawn,
+// and every chart playhead sits at that same frame.
+function refresh() {
+  refreshShown();
+  if (!shown.length) return;
+  scrub.value = shown[0].at;
+  timeLabel.textContent = shown.map((pane) => pane.lead + stamp(pane) + pane.trail).join(" · ");
+  updateCharts();
+  draw();
+}
+
+// Which clips are shown changed, so the selection-driven chrome and the
+// camera follow before the repaint.
+function reselect() {
+  refreshShown();
+  refreshPairing();
+  fitCamera();
+  refresh();
 }
 
 function selectClip(name) {
@@ -543,21 +707,25 @@ function selectClip(name) {
   if (!clip) return;
   clipSelect.value = clip.name;
   scrub.max = clip.frames - 1;
+  // A clip cannot be paired with itself, so selecting the paired clip as the
+  // primary one leaves it alone rather than drawing it twice.
+  if (withClip && withClip.name === clip.name) withClip = null;
   frame = Math.min(frame, clip.frames - 1);
-  fitCamera();
-  updateCharts();
-  draw();
+  reselect();
+}
+
+// The empty name, an unknown clip, and the clip already selected all mean
+// alone, which is the default this state returns to.
+function selectWith(name) {
+  const found = name ? data.clips.find((c) => c.name === name) : null;
+  withClip = found && clip && found.name !== clip.name ? found : null;
+  reselect();
 }
 
 function setFrame(f) {
   if (!clip) return;
   frame = Math.max(0, Math.min(clip.frames - 1, f));
-  scrub.value = Math.round(frame);
-  const t = (frame / (clip.frames - 1)) * clip.duration;
-  timeLabel.textContent = t.toFixed(3) + "s / " + clip.duration.toFixed(3) + "s (frame " +
-    Math.round(frame) + ")";
-  updateCharts();
-  draw();
+  refresh();
 }
 
 // Declared gait-group membership, keyed by the name each figure carries as
@@ -566,42 +734,51 @@ const groupMembers = new Map((data.groups || []).map((g) => [g.name, g.members])
 
 function updateCharts() {
   if (!clip) return;
-  const u = clip.frames > 1 ? frame / (clip.frames - 1) : 0;
+  const paneOf = new Map(shown.map((pane) => [pane.clip.name, pane]));
   // A group figure's axis is the stride cycle its members were measured on,
-  // which excludes the duplicate wrap sample a longer grid repeats. The
-  // clip figures' axis is the clip's own frames.
-  const cycle = clip.cycle > 0 ? Math.min(1, frame / clip.cycle) : u;
+  // which excludes the duplicate wrap sample a longer grid repeats, and it is
+  // the selected clip's cycle: pairing a second clip beside it adds a pane,
+  // not a second phase for this figure to follow.
+  const cycle = clip.cycle > 0
+    ? Math.min(1, frame / clip.cycle)
+    : animsmithPhaseOf(clip.frames, frame);
   for (const fig of document.querySelectorAll(".chart")) {
     // A group figure draws every member of a declared gait group against the
-    // others, so it stays visible while any member is selected — but only
-    // then. Its caption describes its members' own source phase, so a clip
-    // outside the group must not drive its playhead, and a figure of a group
-    // the reader is not looking at is not evidence about the clip they are.
-    // The membership comes from the payload rather than the markup: a clip
-    // name is arbitrary text, so no separator can pack several into one
+    // others, so it stays visible while the selected clip is one of them —
+    // but only then. Its caption describes its members' own source phase, so
+    // a clip outside the group must not drive its playhead, and a figure of a
+    // group the reader is not looking at is not evidence about the clip they
+    // are. The membership comes from the payload rather than the markup: a
+    // clip name is arbitrary text, so no separator can pack several into one
     // attribute without a legitimate name splitting into pieces.
+    //
+    // A clip figure is its clip's own, so it is visible while that clip is
+    // one of the panes on screen — the selected one, or the clip paired
+    // beside it — and it is driven by that pane's own frame.
     const members = "group" in fig.dataset ? (groupMembers.get(fig.dataset.group) || []) : null;
-    const active = members ? members.includes(clip.name) : fig.dataset.clip === clip.name;
+    const pane = members ? null : paneOf.get(fig.dataset.clip);
+    const active = members ? members.includes(clip.name) : Boolean(pane);
     fig.style.display = active ? "" : "none";
     if (!active) continue;
+    const u = members ? cycle : animsmithPhaseOf(pane.clip.frames, pane.at);
     const playhead = fig.querySelector(".playhead");
     if (playhead) {
       const pad = parseFloat(fig.dataset.pad);
-      const x = pad + parseFloat(fig.dataset.plotw) * (members ? cycle : u);
+      const x = pad + parseFloat(fig.dataset.plotw) * u;
       playhead.setAttribute("x1", x);
       playhead.setAttribute("x2", x);
     }
     const dot = fig.querySelector(".pathdot");
     const points = fig.querySelector(".pathpoints");
-    if (dot && points) {
-      // One entry per judged frame, so the index is the frame. A frame the
+    if (pane && dot && points) {
+      // One entry per judged frame, so the index is the frame this pane
+      // draws — the same frame its pose and its playhead are at. A frame the
       // clip has no sampled position for carries no coordinate, and the dot
       // is hidden for it rather than placed at some other frame's position.
       // The reader would otherwise be shown a place the character is not,
       // and before a leading gap, one it has not reached yet.
       const pts = points.innerHTML.split(";");
-      const i = Math.min(pts.length - 1, Math.round(u * (pts.length - 1)));
-      const at = pts[i].split(",");
+      const at = pts[Math.min(pts.length - 1, pane.at)].split(",");
       if (at.length === 2) {
         dot.setAttribute("cx", at[0]);
         dot.setAttribute("cy", at[1]);
@@ -614,6 +791,10 @@ function updateCharts() {
 }
 
 clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
+// Pairing is not a position, so it neither moves the transport nor stops
+// it — a running report keeps playing and the second clip follows from the
+// frame the first is already on.
+withSelect.addEventListener("change", () => selectWith(withSelect.value));
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
 // The frame loop's ownership lives in the shared runtime, so both documents
@@ -751,8 +932,8 @@ for (const row of data.predictions) {
 
 // Fragment selection runs once the clip list, charts, and findings exist, so
 // a deep link lands exactly where the equivalent click would. Each option that
-// appears is applied in order — clip, then finding, then frame — as far as
-// this document allows: setFrame clamps a frame past the end to the last
+// appears is applied in order — clip, then with, then finding, then frame — as
+// far as this document allows: setFrame clamps a frame past the end to the last
 // judged frame, and a clip name the document does not carry selects the first
 // clip. A value the parser could not read restores that state's default
 // instead: frame 0, the first clip, no selected finding. An option that does
@@ -769,6 +950,10 @@ function applyFragment() {
     selectClip(known ? options.clip : data.clips[0].name);
     setFrame(0);
   }
+  // After `clip`, because which clip a name may not equal is the clip this
+  // fragment just selected. A name the document does not carry, the selected
+  // clip's own name, and a value the parser could not read are all alone.
+  if (options.with !== undefined) selectWith(options.with == null ? "" : options.with);
   if (options.finding !== undefined) selectFinding(options.finding);
   if (options.frame !== undefined) setFrame(options.frame == null ? 0 : options.frame);
   draw();

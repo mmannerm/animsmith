@@ -4,16 +4,24 @@
 // full and evidence-only shape. The DOM and WebGL stubs are deliberately
 // thin — everything asserted here is something a reader would see.
 const fs = require("fs"), vm = require("vm");
-if (process.argv.length !== 8) {
-  throw new Error("usage: test-report-viewers.js COMPARISON.html COMPARISON-EVIDENCE.html REPORT.html REPORT-EVIDENCE.html REPORT-MULTI-CLIP.html REPORT-GAIT-GROUP.html");
+// One directory of documents the recipe just generated, by fixed name, so
+// the set is spelled once there and once here rather than in an argument
+// count, a usage string and a destructuring as well.
+if (process.argv.length !== 3) {
+  throw new Error("usage: test-report-viewers.js DIR — the directory `just report-browser` generated the reports into");
 }
-const [, , comparisonPath, comparisonEvidencePath, singlePath, singleEvidencePath, multiPath, groupPath] = process.argv;
-const html = fs.readFileSync(comparisonPath, "utf8");
-const comparisonEvidenceHtml = fs.readFileSync(comparisonEvidencePath, "utf8");
-const singleHtml = fs.readFileSync(singlePath, "utf8");
-const singleEvidenceHtml = fs.readFileSync(singleEvidencePath, "utf8");
-const multiHtml = fs.readFileSync(multiPath, "utf8");
-const groupHtml = fs.readFileSync(groupPath, "utf8");
+const generatedIn = process.argv[2];
+const document_ = (name) => fs.readFileSync(`${generatedIn}/${name}.html`, "utf8");
+const html = document_("comparison");
+const comparisonEvidenceHtml = document_("comparison-evidence");
+const singleHtml = document_("report");
+const singleEvidenceHtml = document_("report-evidence");
+// One four-member run-ring report serves every multi-clip question this
+// harness asks: which clip is selected, which second clip is paired beside
+// it, and which declared gait group's figure is on screen.
+const multiHtml = document_("multi");
+const multiEvidenceHtml = document_("multi-evidence");
+const groupHtml = multiHtml;
 
 function generatedReportParts(source) {
   const match = source.match(/<script>([\s\S]*?)<\/script><script type="application\/json" id="comparison-report-data">([\s\S]*?)<\/script><script>([\s\S]*?)<\/script><\/body><\/html>\s*$/);
@@ -68,16 +76,25 @@ class Node {
 }
 // Enough WebGL2 to run the hand-written skeleton renderer headlessly: every
 // call is recorded so the harness can assert what was actually drawn.
+// `passes` is the grouped view of the same calls: one entry per vertex
+// upload, carrying the canvas region and camera that upload was made for and
+// the draws it fed, which is how a paired view's two halves are told apart.
+// `enables` is per call rather than a set, so a test can ask what one
+// repaint enabled instead of what the document ever enabled.
 function webgl() {
-  const gl = {VERTEX_SHADER:1,FRAGMENT_SHADER:2,COMPILE_STATUS:3,ARRAY_BUFFER:4,FLOAT:5,DEPTH_TEST:6,COLOR_BUFFER_BIT:7,DEPTH_BUFFER_BIT:8,LINES:9,POINTS:10,LINE_STRIP:11,
-    clears:[],draws:[],buffers:[],
+  const gl = {VERTEX_SHADER:1,FRAGMENT_SHADER:2,COMPILE_STATUS:3,ARRAY_BUFFER:4,FLOAT:5,DEPTH_TEST:6,COLOR_BUFFER_BIT:7,DEPTH_BUFFER_BIT:8,LINES:9,POINTS:10,LINE_STRIP:11,SCISSOR_TEST:12,
+    clears:[],draws:[],buffers:[],passes:[],enables:[],region:{viewport:null,scissor:null,mvp:null},
     createShader:()=>({}),shaderSource(){},compileShader(){},getShaderParameter:()=>true,getShaderInfoLog:()=>"",
     createProgram:()=>({}),attachShader(){},linkProgram(){},useProgram(){},getUniformLocation:()=>({}),
-    createBuffer:()=>({}),bindBuffer(){},enableVertexAttribArray(){},vertexAttribPointer(){},enable(){},
-    viewport(){},clear(){},uniformMatrix4fv(){},uniform1f(){},
+    createBuffer:()=>({}),bindBuffer(){},enableVertexAttribArray(){},vertexAttribPointer(){},
+    clear(){},uniform1f(){},
+    uniformMatrix4fv(_location,_transpose,value){this.region.mvp=Array.from(value)},
+    enable(cap){this.enables.push(cap)},
+    viewport(...args){this.region.viewport=args},
+    scissor(...args){this.region.scissor=args},
     clearColor(...args){this.clears.push(args)},
-    bufferData(_target,array){this.buffers.push(Array.from(array))},
-    drawArrays(mode,first,count){this.draws.push({mode,first,count})}};
+    bufferData(_target,array){const verts=Array.from(array); this.buffers.push(verts); this.passes.push({verts,viewport:this.region.viewport,scissor:this.region.scissor,mvp:this.region.mvp,draws:[]})},
+    drawArrays(mode,first,count){const draw={mode,first,count}; this.draws.push(draw); const pass=this.passes[this.passes.length-1]; if (pass) pass.draws.push(draw)}};
   return gl;
 }
 
@@ -1355,7 +1372,7 @@ if (evidenceRun.root.attrs["data-theme"] !== "light") throw new Error("an eviden
 // Nothing here may throw, and a key that never appears must stay absent so
 // navigation cannot silently reset a switch the reader pinned.
 function runParserMatrix(parse, document_) {
-  const KEYS = ["embed", "theme", "clip", "frame", "finding"];
+  const KEYS = ["embed", "theme", "clip", "with", "frame", "finding"];
   function expectOptions(hash, expected, why) {
     let actual;
     try { actual = parse(hash); } catch (error) { throw new Error(`fragment ${JSON.stringify(String(hash).slice(0,40))} threw: ${error}`); }
@@ -1364,9 +1381,14 @@ function runParserMatrix(parse, document_) {
       if (!Object.is(actual[key], want)) throw new Error(`${document_}, ${why}: ${key} was ${JSON.stringify(actual[key])}, expected ${JSON.stringify(want)}`);
     }
   }
-  expectOptions("#embed=1&theme=dark&clip=walk&frame=7&finding=2", {embed:true,theme:"dark",clip:"walk",frame:7,finding:2}, "every documented option");
+  expectOptions("#embed=1&theme=dark&clip=walk&with=idle&frame=7&finding=2", {embed:true,theme:"dark",clip:"walk",with:"idle",frame:7,finding:2}, "every documented option");
   expectOptions("embed=true&theme=light", {embed:true,theme:"light"}, "a fragment without its leading hash");
   expectOptions("#clip=walk%20cycle%2F01", {clip:"walk cycle/01"}, "percent-encoded clip names");
+  expectOptions("#with=walk%20cycle%2F01", {with:"walk cycle/01"}, "a percent-encoded paired clip name");
+  // The paired clip has an off state a name cannot spell, so an empty value
+  // reads as that state rather than as a value the parser could not read.
+  expectOptions("#with=", {with:""}, "an empty paired clip");
+  expectOptions("#with=%E0%A4%A", {with:null}, "a malformed paired clip name");
   expectOptions("#unknown=1&x&=2&clip", {}, "unknown keys and malformed pairs stay absent");
   expectOptions("#finding-before-abcdef0123456789", {}, "the document's own anchor form changes nothing");
   expectOptions("#", {}, "an empty fragment");
@@ -1407,6 +1429,69 @@ function runParserMatrix(parse, document_) {
 }
 
 runParserMatrix(context.animsmithFragmentOptions, "the comparison runtime");
+
+// ---- one phase mapping, in both documents -------------------------------
+// Two clips shown together are placed against each other by one rule, and
+// both documents carry the same copy of it: the grid frame nearest a phase,
+// in the frame count that clip actually has. The matrix is analytic — a
+// truncating, an unclamped or an unguarded mapping each gets a row wrong.
+function runPhaseMatrix(frameAtPhase, phaseOf, document_) {
+  for (const [frames, phase, expected, why] of [
+    [21, 0, 0, "phase 0 is the first frame"],
+    [21, 1, 20, "phase 1 is the last frame"],
+    [21, 7 / 30, 5, "4.667 rounds up, it is not truncated"],
+    [21, 0.5, 10, "an exact midpoint"],
+    [1001, 2 / 2001, 1, "0.9995 rounds up"],
+    [1, 0.5, 0, "a one-frame clip has no span to divide by"],
+    [0, 0.5, 0, "a clip with no frames at all"],
+    [21, 4, 20, "a phase past the end clamps to the last frame"],
+    [21, -1, 0, "a negative phase is the first frame"],
+    [21, NaN, 0, "an unreadable phase is the first frame"],
+  ]) {
+    const actual = frameAtPhase(frames, phase);
+    if (actual !== expected) throw new Error(`${document_}, ${why}: frame ${actual} of ${frames} at phase ${phase}, expected ${expected}`);
+  }
+  for (const [frames, at, expected, why] of [
+    [21, 0, 0, "the first frame is phase 0"],
+    [21, 20, 1, "the last frame is phase 1"],
+    [21, 5, 0.25, "an interior frame"],
+    [1, 0, 0, "a one-frame clip is phase 0, not a division by zero"],
+    [0, 0, 0, "a clip with no frames at all"],
+  ]) {
+    const actual = phaseOf(frames, at);
+    if (actual !== expected) throw new Error(`${document_}, ${why}: phase ${actual} for frame ${at} of ${frames}, expected ${expected}`);
+  }
+  // The two directions are each other's inverse on every frame a clip has.
+  for (const frames of [2, 21, 33]) {
+    for (let at = 0; at < frames; at++) {
+      if (frameAtPhase(frames, phaseOf(frames, at)) !== at) throw new Error(`${document_}: frame ${at} of ${frames} does not survive a round trip through the phase`);
+    }
+  }
+}
+runPhaseMatrix(context.animsmithFrameAtPhase, context.animsmithPhaseOf, "the comparison runtime");
+
+// And the comparison places its two sides by that same arithmetic: given
+// sides of different frame counts, one shared-phase position selects a frame
+// on each side that the mapping's own arithmetic predicts, and both source
+// times are labelled. Scrub 2 of 2001 is before's frame 2 and after's
+// 2 × 1000 / 2001 = 0.9995, which rounds to frame 1 — a truncating mapping
+// would report frame 0.
+const unevenSides = JSON.parse(JSON.stringify(data));
+unevenSides.after.clip.frames = 1001;
+unevenSides.after.clip.duration = 1.001;
+unevenSides.after.clip.times = Array.from({length: 1001}, (_, index) => index / 1000);
+const uneven = run(generated, "comparison-report-data", html, unevenSides);
+if (uneven.nodes.scrub.max !== 2001) throw new Error("the shared phase does not span the longer side");
+for (const [at, before, after] of [[0, "0.000", "0.000"], [2, "0.002", "0.001"], [2001, "2.001", "1.000"]]) {
+  uneven.nodes.scrub.value = String(at);
+  uneven.nodes.scrub.listeners.input();
+  const expected = `before ${before}s · after ${after}s (normalized phase, not a time warp)`;
+  if (uneven.nodes.times.textContent !== expected) {
+    throw new Error(`at shared frame ${at} the comparison reads ${JSON.stringify(uneven.nodes.times.textContent)}, expected ${JSON.stringify(expected)}`);
+  }
+}
+assertNoHashWrites(uneven, "scrubbing a comparison of two unequal sides");
+
 
 // ---- single-clip viewer ------------------------------------------------
 function singleReportParts(source) {
@@ -1490,10 +1575,15 @@ assertNoHashWrites(holedRun, "scrubbing across an unavailable frame");
 const plain = runSingle(single, singleHtml, singlePayload);
 // The same matrix against this document's own copy of the runtime.
 runParserMatrix(plain.context.animsmithFragmentOptions, "the single-clip runtime");
+runPhaseMatrix(plain.context.animsmithFrameAtPhase, plain.context.animsmithPhaseOf, "the single-clip runtime");
 if (!plain.nodes.file.textContent.includes(singlePayload.file || "")) throw new Error("the viewer did not disclose its source file");
 if (plain.nodes.findings.children.length !== singlePayload.findings.length) throw new Error("the findings panel dropped rows");
 if (!plain.nodes.findings.children.map(row => row.children.map(part => part.textContent).join("|")).some(text => text.includes("<img src=x>"))) throw new Error("untrusted finding text was not carried as text");
 if (!plain.nodes.gl.gl.clears.length) throw new Error("the WebGL view never cleared a frame");
+// One clip is nothing to pair, so the control is present but inert rather
+// than offering a pairing this document cannot make.
+if (plain.nodes["with-select"].children.map((child) => child.value).join("|") !== "") throw new Error("a one-clip report lists something to pair with");
+if (!plain.nodes["with-select"].disabled) throw new Error("a one-clip report offers a pairing it cannot make");
 if ("data-theme" in plain.root.attrs || "data-embed" in plain.root.attrs) throw new Error("an empty fragment must leave the document defaults alone");
 
 // The 3D view paints from the live tokens: bones, joints, trails, and the
@@ -1620,8 +1710,14 @@ if (singleEvidenceHtml.includes('id="gl"')) throw new Error("the evidence-only r
 if (!/<button id="play"[^>]*\sdisabled/.test(singleEvidenceHtml)) throw new Error("the evidence-only report leaves playback enabled");
 if (!singleEvidenceHtml.includes('id="gl-notice"')) throw new Error("the evidence-only report drops its omission notice");
 evidenceSinglePayload.findings.push({check:"harness-check", severity:"warning", clip:evidenceSinglePayload.clips[0].name, bone:"hips", node:null, time:evidenceSinglePayload.clips[0].duration/2, message:"<img src=x>"});
-const evidenceSingle = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl"]});
+const evidenceSingle = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl", "pane-labels"]});
 if (evidenceSingle.nodes.findings.children.length !== evidenceSinglePayload.findings.length) throw new Error("an evidence-only report dropped findings");
+// The pairing control survives the missing pose view — it selects charts as
+// well as panes — and stays inert for this document's single clip.
+if (!singleEvidenceHtml.includes('id="with-select"')) throw new Error("the evidence-only report dropped the with select");
+if (singleEvidenceHtml.includes('id="pane-labels"')) throw new Error("the evidence-only report kept a key to panes it does not draw");
+if (evidenceSingle.nodes["with-select"].children.map((child) => child.value).join("|") !== "") throw new Error("an evidence-only one-clip report lists something to pair with");
+if (!evidenceSingle.nodes["with-select"].disabled) throw new Error("an evidence-only one-clip report offers a pairing it cannot make");
 // The charts survive, so the scrub still moves their playhead.
 const evidenceLast = evidenceSinglePayload.clips[0].frames - 1;
 evidenceSingle.nodes.scrub.value = String(evidenceLast);
@@ -1629,7 +1725,7 @@ evidenceSingle.nodes.scrub.listeners.input();
 const evidencePlayhead = playheadOf(evidenceSingle);
 if (Math.abs(evidencePlayhead - (chartPad + chartPlotW)) > 1e-6) throw new Error("scrubbing an evidence-only report does not move the chart playhead");
 if (!evidenceSingle.nodes.time.textContent.includes("frame")) throw new Error("an evidence-only report stopped reporting the selected frame");
-const evidenceDeep = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl"], hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});
+const evidenceDeep = runSingle(singleEvidence, singleEvidenceHtml, evidenceSinglePayload, {omitted: ["gl", "pane-labels"], hash: `#finding=${evidenceSinglePayload.findings.length - 1}&theme=light`});
 if (evidenceDeep.root.attrs["data-theme"] !== "light" || !evidenceDeep.nodes.findings.children[evidenceSinglePayload.findings.length - 1].classes.has("selected")) throw new Error("an evidence-only report stopped honouring deep links");
 
 // ---- navigating the single-clip viewer ---------------------------------
@@ -1695,6 +1791,469 @@ stepFrame(clipWhilePlaying, 1);
 if (clipWhilePlaying.nodes["clip-select"].value !== secondClip.name) throw new Error("a frame callback moved off the deep-linked clip");
 if (Number(clipWhilePlaying.nodes.scrub.value) !== selectedFrame) throw new Error(`a frame callback overwrote the frame the deep-linked clip opened on: ${clipWhilePlaying.nodes.scrub.value} against ${selectedFrame}`);
 assertNoHashWrites(clipWhilePlaying, "deep-linking a clip while playing");
+
+// ---- two clips of one document, side by side ---------------------------
+// A pair is shown at one normalized phase, so the mapping is only observable
+// when the two timelines differ. The committed ring is a declared sync group
+// — every member has the same frame count and duration — so the shapes are
+// put here, in the payload the viewer reads, with known analytic numbers.
+// The fourth member is reshaped to a single frame, which is the degenerate
+// clip the phase mapping has to answer for without dividing by zero.
+const PAIR_A_FRAMES = 31, PAIR_A_DURATION = 1.5;
+const PAIR_B_FRAMES = 21, PAIR_B_DURATION = 0.8;
+const PAIR_SHAPES = [[0, PAIR_A_FRAMES, PAIR_A_DURATION], [1, PAIR_B_FRAMES, PAIR_B_DURATION], [3, 1, 0]];
+function pairedPayload(source) {
+  const shaped = JSON.parse(JSON.stringify(source));
+  const boneCount = shaped.bones.length;
+  for (const [index, frameCount, duration] of PAIR_SHAPES) {
+    const shapedClip = shaped.clips[index];
+    shapedClip.frames = frameCount;
+    shapedClip.duration = duration;
+    // An evidence-only document carries no grid to reshape.
+    if (shapedClip.positions === undefined) continue;
+    // Each clip occupies its own X band and its own Z plane, and each frame
+    // its own height, so a pane drawn at the wrong clip or the wrong frame is
+    // a different picture and says so in one coordinate.
+    const buffer = Buffer.alloc(frameCount * boneCount * 3 * 4);
+    for (let frame = 0; frame < frameCount; frame++) for (let bone = 0; bone < boneCount; bone++) {
+      const base = (frame * boneCount + bone) * 3;
+      buffer.writeFloatLE(index * 4 + bone, base * 4);
+      buffer.writeFloatLE(frame / 100, (base + 1) * 4);
+      buffer.writeFloatLE(index, (base + 2) * 4);
+    }
+    shapedClip.positions = buffer.toString("base64");
+  }
+  return shaped;
+}
+// The box a reshaped clip's grid occupies, from the bands above rather than
+// from anything the viewer computed.
+const pairBand = (index, frames, boneCount) => ({
+  min: [index * 4, 0, index],
+  max: [index * 4 + boneCount - 1, Math.fround((frames - 1) / 100), index],
+});
+const boxCentre = (...boxes) => [0, 1, 2].map((axis) =>
+  (Math.min(...boxes.map((box) => box.min[axis])) + Math.max(...boxes.map((box) => box.max[axis]))) / 2);
+
+const multiEvidence = singleReportParts(multiEvidenceHtml);
+const multiEvidencePayload = JSON.parse(multiEvidence.payload);
+if (multiEvidencePayload.evidence_only !== true) throw new Error("the evidence-only multi-clip report is not marked as one");
+if (multiEvidenceHtml.includes('"positions"')) throw new Error("the evidence-only multi-clip report still embeds a pose grid");
+if (multiEvidenceHtml.includes('id="gl"') || multiEvidenceHtml.includes('id="pane-labels"')) throw new Error("the evidence-only multi-clip report still renders a pose surface");
+if (!multiEvidenceHtml.includes('id="with-select"')) throw new Error("the evidence-only report dropped the with select");
+if (!multiEvidenceHtml.includes('id="gl-notice"')) throw new Error("the evidence-only multi-clip report drops its omission notice");
+
+const pairPayload = pairedPayload(multiPayload);
+const [clipA, clipB, clipC, clipD] = pairPayload.clips.map((entry) => entry.name);
+if (!clipD) throw new Error("the paired fixture needs a fourth clip");
+const pairHash = `#clip=${encodeURIComponent(clipA)}&with=${encodeURIComponent(clipB)}`;
+// The frame numbers the time label carries, in the order it names them.
+const labelFrames = (state) => [...state.nodes.time.textContent.matchAll(/\(frame (\d+)\)/g)].map((match) => Number(match[1]));
+const withOptions = (state) => state.nodes["with-select"].children.map((child) => child.value);
+function chartsOf(state, name) {
+  const figures = state.charts.filter((figure) => figure.dataset.clip === name);
+  if (!figures.length) throw new Error(`the document renders no charts for ${name}`);
+  return figures;
+}
+
+// Phase 0, an interior phase, and phase 1: A's own frame and seconds, then
+// B's, which are the frame nearest A's phase in B's own grid and that
+// frame's own time. 31 frames over 1.500s against 21 over 0.800s, so frame 7
+// of A is phase 7/30 and 20 × 7/30 = 4.667 rounds to B's frame 5 — a row
+// truncation would get wrong.
+const PAIR_PHASES = [
+  [0, "0.000", 0, "0.000"],
+  [7, "0.350", 5, "0.200"],
+  [15, "0.750", 10, "0.400"],
+  [30, "1.500", 20, "0.800"],
+];
+const pairedLabel = (secondsA, frameA, secondsB, frameB) =>
+  `${secondsA}s / 1.500s (frame ${frameA}) · with ${clipB} ${secondsB}s / 0.800s (frame ${frameB}) · normalized phase, not a time warp`;
+
+// Everything a pairing does that does not need a pose view, run against both
+// generated multi-clip documents: the full one and the evidence-only one,
+// whose omission notice stands where the halves would and whose pairing
+// therefore selects charts alone.
+function assertPairing(why, runPaired, payload) {
+  const paired = runPaired(pairHash);
+  if (JSON.stringify(withOptions(paired)) !== JSON.stringify(["", clipB, clipC, clipD])) {
+    throw new Error(`${why}: the with select offers ${JSON.stringify(withOptions(paired))}`);
+  }
+  if (paired.nodes["with-select"].value !== clipB) throw new Error(`${why}: with= did not pair the named clip`);
+  if (paired.nodes["with-select"].disabled) throw new Error(`${why}: a four-clip document must offer pairing`);
+  if (runPaired(`#clip=${encodeURIComponent(clipA)}`).nodes["with-select"].value !== "") throw new Error(`${why}: a report without with= opens unpaired`);
+
+  for (const [frameA, secondsA, frameB, secondsB] of PAIR_PHASES) {
+    const expected = pairedLabel(secondsA, frameA, secondsB, frameB);
+    const at = runPaired(`${pairHash}&frame=${frameA}`);
+    if (at.nodes.time.textContent !== expected) {
+      throw new Error(`${why}: at frame ${frameA} the label reads ${JSON.stringify(at.nodes.time.textContent)}, expected ${JSON.stringify(expected)}`);
+    }
+    // The same phase, reached by scrubbing rather than by deep link.
+    const scrubbed = runPaired(pairHash);
+    scrubbed.nodes.scrub.value = String(frameA);
+    scrubbed.nodes.scrub.listeners.input();
+    if (scrubbed.nodes.time.textContent !== expected) throw new Error(`${why}: scrubbing to frame ${frameA} disagrees with the deep link`);
+    // Unpaired, the label is A's alone, so the rest of it is the pairing's.
+    const solo = runPaired(`#clip=${encodeURIComponent(clipA)}&frame=${frameA}`);
+    if (solo.nodes.time.textContent !== `${secondsA}s / 1.500s (frame ${frameA})`) {
+      throw new Error(`${why}: unpaired, the label reads ${JSON.stringify(solo.nodes.time.textContent)}`);
+    }
+    // Both clips' charts are shown, each playhead at the frame that clip's
+    // own pane is at — the same frame the pose and the path dot use, so a
+    // line and a dot can never sit a frame apart.
+    for (const [name, frames, at_] of [[clipA, PAIR_A_FRAMES, frameA], [clipB, PAIR_B_FRAMES, frameB]]) {
+      for (const figure of chartsOf(at, name)) {
+        if (figure.style.display !== "") throw new Error(`${why}: a paired clip's ${figure.dataset.kind} chart for ${name} is hidden`);
+        const playhead = figure.query[".playhead"];
+        if (!playhead) continue;
+        const expectedX = Number(figure.dataset.pad) + Number(figure.dataset.plotw) * (at_ / (frames - 1));
+        if (Math.abs(Number(playhead.attrs.x1) - expectedX) > 1e-6) {
+          throw new Error(`${why}: ${name}'s ${figure.dataset.kind} playhead is at ${playhead.attrs.x1}, not its own frame ${at_} at ${expectedX}`);
+        }
+      }
+    }
+    for (const figure of chartsOf(at, clipC)) {
+      if (figure.style.display !== "none") throw new Error(`${why}: an unpaired clip's charts are still shown`);
+    }
+  }
+
+  // A clip with a single frame has no span to sit in, so it is at frame 0 of
+  // whatever phase the pair is shown at, rather than dividing by zero.
+  const degenerate = runPaired(`#clip=${encodeURIComponent(clipA)}&with=${encodeURIComponent(clipD)}&frame=30`);
+  const degenerateLabel = `1.500s / 1.500s (frame 30) · with ${clipD} 0.000s / 0.000s (frame 0) · normalized phase, not a time warp`;
+  if (degenerate.nodes.time.textContent !== degenerateLabel) {
+    throw new Error(`${why}: a one-frame paired clip reads ${JSON.stringify(degenerate.nodes.time.textContent)}`);
+  }
+
+  // Every way of asking for a pairing this document cannot make leaves the
+  // selected clip alone.
+  for (const [asked, hash] of [
+    ["an unknown clip", `#clip=${encodeURIComponent(clipA)}&with=no-such-clip`],
+    ["the selected clip itself", `#clip=${encodeURIComponent(clipA)}&with=${encodeURIComponent(clipA)}`],
+    ["a malformed name", `#clip=${encodeURIComponent(clipA)}&with=%E0%A4%A`],
+    ["an empty name", `#clip=${encodeURIComponent(clipA)}&with=`],
+  ]) {
+    const state = runPaired(hash);
+    if (state.nodes["with-select"].value !== "") throw new Error(`${why}: ${asked} left a pairing standing`);
+    if (labelFrames(state).length !== 1) throw new Error(`${why}: ${asked} left the label naming two clips`);
+    if (state.nodes["clip-select"].value !== clipA) throw new Error(`${why}: ${asked} changed the selected clip`);
+  }
+
+  // `with` is applied after `clip`, whichever order the fragment spells them
+  // in: the pairing is judged against the clip that fragment selected, not
+  // against the one the document opened on.
+  const reversed = runPaired(`#clip=${encodeURIComponent(clipB)}&with=${encodeURIComponent(clipA)}&frame=10`);
+  if (reversed.nodes["clip-select"].value !== clipB || reversed.nodes["with-select"].value !== clipA) {
+    throw new Error(`${why}: #clip=B&with=A selected ${reversed.nodes["clip-select"].value} with ${reversed.nodes["with-select"].value}`);
+  }
+  if (reversed.nodes.time.textContent !== `0.400s / 0.800s (frame 10) · with ${clipA} 0.750s / 1.500s (frame 15) · normalized phase, not a time warp`) {
+    throw new Error(`${why}: the reversed pair reads ${JSON.stringify(reversed.nodes.time.textContent)}`);
+  }
+
+  // Pairing through the select is the same ask as pairing through the
+  // fragment, and it neither moves the transport nor rewrites the URL.
+  const viaSelect = runPaired(`#clip=${encodeURIComponent(clipA)}&frame=15`);
+  viaSelect.nodes["with-select"].value = clipB;
+  viaSelect.nodes["with-select"].listeners.change();
+  if (viaSelect.nodes.time.textContent !== pairedLabel("0.750", 15, "0.400", 10)) {
+    throw new Error(`${why}: pairing through the select and through the fragment disagree`);
+  }
+  if (Number(viaSelect.nodes.scrub.value) !== 15) throw new Error(`${why}: pairing moved the transport`);
+  viaSelect.nodes["with-select"].value = "";
+  viaSelect.nodes["with-select"].listeners.change();
+  if (labelFrames(viaSelect).length !== 1) throw new Error(`${why}: returning the select to alone left the pairing standing`);
+  assertNoHashWrites(viaSelect, `${why}: pairing through the select`);
+
+  // Selecting the paired clip as the primary one un-pairs it rather than
+  // drawing it beside itself; selecting a third clip keeps the pair and
+  // offers the clip that has just stopped being primary.
+  const pairNav = runPaired(pairHash);
+  navigate(pairNav, `#clip=${encodeURIComponent(clipC)}`);
+  if (pairNav.nodes["with-select"].value !== clipB) throw new Error(`${why}: selecting a third clip dropped the pairing`);
+  if (!withOptions(pairNav).includes(clipA)) throw new Error(`${why}: the with select does not offer the clip that stopped being primary`);
+  if (withOptions(pairNav).includes(clipC)) throw new Error(`${why}: the with select still offers the clip that is already selected`);
+  navigate(pairNav, `#clip=${encodeURIComponent(clipB)}`);
+  if (pairNav.nodes["with-select"].value !== "") throw new Error(`${why}: selecting the paired clip as the primary one left it paired with itself`);
+  navigate(pairNav, `#with=${encodeURIComponent(clipA)}`);
+  if (pairNav.nodes["with-select"].value !== clipA) throw new Error(`${why}: navigating to with= did not pair that clip`);
+  navigate(pairNav, "#theme=light");
+  if (pairNav.nodes["with-select"].value !== clipA) throw new Error(`${why}: a fragment without with changed the pairing`);
+  assertNoHashWrites(pairNav, `${why}: navigating a pairing`);
+
+  // The time label follows the selected clip's own duration through the
+  // select, not only through a deep link: changing clips used to leave the
+  // previous clip's duration standing beside the new clip's frame.
+  const relabelled = runPaired(`#clip=${encodeURIComponent(clipA)}&frame=30`);
+  relabelled.nodes["clip-select"].value = clipB;
+  relabelled.nodes["clip-select"].listeners.change();
+  if (relabelled.nodes.time.textContent !== "0.000s / 0.800s (frame 0)") {
+    throw new Error(`${why}: after changing clips the label reads ${JSON.stringify(relabelled.nodes.time.textContent)}, not the new clip's own duration`);
+  }
+
+  // Selecting a finding is a selection of its own clip, so a finding of the
+  // paired clip makes it the primary one and returns the pairing to alone.
+  const withFinding = JSON.parse(JSON.stringify(payload));
+  withFinding.findings.push({check:"harness-check", severity:"warning", clip:clipB, bone:"hips", node:null, time:PAIR_B_DURATION / 2, message:"paired clip finding"});
+  const findingIndexB = withFinding.findings.length - 1;
+  const pairedFinding = runPaired(pairHash, withFinding);
+  pairedFinding.nodes.findings.children[findingIndexB].listeners.click();
+  if (pairedFinding.nodes["clip-select"].value !== clipB) throw new Error(`${why}: clicking a finding of the paired clip did not select that clip`);
+  if (pairedFinding.nodes["with-select"].value !== "") throw new Error(`${why}: a finding of the paired clip left it paired with itself`);
+  if (labelFrames(pairedFinding).length !== 1) throw new Error(`${why}: the label still names two clips after the pairing was reset`);
+  if (Number(pairedFinding.nodes.scrub.value) !== 10) throw new Error(`${why}: the finding at half of B's duration landed on frame ${pairedFinding.nodes.scrub.value}, not 10`);
+  assertNoHashWrites(pairedFinding, `${why}: clicking a finding of the paired clip`);
+  return paired;
+}
+
+const paired = assertPairing(
+  "the full multi-clip report",
+  (hash, payload) => runSingle(multi, multiHtml, payload || pairPayload, {hash, styles: tokenStyles(themedTokens)}),
+  pairPayload,
+);
+assertPairing(
+  "the evidence-only multi-clip report",
+  (hash, payload) => runSingle(multiEvidence, multiEvidenceHtml, payload || pairedPayload(multiEvidencePayload), {hash, omitted: ["gl", "pane-labels"], styles: tokenStyles(themedTokens)}),
+  pairedPayload(multiEvidencePayload),
+);
+
+// The root-path template carries one entry per judged frame, which is what
+// makes the dot's index the frame it marks. The generated document is
+// checked for that here, so the rule the viewer relies on is the document's
+// and not an assumption.
+const rootPointsOf = (html, name) => {
+  const figure = [...html.matchAll(/<figure class="chart"[\s\S]*?<\/figure>/g)]
+    .map(([block]) => block)
+    .find((block) => block.includes(`data-clip="${name}"`) && block.includes('data-kind="rootpath"'));
+  if (!figure) throw new Error(`the document renders no root-path chart for ${name}`);
+  return figure.split('class="pathpoints">')[1].split("<")[0].split(";");
+};
+for (const entry of multiPayload.clips) {
+  const points = rootPointsOf(multiHtml, entry.name);
+  if (points.length !== entry.frames) throw new Error(`${entry.name}'s root-path template carries ${points.length} entries for ${entry.frames} judged frames`);
+}
+// Every member of the committed ring is an in-place cycle, so its root path
+// is one coordinate repeated and no index is observable in it. The paired
+// clip's template is therefore rewritten here with one distinct coordinate
+// per frame, at the frame count the shaped payload gives that clip — which
+// is the rule just asserted of the generated document.
+const pairedPointsB = Array.from({length: PAIR_B_FRAMES}, (_, frame) => `${frame}.5,${frame}.25`);
+const pairFigureB = [...multiHtml.matchAll(/<figure class="chart"[\s\S]*?<\/figure>/g)]
+  .map(([block]) => block)
+  .find((block) => block.includes(`data-clip="${clipB}"`) && block.includes('data-kind="rootpath"'));
+if (!pairFigureB) throw new Error("the multi-clip document renders no root-path chart for the paired clip");
+const pairHtml = multiHtml.replace(
+  pairFigureB,
+  pairFigureB.replace(/(class="pathpoints">)[^<]*/, `$1${pairedPointsB.join(";")}`),
+);
+if (pairHtml === multiHtml) throw new Error("the harness failed to reshape the paired clip's root-path template");
+if (rootPointsOf(pairHtml, clipA).length !== multiPayload.clips[0].frames) throw new Error("the harness reshaped the wrong clip's root-path template");
+// The paired clip's path dot marks the frame that half is drawn at, in that
+// clip's own grid — not the frame the transport is on.
+for (const [frameA, , frameB] of PAIR_PHASES) {
+  const dotted = runSingle(multi, pairHtml, pairPayload, {hash: `${pairHash}&frame=${frameA}`, styles: tokenStyles(themedTokens)});
+  const chart = dotted.charts.find((figure) => figure.dataset.clip === clipB && figure.dataset.kind === "rootpath");
+  const [x, y] = pairedPointsB[frameB].split(",");
+  if (chart.query[".pathdot"].attrs.cx !== x || chart.query[".pathdot"].attrs.cy !== y) {
+    throw new Error(`at A's frame ${frameA}, the paired clip's path dot is at ${chart.query[".pathdot"].attrs.cx},${chart.query[".pathdot"].attrs.cy}, not its own frame ${frameB}'s ${pairedPointsB[frameB]}`);
+  }
+}
+
+// A pairing adds a pane, not a second clip for a group figure to answer to.
+// The group figure follows the selected clip's membership and phase, and the
+// clip figures follow the panes — so pairing a member with an outsider keeps
+// the figure, and selecting the outsider loses it however it is paired.
+const ringGroup = (pairPayload.groups || [])[0];
+if (!ringGroup || ringGroup.members.length < 2) throw new Error("the paired fixture must declare a gait group to reason about");
+const outsiderName = "clip,outside,the-ring";
+if (ringGroup.members.includes(outsiderName)) throw new Error("the harness picked a name the group declares");
+const withOutsider = JSON.parse(JSON.stringify(pairPayload));
+withOutsider.clips.push(Object.assign({}, withOutsider.clips[0], {name: outsiderName}));
+const groupFigureIn = (state) => {
+  const figure = state.charts.find((entry) => entry.dataset.kind === "gait-group");
+  if (!figure) throw new Error("the paired fixture renders no gait-group figure");
+  return figure;
+};
+const runOutsider = (hash) => runSingle(multi, multiHtml, withOutsider, {hash, styles: tokenStyles(themedTokens)});
+const memberWithOutsider = runOutsider(`#clip=${encodeURIComponent(clipA)}&with=${encodeURIComponent(outsiderName)}&frame=15`);
+if (groupFigureIn(memberWithOutsider).style.display === "none") throw new Error("pairing a member with a clip outside its group hid the group figure");
+// And the pairing did not move it: the same selected clip at the same frame,
+// alone, places that playhead identically.
+const memberAlone = runOutsider(`#clip=${encodeURIComponent(clipA)}&frame=15`);
+if (groupFigureIn(memberWithOutsider).query[".playhead"].attrs.x1 !== groupFigureIn(memberAlone).query[".playhead"].attrs.x1) {
+  throw new Error("pairing moved the group figure's playhead, which follows the selected clip's own cycle");
+}
+const outsiderWithMember = runOutsider(`#clip=${encodeURIComponent(outsiderName)}&with=${encodeURIComponent(clipA)}&frame=15`);
+if (groupFigureIn(outsiderWithMember).style.display !== "none") throw new Error("selecting a clip outside the group left its figure on screen because a member was paired beside it");
+// The paired member's own clip figures are shown either way.
+for (const figure of outsiderWithMember.charts.filter((entry) => entry.dataset.clip === clipA)) {
+  if (figure.style.display !== "") throw new Error("the paired member's own charts were hidden with its group figure");
+}
+assertNoHashWrites(memberWithOutsider, "pairing a member with a clip outside its group");
+
+// What one repaint actually drew: the canvas regions it set up, and for each
+// vertex upload the region and camera it was made for and the draws it fed.
+// A snapshot, not the live recorder — a later repaint empties those same
+// arrays, and two repaints have to be comparable.
+function repaint(state) {
+  const gl = state.nodes.gl.gl;
+  for (const record of [gl.passes, gl.clears, gl.draws, gl.buffers, gl.enables]) record.length = 0;
+  state.listeners.resize();
+  return {
+    LINES: gl.LINES, POINTS: gl.POINTS, LINE_STRIP: gl.LINE_STRIP, SCISSOR_TEST: gl.SCISSOR_TEST,
+    enables: gl.enables.slice(), clears: gl.clears.slice(), passes: gl.passes.slice(),
+  };
+}
+const regionsOf = (drawn) => drawn.passes.map((pass) => pass.viewport);
+function paneColours(drawn, pass) {
+  const colourAt = (vertex) => pass.verts.slice(vertex * 6 + 3, vertex * 6 + 6).map((channel) => channel.toFixed(4)).join(",");
+  const span = (draw) => {
+    const seen = new Set();
+    for (let vertex = draw.first; vertex < draw.first + draw.count; vertex++) seen.add(colourAt(vertex));
+    return [...seen];
+  };
+  const lines = pass.draws.find((draw) => draw.mode === drawn.LINES);
+  const points = pass.draws.find((draw) => draw.mode === drawn.POINTS);
+  if (!lines || !points || !lines.count || !points.count) throw new Error("a pose pane drew neither bones nor joints");
+  const trails = new Set();
+  for (const strip of pass.draws.filter((draw) => draw.mode === drawn.LINE_STRIP)) for (const colour of span(strip)) trails.add(colour);
+  return {bones: span(lines), joints: span(points), trails: [...trails], points};
+}
+// The Y of one drawn joint, which the shaped payload sets to that clip's own
+// frame index over 100 — so the vertex says which frame the pane is at.
+const jointY = (drawn, pass, bone) => pass.verts[(paneColours(drawn, pass).points.first + bone) * 6 + 1];
+const token = (name) => rgb(themedTokens[name]).map((channel) => channel.toFixed(4)).join(",");
+// Through the camera a pane was drawn with: column-major mvp × (x, y, z, 1),
+// divided by w, which is the normalized device coordinate the reader sees.
+function ndc(mvp, point) {
+  const at = (row) => mvp[row] * point[0] + mvp[4 + row] * point[1] + mvp[8 + row] * point[2] + mvp[12 + row];
+  const w = at(3);
+  return [at(0) / w, at(1) / w];
+}
+
+// Paired, the canvas is two scissored halves; alone it is one region,
+// exactly as it always was.
+const alone = runSingle(multi, multiHtml, pairPayload, {hash: `#clip=${encodeURIComponent(clipA)}`, styles: tokenStyles(themedTokens)});
+const pairedGl = repaint(paired), aloneGl = repaint(alone);
+if (!pairedGl.enables.includes(pairedGl.SCISSOR_TEST)) throw new Error("the paired repaint did not enable the scissor test");
+if (JSON.stringify(regionsOf(pairedGl)) !== JSON.stringify([[0, 0, 180, 270], [180, 0, 180, 270]])) {
+  throw new Error(`a paired repaint drew into ${JSON.stringify(regionsOf(pairedGl))}`);
+}
+if (JSON.stringify(pairedGl.passes.map((pass) => pass.scissor)) !== JSON.stringify(regionsOf(pairedGl))) throw new Error("the scissor regions do not match the viewports");
+if (JSON.stringify(regionsOf(aloneGl)) !== JSON.stringify([[0, 0, 360, 270]])) throw new Error(`an unpaired repaint drew into ${JSON.stringify(regionsOf(aloneGl))}`);
+if (JSON.stringify(aloneGl.passes.map((pass) => pass.scissor)) !== JSON.stringify(regionsOf(aloneGl))) throw new Error("an unpaired repaint did not scissor its one region");
+
+// The two skeletons are told apart by colour — the report's own left/right
+// tokens — while the role trails keep the tokens they always had.
+const [paneA, paneB] = pairedGl.passes.map((pass) => paneColours(pairedGl, pass));
+for (const [which, pane, expected] of [["A", paneA, "accent"], ["B", paneB, "warning"]]) {
+  for (const part of ["bones", "joints"]) {
+    if (JSON.stringify(pane[part]) !== JSON.stringify([token(expected)])) {
+      throw new Error(`paired pane ${which} drew ${part} in ${JSON.stringify(pane[part])}, not --${expected} alone`);
+    }
+  }
+}
+const soloPane = paneColours(aloneGl, aloneGl.passes[0]);
+if (JSON.stringify(soloPane.bones) !== JSON.stringify([token("muted")]) || JSON.stringify(soloPane.joints) !== JSON.stringify([token("ink")])) {
+  throw new Error(`an unpaired pose drew ${JSON.stringify(soloPane)}, not muted bones and ink joints`);
+}
+// --error is the right-foot trail and nothing else in this document, so it
+// is the token that proves the trails still paint by role in both panes.
+for (const [which, pane] of [["paired pane A", paneA], ["paired pane B", paneB], ["an unpaired pose", soloPane]]) {
+  if (!pane.trails.includes(token("error"))) throw new Error(`${which} lost the right-foot trail token`);
+}
+
+// The colour key names each half, in the order the halves are drawn and in
+// the token that half's skeleton is painted in.
+const keyOf = (state) => state.nodes["pane-labels"].children.map((span) => `${span.textContent}=${span.style.color}`);
+if (JSON.stringify(keyOf(paired)) !== JSON.stringify([`${clipA}=var(--accent)`, `with ${clipB}=var(--warning)`])) {
+  throw new Error(`the paired colour key reads ${JSON.stringify(keyOf(paired))}`);
+}
+if (JSON.stringify(keyOf(alone)) !== JSON.stringify([`${clipA}=var(--muted)`])) {
+  throw new Error(`the unpaired colour key reads ${JSON.stringify(keyOf(alone))}`);
+}
+
+// Which frame each half actually draws, read off the vertices: the shaped
+// payload puts frame/100 in Y, so a pane at the wrong frame — or one
+// interpolating between two — carries a height no grid frame has.
+for (const [frameA, , frameB] of PAIR_PHASES) {
+  const drawn = repaint(runSingle(multi, multiHtml, pairPayload, {hash: `${pairHash}&frame=${frameA}`, styles: tokenStyles(themedTokens)}));
+  for (const [which, index, expected] of [["A", 0, frameA], ["B", 1, frameB]]) {
+    const y = jointY(drawn, drawn.passes[index], 0);
+    if (y !== Math.fround(expected / 100)) {
+      throw new Error(`at A's frame ${frameA}, pane ${which} drew a joint at height ${y}, not grid frame ${expected}'s ${Math.fround(expected / 100)}`);
+    }
+  }
+}
+
+// One camera for both halves, fitted to the two clips' bounds merged: the
+// centre of the union projects to the middle of each half, and neither
+// clip's own centre does.
+const boneCount = pairPayload.bones.length;
+const boxA = pairBand(0, PAIR_A_FRAMES, boneCount), boxB = pairBand(1, PAIR_B_FRAMES, boneCount);
+const unionCentre = boxCentre(boxA, boxB);
+if (JSON.stringify(pairedGl.passes[0].mvp) !== JSON.stringify(pairedGl.passes[1].mvp)) {
+  throw new Error("the two halves of the paired view were drawn through different cameras");
+}
+for (const [which, pass] of pairedGl.passes.map((pass, index) => [index === 0 ? "A" : "B", pass])) {
+  const middle = ndc(pass.mvp, unionCentre);
+  if (Math.hypot(...middle) > 1e-6) throw new Error(`half ${which} is not centred on the union of both clips' bounds: ${JSON.stringify(middle)}`);
+  for (const [name, box] of [["the selected clip", boxA], ["the paired clip", boxB]]) {
+    if (Math.hypot(...ndc(pass.mvp, boxCentre(box))) < 0.1) throw new Error(`half ${which} is centred on ${name} alone, not on both`);
+  }
+}
+if (Math.hypot(...ndc(aloneGl.passes[0].mvp, boxCentre(boxA))) > 1e-6) throw new Error("an unpaired pose is not centred on its own clip");
+// Orbiting moves that one camera, so both halves turn together.
+paired.nodes.gl.listeners.mousedown({clientX: 10, clientY: 20});
+paired.listeners.mousemove({clientX: 60, clientY: 40});
+paired.listeners.mouseup();
+const orbited = repaint(paired);
+if (JSON.stringify(orbited.passes[0].mvp) !== JSON.stringify(orbited.passes[1].mvp)) {
+  throw new Error("orbiting turned one half of the paired view and not the other");
+}
+if (JSON.stringify(orbited.passes[0].mvp) === JSON.stringify(pairedGl.passes[0].mvp)) {
+  throw new Error("orbiting a paired view did not move its camera");
+}
+assertNoHashWrites(paired, "orbiting a paired view");
+
+// Play advances the selected clip and the paired one follows: 30 frames over
+// 1.500s is 20 frames a second, so half a second is A's frame 10, phase 1/3,
+// and 20 × 1/3 = 6.667 rounds to B's frame 7.
+const pairedPlay = runSingle(multi, multiHtml, pairPayload, {hash: pairHash, styles: tokenStyles(themedTokens)});
+if (JSON.stringify(labelFrames(pairedPlay)) !== JSON.stringify([0, 0])) throw new Error("a paired report does not open at phase 0");
+pairedPlay.nodes.play.listeners.click();
+if (pairedPlay.nodes.play.textContent !== "⏸") throw new Error("the paired report did not start playing");
+stepFrame(pairedPlay, 0.5);
+if (JSON.stringify(labelFrames(pairedPlay)) !== JSON.stringify([10, 7])) {
+  throw new Error(`half a second of paired playback reached ${JSON.stringify(labelFrames(pairedPlay))}, not [10, 7]`);
+}
+const playing = repaint(pairedPlay);
+if (jointY(playing, playing.passes[1], 0) !== Math.fround(7 / 100)) throw new Error("playback drew the paired half at the wrong frame");
+pairedPlay.nodes.scrub.value = "3";
+pairedPlay.nodes.scrub.listeners.input();
+if (pairedPlay.nodes.play.textContent !== "▶" || pairedPlay.clock.pending.size !== 0) throw new Error("scrubbing a paired report did not pause it");
+if (JSON.stringify(labelFrames(pairedPlay)) !== JSON.stringify([3, 2])) throw new Error(`scrubbing to frame 3 reached ${JSON.stringify(labelFrames(pairedPlay))}`);
+assertNoHashWrites(pairedPlay, "playing and scrubbing a paired report");
+
+// A system theme change repaints every half with the new ground token.
+const pairedScheme = runSingle(multi, multiHtml, pairPayload, {hash: pairHash, styles: tokenStyles(themedTokens)});
+pairedScheme.settings.styles = tokenStyles(Object.assign({}, themedTokens, {ground: "#fdfdfd"}));
+const gl = pairedScheme.nodes.gl.gl;
+for (const record of [gl.passes, gl.clears]) record.length = 0;
+pairedScheme.media.change();
+if (JSON.stringify(gl.passes.map((pass) => pass.viewport)) !== JSON.stringify([[0, 0, 180, 270], [180, 0, 180, 270]])) {
+  throw new Error("a system theme change did not redraw both halves");
+}
+if (!gl.clears.length || gl.clears.some((clear) => Math.abs(clear[0] - 0xfd / 255) > 1e-6)) {
+  throw new Error("a system theme change left a half on the previous ground token");
+}
+assertNoHashWrites(pairedScheme, "a paired system theme change");
+
+// The comparison's two clips are declared by its inputs, so it has no
+// pairing to make and no with select to query.
+if (html.includes('id="with-select"')) throw new Error("the comparison document renders a with select");
+const comparisonWith = run(generated, "comparison-report-data", html, data, {hash: `#with=${encodeURIComponent(clipB)}`});
+if (comparisonWith.nodes.scrub.max !== 2001) throw new Error("with= disturbed the comparison viewer");
+assertNoHashWrites(comparisonWith, "with= on the comparison");
 
 assertNoHashWrites(selectionNav, "navigating the single-clip viewer");
 assertNoHashWrites(clipNav, "navigating clips");

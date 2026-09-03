@@ -7,14 +7,19 @@ header h1 { font-size: 1.05rem; color: var(--accent); }
 main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 1rem; padding: 0 1rem 1rem; }
 @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
 section { background: var(--surface); border-radius: 8px; padding: 0.8rem; }
-#controls { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.6rem; }
+#controls { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.6rem; }
 #controls select, #controls button {
   background: var(--raised); color: var(--ink); border: 1px solid var(--line);
   border-radius: 5px; padding: 0.25rem 0.6rem; font: inherit; cursor: pointer;
 }
+#controls label { color: var(--muted); font-size: 0.8rem; }
 #scrub { flex: 1; accent-color: var(--accent); }
-#time { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+#time { color: var(--muted); font-size: 0.8rem; }
 #gl { width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; background: var(--ground); cursor: grab; }
+/* Which slice of the pose view is which clip. The viewer writes each name in
+   the token that half's skeleton is drawn in, so the key cannot name a half
+   in a colour that half is not painted in. */
+#pane-labels { display: flex; gap: 1rem; font-size: 0.78rem; margin-top: 0.4rem; }
 .hint { color: var(--muted); font-size: 0.75rem; margin-top: 0.4rem; }
 #side h2 { font-size: 0.9rem; color: var(--accent); margin: 0.4rem 0; }
 #findings { list-style: none; max-height: 34vh; overflow-y: auto; }

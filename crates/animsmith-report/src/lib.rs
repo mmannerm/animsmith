@@ -65,9 +65,10 @@
 //! palette that otherwise follows `prefers-color-scheme`, `embed=1` hides the
 //! running title and the interaction hint and nothing else, so the document
 //! fits an `<iframe>` with its evidence in place, and `frame=N` scrubs. [`render`]'s
-//! document also takes `clip=NAME` and `finding=INDEX`; [`render_comparison`]'s
-//! addresses a finding through the `#finding-<side>-<anchor>` links its own
-//! panels carry.
+//! document also takes `clip=NAME`, `with=NAME`, and `finding=INDEX`;
+//! [`render_comparison`]'s addresses a finding through the
+//! `#finding-<side>-<anchor>` links its own panels carry and ignores the
+//! single-clip selectors, because its two clips are declared by its inputs.
 //!
 //! A key that is absent leaves that state alone. A key that is present is
 //! applied as far as the document allows: a syntactically valid frame beyond
@@ -78,6 +79,31 @@
 //! the selection. Unknown keys and malformed pairs are ignored, and no
 //! fragment changes the findings, coverage gaps, predictions, or charts the
 //! document carries.
+//!
+//! # Playing two clips of one document together
+//!
+//! [`render`]'s viewer plays a second clip of the same document beside the
+//! selected one. The `with` control and the `with=NAME` fragment key both
+//! choose it; the empty value, a name the document does not carry, and the
+//! selected clip's own name all mean the default, which is that clip alone.
+//! The two poses share one canvas as two scissored halves, drawn through one
+//! camera fitted to both clips' bounds so they are at one scale, coloured by
+//! the report's own left/right tokens, and named by a key below the canvas
+//! that writes each half in the token that half is drawn in.
+//!
+//! The pair is shown at one normalized phase: the transport drives the
+//! selected clip, and every half is shown at the frame nearest that phase in
+//! its own grid, with both source times labelled. Each clip's chart playhead
+//! and root-path dot sit at that same frame, so no surface of the document
+//! reports a frame other than the one it draws. The mapping is a
+//! presentation mapping between two timelines, not a retime — it selects
+//! samples the checks already judged, nothing is resampled, blended, or
+//! interpolated, and the report makes no claim about what a runtime blend of
+//! the two would look like.
+//!
+//! An evidence-only report carries no pose grid, so it has no halves to draw
+//! and renders the omission notice where they would be; the pairing still
+//! selects which clips' charts are shown.
 //!
 //! # Build and API status
 //!
@@ -1806,21 +1832,28 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         "predictions": predictions_json,
     });
 
-    let pose = pose_surface("gl", options.evidence_only);
+    // Everything the omitted pose grid changes about this document, decided
+    // once. The colour key belongs to the canvas, so a document that renders
+    // the omission notice instead carries no key to name halves it does not
+    // draw; the scrub still moves the chart playhead, so only playback itself
+    // is disabled.
+    let (pose, play_state, hint) = if options.evidence_only {
+        (
+            pose_surface("gl", true),
+            " disabled",
+            "sampled poses were omitted · findings, coverage, and charts are the evidence \
+             this report carries",
+        )
+    } else {
+        (
+            format!("{}\n<p id=\"pane-labels\"></p>", pose_surface("gl", false)),
+            "",
+            "drag to orbit · wheel to zoom · with plays a second clip of this document beside \
+             the first at the same normalized phase · frames shown are exactly the grid the \
+             checks judged",
+        )
+    };
     let shared_js = shared_runtime();
-    // The scrub still moves the chart playhead without a pose grid, so only
-    // playback itself is disabled.
-    let play_state = if options.evidence_only {
-        " disabled"
-    } else {
-        ""
-    };
-    let hint = if options.evidence_only {
-        "sampled poses were omitted · findings, coverage, and charts are the evidence \
-         this report carries"
-    } else {
-        "drag to orbit · wheel to zoom · frames shown are exactly the grid the checks judged"
-    };
     let title = esc(doc
         .source
         .path
@@ -1839,7 +1872,10 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
          <main>\n\
          <section id=\"viewer-panel\">\n\
            <div id=\"controls\">\n\
+             <label for=\"clip-select\">clip</label>\n\
              <select id=\"clip-select\"></select>\n\
+             <label for=\"with-select\">with</label>\n\
+             <select id=\"with-select\"></select>\n\
              <button id=\"play\" aria-label=\"Play the clip\"{play_state}>▶</button>\n\
              <input type=\"range\" id=\"scrub\" min=\"0\" value=\"0\" step=\"1\">\n\
              <span id=\"time\"></span>\n\

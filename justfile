@@ -153,13 +153,10 @@ report-browser:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build -q -p animsmith --bin animsmith
-    comparison="$(mktemp)"
-    comparison_evidence="$(mktemp)"
-    report="$(mktemp)"
-    report_evidence="$(mktemp)"
-    report_multi="$(mktemp)"
-    report_group="$(mktemp)"
-    trap 'rm -f "${comparison}" "${comparison_evidence}" "${report}" "${report_evidence}" "${report_multi}" "${report_group}"' EXIT
+    # One directory of fixed names, so the document set is spelled once here
+    # and once in the harness that reads it.
+    out="$(mktemp -d)"
+    trap 'rm -rf "${out}"' EXIT
     compare() {
       target/debug/animsmith --config examples/report-comparison.animsmith.toml report \
         examples/assets/report-comparison-before.glb \
@@ -170,18 +167,21 @@ report-browser:
       target/debug/animsmith --config examples/walk.animsmith.toml report \
         examples/assets/walk-dirty.glb "$@"
     }
-    compare --output "${comparison}"
-    compare --output "${comparison_evidence}" --evidence-only
-    single --output "${report}"
-    single --output "${report_evidence}" --evidence-only
-    # A two-clip document, so clip selection is exercised on a real report.
-    target/debug/animsmith report crates/animsmith-report/testdata/rig.gltf --output "${report_multi}"
-    # A four-member declared gait group, so the cross-clip figure is exercised
-    # on a real report rather than on a hand-built one.
-    target/debug/animsmith --config examples/run-ring.animsmith.toml report \
-      examples/assets/run-ring.glb --output "${report_group}"
-    node scripts/test-report-viewers.js "${comparison}" "${comparison_evidence}" \
-      "${report}" "${report_evidence}" "${report_multi}" "${report_group}"
+    # A four-member declared gait group whose members carry per-clip charts and
+    # role trails: one real report that exercises clip selection, paired
+    # playback and the cross-clip group figure at once, and the same document
+    # the blend-skate page embeds.
+    ring() {
+      target/debug/animsmith --config examples/run-ring.animsmith.toml report \
+        examples/assets/run-ring.glb "$@"
+    }
+    compare --output "${out}/comparison.html"
+    compare --output "${out}/comparison-evidence.html" --evidence-only
+    single --output "${out}/report.html"
+    single --output "${out}/report-evidence.html" --evidence-only
+    ring --output "${out}/multi.html"
+    ring --output "${out}/multi-evidence.html" --evidence-only
+    node scripts/test-report-viewers.js "${out}"
     # The documentation site's theme bridge drives those same viewers through
     # their fragment, so its rewrite rule is executed in the same harness step.
     node scripts/test-theme-bridge.js

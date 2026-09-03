@@ -717,6 +717,18 @@ to *that* frame N. Determinism is the feature.
   judged against — the check judges the set's spread and names none.
 - **Findings panel**: each finding links to its clip + time; clicking
   scrubs the viewer.
+- **Two clips side by side**: the `with` control (and the `with=NAME`
+  fragment key) plays a second clip of the same document beside the selected
+  one, as two scissored halves of the one canvas drawn through one camera
+  fitted to both clips' bounds. The transport drives the selected clip, and
+  every half — its pose, its chart playhead and its path dot — is placed at
+  the frame nearest that phase in its own grid, with both source times
+  labelled. Both viewers place their two timelines through that one shared
+  mapping and label it with one shared disclosure sentence.
+  Like the comparison's shared phase it is a presentation mapping between two
+  timelines, not a retime: it selects samples the checks judged, nothing is
+  resampled, interpolated, or blended, so the view claims nothing about a
+  runtime blend of the pair.
 - A skinned-mesh view (vendored three.js, `--report full`) is a P2 option
   the crate layout leaves room for; it is presentation polish, not v1.
 
