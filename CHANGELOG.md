@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/mmannerm/animsmith/compare/v0.11.1...v0.12.0) - 2026-09-03
+
+### Added
+
+- *(report)* derive the guidance from what each clip declares, and mark every trail
+- *(report)* play the comparison's shared phase
+- *(report)* caption what to look for, and mark and size the root path
+
+### Fixed
+
+- *(foot-cycle)* preserve phase-zero proof identity
+- *(foot-cycle)* admit cyclic contact topology
+- *(foot-cycle)* deduplicate authored binary32 knots
+- *(report)* allocate end-mark lanes from where marks are plotted
+- *(report)* pause on a deep link, mark both root tracks, narrow the trail claim
+- *(report)* fit the comparison's root panel and state its scale
+- *(report)* keep a root track's end marks visible on a closed loop
+- *(report)* drop the comparison root panel's empty strip
+
 ## [0.11.1](https://github.com/mmannerm/animsmith/compare/v0.11.0...v0.11.1) - 2026-09-02
 
 ### Fixed
