@@ -72,8 +72,8 @@ $ just gates
 before pushing a non-trivial PR. It runs formatting, clippy, workspace tests,
 golden skip marker verification, dependency checks, schema-id verification,
 GitHub community-file checks, spell checking, rustdoc with missing public docs
-denied, no-default-features CLI tests and builds, release binary smoke checks,
-package readiness checks, and the animation-pack skill's behavioral and
+denied, no-default-features CLI tests and builds, the retained release CLI
+proof, package readiness checks, and the animation-pack skill's behavioral and
 published-report validation.
 
 This author-side pre-push gate is distinct from the later PR audit. Once the
@@ -101,13 +101,21 @@ report feature. The `--no-default-features` build must keep working as a
 pure-Rust glTF-only binary:
 
 ```console
-$ cargo test -p animsmith --test cli_contract --no-default-features
-$ cargo test -p animsmith --test foot_cycle_cli --no-default-features
-$ cargo test -p animsmith --test scale_cli --no-default-features
-$ cargo test -p animsmith --test transition_pose_cli --no-default-features
-$ cargo build -p animsmith --no-default-features
-$ cargo build -p animsmith --release --no-default-features
+$ cargo test -p animsmith --test cli_contract --no-default-features --target-dir target/no-default-features
+$ cargo test -p animsmith --test foot_cycle_cli --no-default-features --target-dir target/no-default-features
+$ cargo test -p animsmith --test scale_cli --no-default-features --target-dir target/no-default-features
+$ cargo test -p animsmith --test transition_pose_cli --no-default-features --target-dir target/no-default-features
+$ cargo build -p animsmith --no-default-features --target-dir target/no-default-features
+$ cargo build -p animsmith --release --no-default-features --target-dir target/no-default-features
 ```
+
+`--target-dir` is not optional bookkeeping. Without it these builds land on
+`target/debug/animsmith`, `target/release/animsmith`, and `target/doc`, and
+whichever feature set ran last is what stays there; see Evaluation Artifacts
+below. `just github-community` enforces the pairing: in `justfile`,
+`.github/workflows/checks.yml`, and `scripts/*.sh`, a non-comment line naming
+`--no-default-features` must name `--target-dir target/no-default-features` on
+that same line.
 
 In that build, glTF inspect, measure, lint, transform, fix, scale, diff,
 `generate addressability`, and `collection transform-foot-cycle` stay
@@ -120,6 +128,40 @@ evidence-emitting producers, so their shared atomic artifact/evidence and
 generation publication helpers live in `crates/animsmith/src/publish.rs`
 rather than inside the feature-gated `assembly` module. Both `scale_cli` and
 `foot_cycle_cli` are part of the no-default-features gate.
+
+## Evaluation Artifacts
+
+A checkout holds more than one CLI, and they do not have the same
+capabilities. Every `--no-default-features` command carries
+`--target-dir target/no-default-features`, so no feature-variant build writes
+to the conventional paths:
+
+| Path | Compiled features | Use |
+|---|---|---|
+| `target/release/animsmith` | `fbx`, `report`, proven by probing | external evaluation, after a green `just gates` |
+| `target/debug/animsmith` | default: no feature-variant build writes here | development and the local skill gates |
+| `target/no-default-features/{debug,release}/animsmith` | none | proving the minimal build still works |
+| a published release archive | `fbx`, `report` | external evaluation, verified per [RELEASING.md](RELEASING.md) |
+
+The first row is the only one this repository proves rather than arranges, and
+`just release-cli` is what proves it. It builds nothing, so it judges the
+artifacts a run leaves behind: both binaries must admit glTF, the retained
+`target/release/animsmith` must also admit the self-authored FBX fixture and
+expose `report`, and the isolated minimal binary must refuse those two. It then
+prints a provenance record to keep beside an evaluation's results — the binary
+path, its SHA-256, its `--version` line, the capabilities the probes proved,
+`git rev-parse HEAD`, and `git describe --tags --dirty`. That last field reads
+`no tag reachable` in a shallow or tag-less checkout, which is what CI clones;
+it is not degraded to a bare hash, because a hash there would read like a
+release name while naming none.
+
+`just gates` runs it as its last line and the CI test job as that job's last
+step, so what it attests to is what the completed run retained. The isolation
+itself is held in place separately, by `just github-community`: across
+`justfile`, `.github/workflows/checks.yml`, and `scripts/*.sh` it requires the
+two flags to appear together on one line, and it requires the probe to be the
+last step of the `gates` recipe and of the workflow's `test` job, so nothing
+runs afterwards that could replace the artifact it just attested to.
 
 ## Cross-platform determinism
 

@@ -5,6 +5,11 @@ export LC_ALL=C
 
 REPO_URL="https://github.com/mmannerm/animsmith"
 
+# The two flags that must travel together on any gate command line. Declared on
+# one line, and referenced rather than repeated below, so this file passes the
+# rule it enforces instead of having to exempt itself from it.
+VARIANT_FLAG="--no-default-features"; ISOLATION_FLAG="--target-dir target/no-default-features"
+
 # Cargo.toml's `rust-version` is the single source of truth for the MSRV;
 # every prose mention of it is checked against this value below.
 MSRV="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
@@ -47,6 +52,65 @@ require_animation_pack_workflow() {
   require_file .github/workflows/checks.yml
   python3 scripts/check-animation-pack-workflow.py --workflow .github/workflows/checks.yml
   python3 scripts/check-animation-pack-workflow.py --self-test
+}
+
+# `just gates` and CI both build the CLI twice. While a --no-default-features
+# build wrote to the conventional target directory, the artifact a gate run
+# left at target/release/animsmith was whichever variant ran last -- a binary
+# that rejects FBX while `--version` looked identical (#653). Every such
+# command, in any file the gate runs, must redirect its own artifacts.
+require_feature_isolation() {
+  local offenders
+
+  require_file justfile
+  require_file .github/workflows/checks.yml
+
+  # Any line naming the flag must isolate on that same line. Not "any cargo
+  # line": a folded YAML scalar or a shell continuation could otherwise put
+  # `cargo` and `--no-default-features` on separate source lines and slip an
+  # unisolated command past a per-command rule. Requiring the two flags to
+  # travel together needs no command reconstruction and no YAML decode.
+  # Comment lines are skipped, so prose cannot satisfy the rule and commenting
+  # a command out cannot hide it.
+  offenders="$(
+    awk -v variant="$VARIANT_FLAG" -v isolation="$ISOLATION_FLAG" '
+      { line = $0; sub(/^[[:space:]]+/, "", line) }
+      line ~ /^#/ { next }
+      index(line, variant) == 0 { next }
+      index(line, isolation) { next }
+      { printf "%s:%d: %s\n", FILENAME, FNR, line }
+    ' justfile .github/workflows/checks.yml scripts/*.sh
+  )"
+  test -z "$offenders" || fail "every line naming $VARIANT_FLAG in a gate command must name $ISOLATION_FLAG too, or the build overwrites the default-feature artifact at target/release/animsmith -- $offenders"
+
+  # The probe judges what a run leaves behind, so nothing may run after it and
+  # replace the artifact it just attested to.
+  awk '
+    /^gates:/ { in_recipe = 1; next }
+    in_recipe && /^[^[:space:]]/ { exit }
+    in_recipe {
+      line = $0; sub(/^[[:space:]]+/, "", line)
+      if (line == "" || line ~ /^#/) next
+      last = line
+    }
+    END { exit last == "just release-cli" ? 0 : 1 }
+  ' justfile || fail "the justfile gates recipe must end with 'just release-cli' so no later recipe can replace the artifact it probed"
+
+  # Every executable step carries either `run:` or `uses:`, so the last of those
+  # in the job is the last step -- an appended action would be caught too.
+  awk '
+    /^  [[:alnum:]_-]+:$/ { job = $0; sub(/^  /, "", job); sub(/:$/, "", job) }
+    job == "test" {
+      line = $0; sub(/^[[:space:]]+(- )?/, "", line)
+      if (line ~ /^(run|uses): /) last = line
+    }
+    END { exit last == "run: bash scripts/check-release-cli.sh" ? 0 : 1 }
+  ' .github/workflows/checks.yml || fail "the checks.yml test job must end with 'run: bash scripts/check-release-cli.sh' so no later step can replace the artifact it probed"
+
+  # The path is spelled in three files; the probe would report a missing binary
+  # rather than a drifted contract if this one fell out of step.
+  require_literal scripts/check-release-cli.sh "target/no-default-features" \
+    "the isolated target directory whose artifact it probes"
 }
 
 # A release published with the repository GITHUB_TOKEN creates no workflow run,
@@ -171,7 +235,8 @@ require_literal DEVELOPMENT.md "just doc" "rustdoc command"
 require_match DEVELOPMENT.md '^## Documentation Builds$' "documentation-builds section"
 require_literal DEVELOPMENT.md "just golden" "golden test command"
 require_literal DEVELOPMENT.md "sccache" "sccache notes"
-require_literal DEVELOPMENT.md "--no-default-features" "no-default-features path"
+require_literal DEVELOPMENT.md "$VARIANT_FLAG" "no-default-features path"
+require_literal DEVELOPMENT.md "just release-cli" "retained release CLI proof"
 require_literal DEVELOPMENT.md "just package-inventory" "package readiness check"
 require_match DEVELOPMENT.md '^## Package Readiness$' "package-readiness section"
 
@@ -200,6 +265,10 @@ require_literal .github/PULL_REQUEST_TEMPLATE.md "just package-inventory" "packa
 # another leg of the platform test matrix. Keep its invocation anchored in the
 # reusable workflow so removal cannot silently erase exact-head evidence.
 require_animation_pack_workflow
+
+# `just gates` green locally must mean PR CI green, so the local recipe and the
+# reusable workflow are held to the same feature-variant isolation (#653).
+require_feature_isolation
 
 # The Pages root tracks the latest published release and /dev/ tracks main, so
 # a successful publication must reach the Pages workflow (#652).

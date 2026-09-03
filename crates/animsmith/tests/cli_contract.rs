@@ -5774,8 +5774,22 @@ fn fix_help_lists_repair_possible_values() {
     );
 }
 
+/// What `--version` must name for the feature set this test binary was built
+/// with. Restated from the Cargo features rather than read back from the build
+/// script that renders the line, so a build script that named the wrong set
+/// would fail here.
+const EXPECTED_COMPILED_FEATURES: &str = if cfg!(all(feature = "fbx", feature = "report")) {
+    "fbx, report"
+} else if cfg!(feature = "fbx") {
+    "fbx"
+} else if cfg!(feature = "report") {
+    "report"
+} else {
+    "none"
+};
+
 #[test]
-fn version_uses_the_composed_build_version_at_the_cli_boundary() {
+fn version_names_the_composed_build_version_and_the_compiled_features() {
     let output = animsmith()
         .arg("--version")
         .output()
@@ -5787,6 +5801,12 @@ fn version_uses_the_composed_build_version_at_the_cli_boundary() {
     assert!(
         out.starts_with(concat!("animsmith ", env!("CARGO_PKG_VERSION"))),
         "{out}"
+    );
+    assert!(
+        out.trim_end()
+            .ends_with(&format!(" [features: {EXPECTED_COMPILED_FEATURES}]")),
+        "the version line must name the features this build was compiled with, \
+         expected [features: {EXPECTED_COMPILED_FEATURES}]; got:\n{out}"
     );
 }
 

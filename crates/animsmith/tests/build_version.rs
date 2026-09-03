@@ -46,6 +46,43 @@ fn resolved_version_falls_back_to_the_bare_manifest_version() {
 }
 
 #[test]
+fn compiled_features_names_the_activated_features_and_drops_the_default_alias() {
+    assert_eq!(
+        build_script::compiled_features(
+            [
+                "PATH",
+                "CARGO_FEATURE_REPORT",
+                "CARGO_PKG_VERSION",
+                "CARGO_FEATURE_DEFAULT",
+                "CARGO_FEATURE_FBX",
+            ]
+            .map(str::to_owned)
+        ),
+        ["fbx", "report"]
+    );
+}
+
+/// The derivation reads whatever Cargo activated, so a feature added to the
+/// manifest later is named without editing the build script.
+#[test]
+fn compiled_features_names_a_feature_the_build_script_never_heard_of() {
+    assert_eq!(
+        build_script::compiled_features(
+            ["CARGO_FEATURE_DEFAULT", "CARGO_FEATURE_TELEMETRY"].map(str::to_owned)
+        ),
+        ["telemetry"]
+    );
+}
+
+#[test]
+fn compiled_features_is_empty_for_a_build_with_no_features_activated() {
+    assert_eq!(
+        build_script::compiled_features(["PATH", "CARGO_PKG_NAME"].map(str::to_owned)),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn packaged_source_info_reads_full_revision_without_claiming_cleanliness() {
     let temp = temp_dir("cargo-vcs-source");
     let path = temp.path().join(".cargo_vcs_info.json");

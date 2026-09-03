@@ -9,6 +9,8 @@ fn main() {
 
     let package_version = env::var("CARGO_PKG_VERSION").expect("Cargo sets CARGO_PKG_VERSION");
     let version = resolved_version(&package_version, git_version(&package_version));
+    let features = compiled_features(env::vars().map(|(name, _value)| name));
+    let version = version_with_features(&version, &features);
 
     println!("cargo:rustc-env=ANIMSMITH_VERSION={version}");
     if let Some(source) = source_info() {
@@ -21,6 +23,40 @@ fn main() {
 
 pub(crate) fn resolved_version(package_version: &str, git_version: Option<String>) -> String {
     git_version.unwrap_or_else(|| package_version.to_owned())
+}
+
+/// The features Cargo activated for this build, recovered from the
+/// `CARGO_FEATURE_*` variables it sets for every build script. `default` is
+/// dropped because it names the set rather than a capability. Cargo uppercases
+/// a feature name and replaces `-` with `_`; this crate's feature names contain
+/// neither, so lowercasing recovers them.
+pub(crate) fn compiled_features<I>(environment: I) -> Vec<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut features: Vec<String> = environment
+        .into_iter()
+        .filter_map(|name| {
+            name.strip_prefix("CARGO_FEATURE_")
+                .map(str::to_ascii_lowercase)
+        })
+        .filter(|feature| feature != "default")
+        .collect();
+    features.sort();
+    features.dedup();
+    features
+}
+
+/// Name the compiled feature surface in the version line, so the binary says
+/// which capabilities it was built with instead of two variants of the same
+/// release printing identical text. This is a label for a reader; proving a
+/// capability is still `scripts/check-release-cli.sh`'s job, which probes.
+pub(crate) fn version_with_features(version: &str, features: &[String]) -> String {
+    if features.is_empty() {
+        format!("{version} [features: none]")
+    } else {
+        format!("{version} [features: {}]", features.join(", "))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

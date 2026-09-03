@@ -87,7 +87,7 @@ test:
 # Render public docs with rustdoc warnings and missing docs denied.
 doc:
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
-    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps --target-dir target/no-default-features
 
 # Stage canonical tracked Markdown and generate navigation from docs/README.md.
 docs-stage:
@@ -136,6 +136,13 @@ bevy-readback-test:
 # Contract coverage for release binary packaging + CLI tag detection.
 release-packaging:
     bash scripts/check-release-packaging.sh
+
+# Prove the release CLI a gate run leaves at target/release/animsmith is the
+# default-feature build, and print the provenance record an external evaluation
+# should keep beside its results. Builds nothing on purpose: it has to judge
+# the artifacts that are there, so `gates` runs it last of all.
+release-cli:
+    bash scripts/check-release-cli.sh
 
 # Behavioral and published-report checks for the reusable animation-pack skill.
 animation-pack-skill:
@@ -193,20 +200,20 @@ gates: require-cargo-deny require-typos
     just docs-check
     typos
     RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc --workspace --no-deps
-    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps
-    cargo test -p animsmith --test cli_contract --no-default-features
-    cargo test -p animsmith --test foot_cycle_cli --no-default-features
-    cargo test -p animsmith --test measure_mesh --no-default-features
-    cargo test -p animsmith --test scale_cli --no-default-features
-    cargo build -p animsmith --no-default-features
+    RUSTDOCFLAGS="-D warnings -D missing_docs" cargo doc -p animsmith --no-default-features --no-deps --target-dir target/no-default-features
+    cargo test -p animsmith --test cli_contract --no-default-features --target-dir target/no-default-features
+    cargo test -p animsmith --test foot_cycle_cli --no-default-features --target-dir target/no-default-features
+    cargo test -p animsmith --test measure_mesh --no-default-features --target-dir target/no-default-features
+    cargo test -p animsmith --test scale_cli --no-default-features --target-dir target/no-default-features
+    cargo build -p animsmith --no-default-features --target-dir target/no-default-features
     cargo build -p animsmith --release
-    cargo run -p animsmith --release -- --version
-    cargo build -p animsmith --release --no-default-features
-    cargo run -p animsmith --release --no-default-features -- --version
+    cargo build -p animsmith --release --no-default-features --target-dir target/no-default-features
     just package-inventory
     just release-packaging
     just animation-pack-skill
     just report-browser
+    # Last, so it judges the artifacts this whole run leaves behind.
+    just release-cli
 
 # See .agent-instructions/shared.md for the required env var.
 # Env-gated reference tests against licensed assets plus CI-visible FBX coverage.

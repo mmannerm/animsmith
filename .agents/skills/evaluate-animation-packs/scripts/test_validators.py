@@ -3732,6 +3732,15 @@ class RegenerationContractTests(unittest.TestCase):
             "ambiguous shared target/release after mixed-feature builds",
             skill,
         )
+        self.assertIn(
+            "send every --no-default-features command to "
+            "target/no-default-features/",
+            skill,
+        )
+        self.assertIn(
+            "just release-cli proves that by probing the binary",
+            skill,
+        )
         self.assertIn("Repeat this preflight for each batch", skill)
 
     def test_discovery_adapters_route_to_the_canonical_skill(self) -> None:
