@@ -244,6 +244,22 @@ patch or minor during pre-dispatch documentation staging; on a generated
 bumped workspace manifest. Historical changelog, bootstrap, and roadmap
 versions are deliberately outside that inventory.
 
+Those claims are written rather than hand-edited:
+
+```console
+$ cargo run -p animsmith --example stage_release_docs
+$ cargo run -p animsmith --example stage_release_docs -- --version <next>
+```
+
+With no argument the target is `[workspace.package] version`; `--version`
+stages the next patch or minor before the release workflow is dispatched, and
+any other version is refused. The inventory and the reader that locates each
+claim live in `animsmith-testkit`'s `docs_versions` module, which both the
+example and the test drive, so the tool rewrites exactly the spans the gate
+reads: a version-shaped string elsewhere on the same page is not a
+current-version claim and is left alone. Re-running the example changes
+nothing, and the gate — not the example — is what fails a stale checkout.
+
 ### GitHub Pages preview
 
 The Pages site uses the mdBook version pinned in `.mdbook-version`. Install it

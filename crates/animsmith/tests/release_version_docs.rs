@@ -6,407 +6,28 @@
 //! workspace manifest to that documented version. This gate accepts both
 //! states, but requires exact manifest equality on a `release-plz-*` branch.
 //!
-//! The inventory is intentionally explicit. Historical references in
-//! `CHANGELOG.md`, the completed bootstrap in `RELEASING.md`, and roadmap
-//! records are not current-version claims and therefore never enter the scan.
+//! The inventory, the reader that locates each current-version claim, and the
+//! writer that moves them all live in `animsmith-testkit`'s
+//! [`docs_versions`](animsmith_testkit::docs_versions) module, so this gate
+//! and the `stage_release_docs` example read the same spans. The inventory is
+//! intentionally explicit. Historical references in `CHANGELOG.md`, the
+//! completed bootstrap in `RELEASING.md`, and roadmap records are not
+//! current-version claims and therefore never enter the scan.
 
-use serde_json::Value as JsonValue;
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use animsmith_testkit::docs_versions::{
+    self as versions, DEPENDENCY_SNIPPETS, STAGE_COMMAND, Snapshot, TOOL_VERSION_SNIPPETS, Version,
+};
+use std::collections::BTreeSet;
+use std::path::Path;
 
-const DEPENDENCY_SNIPPETS: &[(&str, &[&str])] = &[
-    (
-        "README.md",
-        &[
-            "animsmith-core",
-            "animsmith-gltf",
-            "animsmith-fbx",
-            "animsmith-engine",
-            "animsmith-report",
-        ],
-    ),
-    (
-        "crates/animsmith-core/README.md",
-        &["animsmith-core", "animsmith-gltf"],
-    ),
-    (
-        "crates/animsmith-gltf/README.md",
-        &["animsmith-core", "animsmith-gltf"],
-    ),
-    (
-        "crates/animsmith-fbx/README.md",
-        &["animsmith-core", "animsmith-fbx"],
-    ),
-    (
-        "crates/animsmith-engine/README.md",
-        &["animsmith-core", "animsmith-engine"],
-    ),
-    (
-        "crates/animsmith-report/README.md",
-        &["animsmith-core", "animsmith-report"],
-    ),
-    (
-        "docs/embedding.md",
-        &[
-            "animsmith-core",
-            "animsmith-gltf",
-            "animsmith-fbx",
-            "animsmith-engine",
-            "animsmith-report",
-        ],
-    ),
-];
-
-const TOOL_VERSION_SNIPPETS: &[(&str, usize)] = &[
-    ("docs/output.md", 4),
-    ("docs/mixamo-tutorial.md", 1),
-    ("examples/README.md", 1),
-];
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct Version {
-    major: u64,
-    minor: u64,
-    patch: u64,
-}
-
-impl Version {
-    fn parse(value: &str) -> Result<Self, String> {
-        let parts: Vec<_> = value.split('.').collect();
-        if parts.len() != 3 {
-            return Err(format!("expected X.Y.Z, found {value:?}"));
-        }
-        let parse = |part: &str| {
-            if part.is_empty()
-                || !part.bytes().all(|byte| byte.is_ascii_digit())
-                || (part.len() > 1 && part.starts_with('0'))
-            {
-                return Err(format!("expected canonical X.Y.Z, found {value:?}"));
-            }
-            part.parse::<u64>()
-                .map_err(|_| format!("expected canonical X.Y.Z, found {value:?}"))
-        };
-        Ok(Self {
-            major: parse(parts[0])?,
-            minor: parse(parts[1])?,
-            patch: parse(parts[2])?,
-        })
-    }
-
-    fn dependency_line(self) -> String {
-        format!("{}.{}", self.major, self.minor)
-    }
-
-    fn next_minor(self) -> Self {
-        Self {
-            major: self.major,
-            minor: self.minor + 1,
-            patch: 0,
-        }
-    }
-
-    fn next_patch(self) -> Self {
-        Self {
-            patch: self.patch + 1,
-            ..self
-        }
-    }
-
-    fn is_current_or_next_release_from(self, workspace: Self) -> bool {
-        self == workspace
-            || (self.major == workspace.major
-                && self.minor == workspace.minor
-                && self.patch == workspace.patch.saturating_add(1))
-            || (self.major == workspace.major
-                && self.minor == workspace.minor.saturating_add(1)
-                && self.patch == 0)
-    }
-}
-
-impl fmt::Display for Version {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}.{}.{}", self.major, self.minor, self.patch)
-    }
-}
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn workspace_version(root: &Path) -> Result<Version, String> {
-    let manifest = std::fs::read_to_string(root.join("Cargo.toml"))
-        .map_err(|error| format!("reads Cargo.toml: {error}"))?;
-    let manifest: toml::Value =
-        toml::from_str(&manifest).map_err(|error| format!("parses Cargo.toml: {error}"))?;
-    let value = manifest
-        .get("workspace")
-        .and_then(|workspace| workspace.get("package"))
-        .and_then(|package| package.get("version"))
-        .and_then(toml::Value::as_str)
-        .ok_or_else(|| "Cargo.toml must declare workspace.package.version".to_owned())?;
-    Version::parse(value).map_err(|error| format!("Cargo.toml workspace version: {error}"))
-}
-
-fn documentation_snapshot(root: &Path) -> Result<BTreeMap<&'static str, String>, String> {
-    let paths: BTreeSet<_> = DEPENDENCY_SNIPPETS
-        .iter()
-        .map(|(path, _)| *path)
-        .chain(TOOL_VERSION_SNIPPETS.iter().map(|(path, _)| *path))
-        .collect();
-    paths
-        .into_iter()
-        .map(|path| {
-            std::fs::read_to_string(root.join(path))
-                .map(|content| (path, content))
-                .map_err(|error| format!("reads {path}: {error}"))
-        })
-        .collect()
-}
-
-fn dependency_versions(
-    docs: &BTreeMap<&str, String>,
-    errors: &mut Vec<String>,
-) -> Vec<(&'static str, &'static str, Version)> {
-    let mut versions = Vec::new();
-    for &(path, packages) in DEPENDENCY_SNIPPETS {
-        let Some(content) = docs.get(path) else {
-            errors.push(format!("{path}: current-version document is missing"));
-            continue;
-        };
-        for &package in packages {
-            let prefix = format!("{package} = \"");
-            let matches: Vec<_> = content
-                .lines()
-                .enumerate()
-                .filter_map(|(index, line)| {
-                    line.trim()
-                        .strip_prefix(&prefix)
-                        .and_then(|rest| rest.strip_suffix('"'))
-                        .map(|version| (index + 1, version))
-                })
-                .collect();
-            if matches.len() != 1 {
-                errors.push(format!(
-                    "{path}: expected exactly one current `{package} = \"X.Y\"` snippet, found {}",
-                    matches.len()
-                ));
-                continue;
-            }
-            let (line, version) = matches[0];
-            match Version::parse(&format!("{version}.0")) {
-                Ok(version) => versions.push((path, package, version)),
-                Err(_) => errors.push(format!(
-                    "{path}:{line}: `{package}` dependency must use an X.Y requirement, found {version:?}"
-                )),
-            }
-        }
-    }
-    versions
-}
-
-fn json_objects_after_key<'a>(content: &'a str, key: &str) -> Result<Vec<&'a str>, String> {
-    let mut objects = Vec::new();
-    let mut search_from = 0;
-    while let Some(relative) = content[search_from..].find(key) {
-        let key_start = search_from + relative;
-        let mut cursor = key_start + key.len();
-        let bytes = content.as_bytes();
-        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-            cursor += 1;
-        }
-        if bytes.get(cursor) != Some(&b':') {
-            search_from = key_start + key.len();
-            continue;
-        }
-        cursor += 1;
-        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-            cursor += 1;
-        }
-        if bytes.get(cursor) != Some(&b'{') {
-            return Err(format!("{key} must introduce a JSON object"));
-        }
-
-        let start = cursor;
-        let mut depth = 0usize;
-        let mut in_string = false;
-        let mut escaped = false;
-        let mut end = None;
-        for (offset, byte) in bytes[start..].iter().copied().enumerate() {
-            if in_string {
-                if escaped {
-                    escaped = false;
-                } else if byte == b'\\' {
-                    escaped = true;
-                } else if byte == b'"' {
-                    in_string = false;
-                }
-                continue;
-            }
-            match byte {
-                b'"' => in_string = true,
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(start + offset + 1);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let end = end.ok_or_else(|| format!("{key} JSON object is not closed"))?;
-        objects.push(&content[start..end]);
-        search_from = end;
-    }
-    Ok(objects)
-}
-
-fn tool_versions(
-    docs: &BTreeMap<&str, String>,
-    errors: &mut Vec<String>,
-) -> Vec<(&'static str, Version)> {
-    let mut versions = Vec::new();
-    for &(path, expected_count) in TOOL_VERSION_SNIPPETS {
-        let Some(content) = docs.get(path) else {
-            errors.push(format!("{path}: current-version document is missing"));
-            continue;
-        };
-        let objects = match json_objects_after_key(content, "\"tool\"") {
-            Ok(objects) => objects,
-            Err(error) => {
-                errors.push(format!("{path}: {error}"));
-                continue;
-            }
-        };
-        if objects.len() != expected_count {
-            errors.push(format!(
-                "{path}: expected {expected_count} current `tool.version` example(s), found {}",
-                objects.len()
-            ));
-        }
-        for object in objects {
-            let parsed: JsonValue = match serde_json::from_str(object) {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    errors.push(format!("{path}: parses current `tool` example: {error}"));
-                    continue;
-                }
-            };
-            if parsed.get("name").and_then(JsonValue::as_str) != Some("animsmith") {
-                errors.push(format!(
-                    "{path}: current `tool` example must name animsmith"
-                ));
-                continue;
-            }
-            let Some(version) = parsed.get("version").and_then(JsonValue::as_str) else {
-                errors.push(format!(
-                    "{path}: current `tool` example must carry a string version"
-                ));
-                continue;
-            };
-            match Version::parse(version) {
-                Ok(version) => versions.push((path, version)),
-                Err(error) => errors.push(format!(
-                    "{path}: current `tool.version` {version:?} is invalid: {error}"
-                )),
-            }
-        }
-    }
-    versions
-}
-
-fn validate_snapshot(
-    workspace: Version,
-    docs: &BTreeMap<&str, String>,
-    require_manifest_match: bool,
-) -> Vec<String> {
-    let mut errors = Vec::new();
-    let dependencies = dependency_versions(docs, &mut errors);
-    let tools = tool_versions(docs, &mut errors);
-
-    let dependency_version = dependencies.first().map(|(_, _, version)| *version);
-    if let Some(expected) = dependency_version {
-        for &(path, package, found) in &dependencies {
-            if found != expected {
-                errors.push(format!(
-                    "{path}: `{package}` uses dependency line {}, expected {}",
-                    found.dependency_line(),
-                    expected.dependency_line()
-                ));
-            }
-        }
-    }
-
-    let tool_version = tools.first().map(|(_, version)| *version);
-    if let Some(expected) = tool_version {
-        for &(path, found) in &tools {
-            if found != expected {
-                errors.push(format!(
-                    "{path}: `tool.version` is {found}, expected {expected}"
-                ));
-            }
-        }
-        if require_manifest_match && expected != workspace {
-            errors.push(format!(
-                "release-plz PR docs describe {expected}, but Cargo.toml releases {workspace}"
-            ));
-        } else if !require_manifest_match && !expected.is_current_or_next_release_from(workspace) {
-            errors.push(format!(
-                "current docs describe {expected}, but Cargo.toml is {workspace}; docs may describe only the current version, next patch, or next minor"
-            ));
-        }
-    }
-
-    if let (Some(dependency), Some(tool)) = (dependency_version, tool_version)
-        && (dependency.major, dependency.minor) != (tool.major, tool.minor)
-    {
-        errors.push(format!(
-            "dependency snippets use {}, but current `tool.version` examples use {}",
-            dependency.dependency_line(),
-            tool.dependency_line()
-        ));
-    }
-
-    errors
-}
-
-fn is_release_plz_pr(root: &Path) -> bool {
-    let branch = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["branch", "--show-current"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
-    strict_release_mode(
-        std::env::var("ANIMSMITH_RELEASE_PR").ok().as_deref(),
-        std::env::var("GITHUB_HEAD_REF").ok().as_deref(),
-        branch.as_deref(),
-    )
-}
-
-fn strict_release_mode(
-    explicit: Option<&str>,
-    github_head_ref: Option<&str>,
-    branch: Option<&str>,
-) -> bool {
-    if let Some(value) = explicit {
-        return matches!(value, "1" | "true");
-    }
-    github_head_ref.is_some_and(|head| head.starts_with("release-plz-"))
-        || branch.is_some_and(|branch| branch.starts_with("release-plz-"))
-}
-
-fn replace_all(docs: &mut BTreeMap<&str, String>, from: &str, to: &str) {
+/// Replace `from` with `to` in every document of a snapshot copy.
+fn replace_all(docs: &mut Snapshot, from: &str, to: &str) {
     for content in docs.values_mut() {
         *content = content.replace(from, to);
     }
 }
 
+/// Replace the `occurrence`-th `from` in one document.
 fn replace_nth(content: &str, from: &str, to: &str, occurrence: usize) -> String {
     let start = content
         .match_indices(from)
@@ -418,68 +39,120 @@ fn replace_nth(content: &str, from: &str, to: &str, occurrence: usize) -> String
     mutated
 }
 
-fn documented_versions(docs: &BTreeMap<&str, String>) -> (Version, Version) {
-    let mut errors = Vec::new();
-    let dependency = dependency_versions(docs, &mut errors)
-        .first()
-        .map(|(_, _, version)| *version)
-        .expect("fixture carries dependency snippets");
-    let tool = tool_versions(docs, &mut errors)
-        .first()
-        .map(|(_, version)| *version)
-        .expect("fixture carries tool.version examples");
-    assert!(errors.is_empty(), "fixture inventory is valid: {errors:?}");
-    (dependency, tool)
+/// The one dependency line and the one `tool.version` a valid snapshot
+/// describes, read back through the writer: staging to a version the
+/// documents do not carry reports what each claim moved from.
+fn documented_versions(docs: &Snapshot) -> (Version, Version) {
+    let probe = Version {
+        major: u64::MAX,
+        minor: 0,
+        patch: 0,
+    };
+    let (_, changes) = versions::stage(docs, probe).expect("fixture claims are located");
+    let mut dependency = None;
+    let mut tool = None;
+    for change in changes {
+        if change.claim.contains("dependency") {
+            dependency
+                .get_or_insert_with(|| Version::parse(&format!("{}.0", change.from)).expect("X.Y"));
+        } else {
+            tool.get_or_insert_with(|| Version::parse(&change.from).expect("X.Y.Z"));
+        }
+    }
+    (
+        dependency.expect("the inventory states a dependency requirement"),
+        tool.expect("the inventory states a tool version"),
+    )
+}
+
+/// A repository copy holding only what the inventory names, plus the
+/// manifest the writer reads its version from.
+struct Fixture {
+    _directory: tempfile::TempDir,
+    root: std::path::PathBuf,
+}
+
+impl Fixture {
+    /// Copy the inventoried documents and a manifest declaring `version`.
+    fn new(version: Version) -> Self {
+        let directory = tempfile::tempdir().expect("temporary repository");
+        let root = directory.path().to_path_buf();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            format!("[workspace.package]\nversion = \"{version}\"\n"),
+        )
+        .expect("writes the fixture manifest");
+        let repository = versions::repo_root();
+        for (path, content) in
+            versions::documentation_snapshot(&repository).expect("reads the inventory")
+        {
+            let destination = root.join(path);
+            std::fs::create_dir_all(destination.parent().expect("document directory"))
+                .expect("creates the document directory");
+            std::fs::write(destination, content).expect("copies the document");
+        }
+        Self {
+            _directory: directory,
+            root,
+        }
+    }
+
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        versions::documentation_snapshot(&self.root).expect("reads the fixture inventory")
+    }
+
+    fn read(&self, path: &str) -> String {
+        std::fs::read_to_string(self.root.join(path)).expect("reads a fixture document")
+    }
+
+    fn write(&self, path: &str, content: &str) {
+        std::fs::write(self.root.join(path), content).expect("writes a fixture document");
+    }
 }
 
 #[test]
 fn current_release_version_docs_are_consistent() {
-    let root = repo_root();
-    let workspace = workspace_version(&root).expect("reads workspace version");
-    let docs = documentation_snapshot(&root).expect("reads current-version documentation");
-    let errors = validate_snapshot(workspace, &docs, is_release_plz_pr(&root));
+    let root = versions::repo_root();
+    let workspace = versions::workspace_version(&root).expect("reads workspace version");
+    let docs =
+        versions::documentation_snapshot(&root).expect("reads current-version documentation");
+    let errors = versions::validate(workspace, &docs, versions::is_release_plz_pr(&root));
     assert!(
         errors.is_empty(),
-        "release-version documentation drift:\n- {}",
+        "release-version documentation drift (run `{STAGE_COMMAND}`):\n- {}",
         errors.join("\n- ")
     );
 }
 
 #[test]
 fn pre_dispatch_successors_pass_then_release_pr_requires_exact_manifest() {
-    let root = repo_root();
-    let workspace = workspace_version(&root).expect("reads workspace version");
-    let original = documentation_snapshot(&root).expect("reads current-version documentation");
-    let (documented_dependency, documented_tool) = documented_versions(&original);
+    let root = versions::repo_root();
+    let workspace = versions::workspace_version(&root).expect("reads workspace version");
+    let original =
+        versions::documentation_snapshot(&root).expect("reads current-version documentation");
 
     for (kind, staged) in [
         ("next patch", workspace.next_patch()),
         ("next minor", workspace.next_minor()),
     ] {
-        let mut docs = original.clone();
-        replace_all(
-            &mut docs,
-            &format!(" = \"{}\"", documented_dependency.dependency_line()),
-            &format!(" = \"{}\"", staged.dependency_line()),
-        );
-        replace_all(
-            &mut docs,
-            &format!("\"version\": \"{documented_tool}\""),
-            &format!("\"version\": \"{staged}\""),
-        );
+        let (docs, _) = versions::stage(&original, staged).expect("stages the successor");
 
         assert!(
-            validate_snapshot(workspace, &docs, false).is_empty(),
+            versions::validate(workspace, &docs, false).is_empty(),
             "pre-dispatch docs may stage the {kind} before release-plz bumps Cargo.toml"
         );
         assert!(
-            validate_snapshot(workspace, &docs, true)
+            versions::validate(workspace, &docs, true)
                 .iter()
                 .any(|error| error.contains(&format!("Cargo.toml releases {workspace}"))),
             "release PR mode must reject {kind} docs that do not match its manifest"
         );
         assert!(
-            validate_snapshot(staged, &docs, true).is_empty(),
+            versions::validate(staged, &docs, true).is_empty(),
             "the generated {kind} release PR passes once its manifest and staged docs agree"
         );
     }
@@ -535,34 +208,35 @@ fn version_comparison_rejects_noncanonical_semver_spelling() {
 
 #[test]
 fn every_release_context_signal_selects_strict_mode() {
-    assert!(strict_release_mode(Some("1"), None, None));
-    assert!(strict_release_mode(Some("true"), None, None));
-    assert!(strict_release_mode(
+    assert!(versions::strict_release_mode(Some("1"), None, None));
+    assert!(versions::strict_release_mode(Some("true"), None, None));
+    assert!(versions::strict_release_mode(
         None,
         Some("release-plz-2026-08-16"),
         None
     ));
-    assert!(strict_release_mode(
+    assert!(versions::strict_release_mode(
         None,
         None,
         Some("release-plz-2026-08-16")
     ));
-    assert!(!strict_release_mode(
+    assert!(!versions::strict_release_mode(
         None,
         Some("feature/docs"),
         Some("main")
     ));
     assert!(
-        !strict_release_mode(Some("false"), Some("release-plz-generated"), None),
+        !versions::strict_release_mode(Some("false"), Some("release-plz-generated"), None),
         "an explicit false override keeps local diagnostic runs non-strict"
     );
 }
 
 #[test]
 fn successor_policy_rejects_two_patches_ahead_and_cross_domain_drift() {
-    let root = repo_root();
-    let workspace = workspace_version(&root).expect("reads workspace version");
-    let original = documentation_snapshot(&root).expect("reads current-version documentation");
+    let root = versions::repo_root();
+    let workspace = versions::workspace_version(&root).expect("reads workspace version");
+    let original =
+        versions::documentation_snapshot(&root).expect("reads current-version documentation");
     let (documented_dependency, documented_tool) = documented_versions(&original);
 
     let two_patches = Version {
@@ -576,7 +250,7 @@ fn successor_policy_rejects_two_patches_ahead_and_cross_domain_drift() {
         &format!("\"version\": \"{two_patches}\""),
     );
     assert!(
-        validate_snapshot(workspace, &too_far, false)
+        versions::validate(workspace, &too_far, false)
             .iter()
             .any(|error| error.contains("current docs describe")),
         "ordinary main may not stage two patch releases ahead"
@@ -596,7 +270,7 @@ fn successor_policy_rejects_two_patches_ahead_and_cross_domain_drift() {
         &format!("\"version\": \"{tool_next_patch}\""),
     );
     assert!(
-        validate_snapshot(workspace, &crossed, false)
+        versions::validate(workspace, &crossed, false)
             .iter()
             .any(|error| error.contains("dependency snippets use")),
         "individually allowed successors must still describe one release line"
@@ -605,9 +279,10 @@ fn successor_policy_rejects_two_patches_ahead_and_cross_domain_drift() {
 
 #[test]
 fn malformed_current_tool_json_is_rejected() {
-    let root = repo_root();
-    let workspace = workspace_version(&root).expect("reads workspace version");
-    let mut docs = documentation_snapshot(&root).expect("reads current-version documentation");
+    let root = versions::repo_root();
+    let workspace = versions::workspace_version(&root).expect("reads workspace version");
+    let mut docs =
+        versions::documentation_snapshot(&root).expect("reads current-version documentation");
     let content = docs.get_mut("docs/mixamo-tutorial.md").expect("tutorial");
     *content = content.replacen(
         "\"name\": \"animsmith\"",
@@ -615,7 +290,7 @@ fn malformed_current_tool_json_is_rejected() {
         1,
     );
     assert!(
-        validate_snapshot(workspace, &docs, false)
+        versions::validate(workspace, &docs, false)
             .iter()
             .any(|error| error.contains("parses current `tool` example")),
         "the gate must parse the complete tool object rather than extract version text"
@@ -624,9 +299,10 @@ fn malformed_current_tool_json_is_rejected() {
 
 #[test]
 fn every_stale_dependency_and_tool_version_mutation_fails() {
-    let root = repo_root();
-    let workspace = workspace_version(&root).expect("reads workspace version");
-    let docs = documentation_snapshot(&root).expect("reads current-version documentation");
+    let root = versions::repo_root();
+    let workspace = versions::workspace_version(&root).expect("reads workspace version");
+    let docs =
+        versions::documentation_snapshot(&root).expect("reads current-version documentation");
     let (documented_dependency, documented_tool) = documented_versions(&docs);
 
     for &(path, packages) in DEPENDENCY_SNIPPETS {
@@ -645,7 +321,7 @@ fn every_stale_dependency_and_tool_version_mutation_fails() {
                     &format!("{package} = \"{stale_version}\""),
                     0,
                 );
-                let errors = validate_snapshot(workspace, &mutated, false);
+                let errors = versions::validate(workspace, &mutated, false);
                 assert!(
                     errors
                         .iter()
@@ -669,7 +345,7 @@ fn every_stale_dependency_and_tool_version_mutation_fails() {
                     &format!("\"version\": \"{stale_version}\""),
                     occurrence,
                 );
-                let errors = validate_snapshot(workspace, &mutated, false);
+                let errors = versions::validate(workspace, &mutated, false);
                 assert!(
                     errors
                         .iter()
@@ -679,4 +355,197 @@ fn every_stale_dependency_and_tool_version_mutation_fails() {
             }
         }
     }
+}
+
+#[test]
+fn a_manifest_bump_restates_every_claim_and_leaves_the_stale_copy_failing() {
+    let released =
+        versions::workspace_version(&versions::repo_root()).expect("reads workspace version");
+    // A minor bump moves both claim spellings; a patch bump would leave the
+    // `X.Y` dependency requirements alone.
+    let bumped = released.next_minor();
+    let fixture = Fixture::new(bumped);
+    let stale = fixture.snapshot();
+
+    let changes = versions::stage_release_docs(fixture.root(), bumped).expect("stages the bump");
+    let inventoried_claims = DEPENDENCY_SNIPPETS
+        .iter()
+        .map(|(_, packages)| packages.len())
+        .sum::<usize>()
+        + TOOL_VERSION_SNIPPETS
+            .iter()
+            .map(|(_, count)| count)
+            .sum::<usize>();
+    assert_eq!(
+        changes.len(),
+        inventoried_claims,
+        "a manifest bump restates every inventoried claim: {changes:?}"
+    );
+    let restated: BTreeSet<_> = changes.iter().map(|change| change.path).collect();
+    let inventoried: BTreeSet<_> = stale.keys().copied().collect();
+    assert_eq!(
+        restated, inventoried,
+        "every inventoried document is written"
+    );
+    for change in &changes {
+        let expected = if change.claim.contains("dependency") {
+            bumped.dependency_line()
+        } else {
+            bumped.to_string()
+        };
+        assert_eq!(change.to, expected, "{change} states the bumped version");
+    }
+
+    let staged = fixture.snapshot();
+    assert_eq!(
+        versions::validate(bumped, &staged, true),
+        Vec::<String>::new(),
+        "the release PR accepts what the writer wrote"
+    );
+    assert!(
+        versions::validate(bumped, &stale, true)
+            .iter()
+            .any(|error| error.contains(&format!("Cargo.toml releases {bumped}"))),
+        "the release PR rejects the pre-generation copy against the bumped manifest"
+    );
+    assert!(
+        versions::validate(bumped, &stale, false)
+            .iter()
+            .any(|error| error.contains("current docs describe")),
+        "a manifest a minor ahead rejects the stale copy outside release-PR strictness too"
+    );
+
+    let again = versions::stage_release_docs(fixture.root(), bumped).expect("stages again");
+    assert!(again.is_empty(), "a second run changes nothing: {again:?}");
+    assert_eq!(
+        fixture.snapshot(),
+        staged,
+        "a second run leaves every document byte-identical"
+    );
+}
+
+#[test]
+fn generation_moves_only_the_claim_spans_and_not_historical_prose() {
+    let released =
+        versions::workspace_version(&versions::repo_root()).expect("reads workspace version");
+    let bumped = released.next_minor();
+    let fixture = Fixture::new(bumped);
+
+    // Prose quoting the version being replaced, in the shapes a
+    // whole-document search-and-replace would rewrite: the released
+    // dependency requirement, a released tool version in a JSON object that
+    // is not a `tool` object, and the release's own name.
+    let history = format!(
+        "\n## History (fixture)\n\nAnimSmith {released} is the release this page was written \
+         for. Its manifests read `animsmith-core = \"{line}\"`, and a report from the {line} \
+         line carried `\"generator\": {{ \"name\": \"animsmith\", \"version\": \"{released}\" }}`.\n",
+        line = released.dependency_line(),
+    );
+    for path in ["docs/embedding.md", "docs/output.md"] {
+        fixture.write(path, &format!("{}{history}", fixture.read(path)));
+    }
+
+    let changes = versions::stage_release_docs(fixture.root(), bumped).expect("stages the bump");
+    assert!(!changes.is_empty(), "the fixture had claims to restate");
+    for path in ["docs/embedding.md", "docs/output.md"] {
+        let content = fixture.read(path);
+        assert!(
+            content.ends_with(&history),
+            "{path}: the historical paragraph survives generation verbatim:\n{}",
+            &content[content.len().saturating_sub(history.len() * 2)..]
+        );
+    }
+    assert!(
+        fixture.read("docs/embedding.md").contains(&format!(
+            "animsmith-core = \"{}\"",
+            bumped.dependency_line()
+        )),
+        "the current dependency claim still moved"
+    );
+    assert_eq!(
+        versions::validate(bumped, &fixture.snapshot(), true),
+        Vec::<String>::new(),
+        "a historical paragraph is not a current-version claim"
+    );
+}
+
+#[test]
+fn a_nested_version_belongs_to_its_own_object() {
+    let released =
+        versions::workspace_version(&versions::repo_root()).expect("reads workspace version");
+    let bumped = released.next_minor();
+    let fixture = Fixture::new(bumped);
+
+    // A `version` one level down is another object's claim. It is written
+    // before the tool's own, so a reader that took the first `version` it
+    // saw inside the object would read and rewrite this one.
+    let decoy = "\"source\": { \"revision\": null, \"version\": \"9.9.9\" }, ";
+    let tutorial = fixture.read("docs/mixamo-tutorial.md").replacen(
+        "\"name\": \"animsmith\"",
+        &format!("{decoy}\"name\": \"animsmith\""),
+        1,
+    );
+    fixture.write("docs/mixamo-tutorial.md", &tutorial);
+
+    versions::stage_release_docs(fixture.root(), bumped).expect("stages the bump");
+    let staged = fixture.read("docs/mixamo-tutorial.md");
+    assert!(
+        staged.contains("\"version\": \"9.9.9\""),
+        "the nested object keeps its own version"
+    );
+    assert!(
+        staged.contains(&format!(
+            "\"name\": \"animsmith\", \"version\": \"{bumped}\""
+        )),
+        "the tool object's own version is the claim that moved"
+    );
+    assert_eq!(
+        versions::validate(bumped, &fixture.snapshot(), true),
+        Vec::<String>::new(),
+        "the tool object still states one release"
+    );
+}
+
+#[test]
+fn staging_refuses_a_version_outside_the_release_window() {
+    let released =
+        versions::workspace_version(&versions::repo_root()).expect("reads workspace version");
+    let fixture = Fixture::new(released);
+    let before = fixture.snapshot();
+
+    for refused in [
+        Version {
+            patch: released.patch + 2,
+            ..released
+        },
+        released.next_minor().next_minor(),
+        Version {
+            major: released.major + 1,
+            minor: 0,
+            patch: 0,
+        },
+    ] {
+        let error = versions::stage_release_docs(fixture.root(), refused)
+            .expect_err("a version outside the release window is refused");
+        assert!(
+            error.contains(&refused.to_string()),
+            "the refusal names the requested version: {error}"
+        );
+        assert_eq!(
+            fixture.snapshot(),
+            before,
+            "a refused version writes nothing"
+        );
+    }
+
+    for accepted in [released, released.next_patch(), released.next_minor()] {
+        versions::stage_release_docs(fixture.root(), accepted)
+            .expect("the manifest version and its next patch and minor are stageable");
+        versions::stage_release_docs(fixture.root(), released).expect("restores the fixture");
+    }
+    assert_eq!(
+        fixture.snapshot(),
+        before,
+        "staging back to the manifest version restores the documents"
+    );
 }

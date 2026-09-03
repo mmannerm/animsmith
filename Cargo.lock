@@ -142,6 +142,8 @@ dependencies = [
  "glam",
  "libm",
  "pulldown-cmark",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

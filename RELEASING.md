@@ -34,14 +34,23 @@ shipping is riskier than changing.
    and crate READMEs, `docs/`, `examples/`, and current version/status
    claims. Preserve clearly historical references. Stage the intended release
    line in the dependency snippets and current `tool.version` examples before
-   dispatch if convenient: the `release_version_docs` workspace test accepts
-   exactly the next patch or minor while `main` still carries the previous
-   manifest version. On the generated `release-plz-*` branch the same test
-   requires every current version claim to equal the bumped workspace manifest.
-   It deliberately ignores `CHANGELOG.md`, this completed bootstrap, and
-   roadmap history. The dispatch job checks that generated branch itself in
-   strict mode before succeeding, because GitHub does not initially trigger PR
-   workflows for a PR created with the default `GITHUB_TOKEN`.
+   dispatch:
+
+   ```console
+   cargo run -p animsmith --example stage_release_docs -- --version <next>
+   ```
+
+   That rewrites every claim the `release_version_docs` workspace test reads,
+   and nothing else: it edits only the located spans, so a historical version
+   on the same page stays. The test accepts exactly the next patch or minor
+   while `main` still carries the previous manifest version, and the example
+   refuses any other version. On the generated `release-plz-*` branch the same
+   test requires every current version claim to equal the bumped workspace
+   manifest. Both deliberately ignore `CHANGELOG.md`, this completed
+   bootstrap, and roadmap history. The dispatch job checks that generated
+   branch itself in strict mode before succeeding, because GitHub does not
+   initially trigger PR workflows for a PR created with the default
+   `GITHUB_TOKEN`.
 3. When `main` is ready to release, manually dispatch the release workflow:
 
    ```console
@@ -61,9 +70,23 @@ shipping is riskier than changing.
    push-triggered publication path always reads canonical repository history.
    If another change merges to `main` while the release PR is open, dispatch
    the workflow again before merging so the version and changelog include it.
-4. Review that PR. The glTF writer records the package version in
-   `asset.generator`, so regenerate and commit the version-stamped example
-   assets from the release PR branch before merging:
+4. Review that PR. If step 2 staged nothing, or staged a version release-plz
+   did not pick, restate the documentation from the bumped manifest on the
+   release PR branch itself and commit what it writes:
+
+   ```console
+   cargo run -p animsmith --example stage_release_docs
+   cargo test -p animsmith --test release_version_docs
+   ```
+
+   With no argument the example targets `[workspace.package] version`, so on a
+   correctly staged branch it reports no changes. The test is the fail-closed
+   check either way: on a `release-plz-*` branch it fails unless every current
+   version claim equals the bumped manifest.
+
+   The glTF writer records the package version in `asset.generator`, so
+   regenerate and commit the version-stamped example assets from the release
+   PR branch before merging:
 
    ```console
    cargo run -p animsmith --example gen_example_assets

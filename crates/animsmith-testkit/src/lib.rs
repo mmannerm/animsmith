@@ -20,10 +20,14 @@
 //! [`docs_markdown`] complete the set for the documentation gates: one
 //! reader each for the raw HTML the pages embed and the Markdown they
 //! are written in, so no two gates can disagree about what a page says.
+//! [`docs_versions`] closes the same loop for the current-version
+//! claims: the inventory it holds is what the release gate reads and
+//! what the `stage_release_docs` example writes.
 
 pub mod docs_html;
 pub mod docs_markdown;
 pub mod docs_transcripts;
+pub mod docs_versions;
 pub mod docs_visuals;
 
 use animsmith_core::model::*;
