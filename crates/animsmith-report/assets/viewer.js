@@ -644,7 +644,13 @@ function selectFinding(index) {
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
-  selectClip(f.clip);
+  const target = uniqueClip(f.clip);
+  if (!target) {
+    pairNotice.textContent = "Finding clip is missing or ambiguous; source selection and frame are unchanged.";
+    return;
+  }
+  pairNotice.textContent = "";
+  selectClip(null, data.clips.indexOf(target));
   if (f.time != null && clip && clip.duration > 0)
     setFrame((f.time / clip.duration) * (clip.frames - 1));
 }

@@ -1758,6 +1758,8 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         let Some(grid) = grids.grid(clip_index) else {
             continue;
         };
+        #[cfg(test)]
+        blend::work::note(|trace| trace.source(clip_index, &grid));
         let frames = grid.frame_count();
         let nb = doc.skeleton.bones.len();
         let sampled_positions = || {
@@ -1792,6 +1794,8 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
             clip_json["positions"] = json!(encoded);
         }
         if blend_preflight.as_mut().is_some_and(|p| p.grid(nb, frames)) {
+            #[cfg(test)]
+            blend::work::note(|trace| trace.retained.push((clip_index, Rc::as_ptr(&grid))));
             blend_grids.push((clip_index, clips_json.len(), Rc::clone(&grid)));
         }
         clips_json.push(clip_json);
@@ -1804,6 +1808,8 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
     }
 
     let blend_admission = blend_preflight.map(|p| p.finish(doc));
+    #[cfg(test)]
+    blend::work::note(|trace| trace.preflight_finished = blend_admission.is_some());
     if matches!(blend_admission, Some(Ok(()))) {
         for (clip_index, json_index, grid) in blend_grids {
             match blend::encode(&doc.clips[clip_index], &grid) {
@@ -1892,7 +1898,7 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
     // is disabled.
     let (pose, play_state, hint) = if options.evidence_only {
         (
-            "<p id=\"gl-notice\" class=\"pose-omitted\">Pose playback and illustrative blending are omitted in this evidence-only report. No sampled positions or local transforms are embedded.</p>".to_owned(),
+            "<p id=\"gl-notice\" class=\"notice\">Pose playback and illustrative blending are omitted in this evidence-only report. No sampled positions or local transforms are embedded.</p>".to_owned(),
             " disabled",
             "sampled poses were omitted · findings, coverage, and charts are the evidence \
              this report carries",

@@ -145,6 +145,17 @@ function run(parts, dataId, html, payload, options) {
   const omitted = new Set(settings.omitted || []);
   const nodes = {};
   for (const id of present) nodes[id] = new Node(id);
+  // Read actual static blend markup, so the DOM double cannot manufacture
+  // defaults or caption text that the Rust document failed to provide.
+  const weightMarkup = html.match(/<input[^>]*id="blend-weight"[^>]*>/)?.[0];
+  if (weightMarkup) {
+    for (const [,name,value] of weightMarkup.matchAll(/(min|max|step|value)="([^"]*)"/g)) {
+      nodes["blend-weight"].attrs[name] = value;
+      if (name === "value") nodes["blend-weight"].value = value;
+    }
+  }
+  const captionMarkup = html.match(/<p id="blend-caption"[^>]*>([^<]*)<\/p>/);
+  if (captionMarkup) nodes["blend-caption"].textContent = decodeEntities(captionMarkup[1]);
   if (!nodes[dataId]) throw new Error(`the generated document carries no #${dataId} payload`);
   nodes[dataId].textContent = JSON.stringify(payload);
   const listeners = {};
@@ -196,9 +207,19 @@ function run(parts, dataId, html, payload, options) {
     atob: value => { decoded.count++; return Buffer.from(value, "base64").toString("binary"); },
     Uint8Array, Float32Array, Buffer, Math, Map, Set, Array, Number, Object, Infinity, JSON, console,
   };
+  const allocations = [];
+  if (settings.observeAllocations) {
+    for (const Type of [Uint8Array, Float32Array, Float64Array, DataView]) {
+      context[Type.name] = new Proxy(Type, {construct(target, args) {
+        const value = Reflect.construct(target, args);
+        allocations.push({kind: target.name, bytes: value.byteLength});
+        return value;
+      }});
+    }
+  }
   vm.createContext(context);
   vm.runInContext(`${parts.shared}\n${parts.viewer}`, context);
-  return { nodes, root, listeners, context, charts, hash, media, settings, clock, decoded };
+  return { nodes, root, listeners, context, charts, hash, media, settings, clock, decoded, allocations };
 }
 
 // One animation frame, `seconds` after the last one. Returns how many
@@ -2526,6 +2547,35 @@ console.log("report viewer harness passed");
 
 // ---- V1 illustrative blend: independent Rust binary64 geometry oracle --
 const goldenBundle = JSON.parse(fs.readFileSync(`${generatedIn}/blend-goldens.json`, "utf8"));
+const requiredFixtures = ["rotating-parent", "missing-channels-unequal-grids", "quaternion-hemispheres", "affine-signed-scales", "deep-small", "deep-large"];
+if (JSON.stringify(goldenBundle.cases.map(c=>c.name).sort()) !== JSON.stringify(requiredFixtures.sort())) throw new Error("golden fixture membership changed");
+for (const fixture of goldenBundle.cases) {
+  const membership = fixture.samples.map(s=>`${s.phase}/${s.weight}`).sort();
+  const required = [0,0.375,1].flatMap(phase=>[0,0.25,0.5,0.75,1].map(weight=>`${phase}/${weight}`)).sort();
+  if (JSON.stringify(membership)!==JSON.stringify(required)) throw new Error(`${fixture.name}: missing or duplicate phase/weight coverage`);
+}
+const BLEND_CAPTION = "Engine-agnostic illustrative blend of sampled local transforms (nlerp rotations). Normalized phase, not a time warp. Not Bevy, Unity, Unreal or Godot runtime evidence.";
+const BLEND_BUDGET_NOTICE = "Illustrative blending omitted: added local-transform data exceeds the report blend budget. Source playback and findings remain available. Select fewer clips to include blending.";
+const unavailableBlend = reason => `Illustrative blend unavailable for the selected clips: ${reason}. Source findings remain available.`;
+function sourceSnapshot(state) {
+  return vm.runInContext('JSON.stringify({clips:data.clips.map(c=>({positions:c.positions,pos:Array.from(c.pos||[])})),findings:data.findings})', state.context);
+}
+function expectedSourceSnapshot(payload) {
+  return JSON.stringify({clips:payload.clips.map(c=>{
+    const bytes=Buffer.from(c.positions||"","base64");
+    return {positions:c.positions,pos:Array.from({length:bytes.length/4},(_,i)=>bytes.readFloatLE(i*4))};
+  }),findings:payload.findings});
+}
+function assertGoldenPositions(got, expected, bones, label) {
+  if(got.length!==bones || expected.length!==bones) throw new Error(`${label}: incomplete joint output/reference`);
+  got.forEach((point,bone)=>{
+    if(point.length!==3 || expected[bone].length!==3) throw new Error(`${label}: incomplete xyz output/reference`);
+    point.forEach((value,c)=>{
+      const reference=expected[bone][c];
+      if(!Number.isFinite(value) || !Number.isFinite(reference) || Math.abs(value-reference)>1e-5+1e-5*Math.abs(reference)) throw new Error(`${label}: bone=${bone} component=${c}: ${value} != ${reference}`);
+    });
+  });
+}
 function enableBlend(state) {
   state.nodes["blend-enable"].checked = true;
   state.nodes["blend-enable"].listeners.change();
@@ -2542,13 +2592,18 @@ for (const fixture of goldenBundle.cases) {
   const html = fs.readFileSync(`${generatedIn}/${fixture.html}`, "utf8");
   const parts = singleReportParts(html), payload = JSON.parse(parts.payload);
   if (payload.blend.kind !== "sampled-local-trs-blend-v1") throw new Error("missing versioned presentation contract");
-  const originals = payload.clips.map(c => c.positions);
-  const findings = JSON.stringify(payload.findings);
   const state = runSingle(parts, html, payload, {hash: `#with=${encodeURIComponent(payload.clips[1].name)}`, styles: tokenStyles(themedTokens)});
   state.nodes.gl.clientWidth = 900;
+  const originals = expectedSourceSnapshot(payload);
+  if(sourceSnapshot(state)!==originals) throw new Error("selection changed viewer-owned source authority");
   if (state.decoded.count !== 4 || state.nodes["blend-controls"].hidden || state.nodes["blend-enable"].disabled) throw new Error("admitted selected pair lacks validated blend controls");
   enableBlend(state);
   if (state.decoded.count !== 4) throw new Error("enabling blend redecoded selected locals");
+  if (state.nodes["blend-weight"].value!=="0.5" || state.nodes["blend-weight"].attrs.min!=="0" || state.nodes["blend-weight"].attrs.max!=="1") throw new Error("weight markup lost its default/range");
+  const untouched = repaint(state);
+  const defaultExpected = fixture.samples.find(s=>s.phase===0 && s.weight===0.5);
+  assertGoldenPositions(blendJointPositions(untouched,untouched.passes[2]),defaultExpected.expected,payload.bones.length,`${fixture.name}: untouched default`);
+  if(state.nodes["blend-caption"].hidden || state.nodes["blend-caption"].textContent!==BLEND_CAPTION || !state.nodes["blend-status"].textContent.endsWith("weight 0.500")) throw new Error("successful blend hides or changes the required caption/default");
   let camera;
   for (const sample of fixture.samples) {
     state.nodes.scrub.value = String(sample.phase * (payload.clips[0].frames - 1));
@@ -2558,10 +2613,7 @@ for (const fixture of goldenBundle.cases) {
     if (drawn.passes.length !== 3) throw new Error(`${fixture.name}: requested blend omitted: ${state.nodes["blend-status"].textContent}`);
     if(state.nodes.gl.style.aspectRatio!=="2 / 1") throw new Error("third pane narrows existing source viewport proportions");
     const got = blendJointPositions(drawn, drawn.passes[2]);
-    got.forEach((point, bone) => point.forEach((value, c) => {
-      const reference = sample.expected[bone][c];
-      if (Math.abs(value-reference) > 1e-5+1e-5*Math.abs(reference)) throw new Error(`${fixture.name} phase=${sample.phase} weight=${sample.weight} bone=${bone} component=${c}: ${value} != ${reference}`);
-    }));
+    assertGoldenPositions(got,sample.expected,payload.bones.length,`${fixture.name} phase=${sample.phase} weight=${sample.weight}`);
     // Endpoints bypass local FK and use exact source coordinates.
     if (sample.weight === 0 || sample.weight === 1) {
       const source = blendJointPositions(drawn, drawn.passes[sample.weight]);
@@ -2577,17 +2629,16 @@ for (const fixture of goldenBundle.cases) {
     if (drawn.passes[2].draws.some(d => d.mode === drawn.LINE_STRIP)) throw new Error("invented full blended trail");
     const frames = labelFrames(state);
     if (JSON.stringify(frames) !== JSON.stringify([sample.frame_a,sample.frame_b])) throw new Error("wrong independently mapped source frames");
-    if (!state.nodes["blend-status"].textContent.includes(`weight ${sample.weight.toFixed(3)}`)) throw new Error("missing weight disclosure");
+    const status = `${payload.clips[0].name} ${sample.time_a.toFixed(3)}s / ${payload.clips[0].duration.toFixed(3)}s (frame ${sample.frame_a}) · ${payload.clips[1].name} ${sample.time_b.toFixed(3)}s / ${payload.clips[1].duration.toFixed(3)}s (frame ${sample.frame_b}) · weight ${sample.weight.toFixed(3)}`;
+    if (state.nodes["blend-status"].textContent!==status) throw new Error("blend status lost source identities, actual sample frames/times or weight");
   }
   if (state.decoded.count !== 4) throw new Error("phase/weight/redraw redecoded local streams");
-  if (JSON.stringify(payload.clips.map(c=>c.positions)) !== JSON.stringify(originals) || JSON.stringify(payload.findings) !== findings) throw new Error("blending changed source authority");
-  // A finite-input chain may overflow while blending: retire the old third
-  // pane immediately, then allow a later valid endpoint to restore it.
-  vm.runInContext('localCache.get(clip).fill(3.4028234663852886e38); localCache.get(withClip).fill(3.4028234663852886e38)', state.context);
-  setWeight(state, 0.5);
-  if (repaint(state).passes.length !== 2 || !state.nodes["blend-status"].textContent.includes("unavailable")) throw new Error("failed blend left stale third pane");
-  setWeight(state,0);
-  if (repaint(state).passes.length !== 3) throw new Error("valid source endpoint did not recover");
+  if (sourceSnapshot(state)!==originals) throw new Error("blending changed viewer-owned source authority");
+  for (const [input, endpoint] of [[-2,0],[2,1]]) {
+    setWeight(state,input);
+    const drawn=repaint(state);
+    if(JSON.stringify(blendJointPositions(drawn,drawn.passes[2]))!==JSON.stringify(blendJointPositions(drawn,drawn.passes[endpoint]))) throw new Error("weight outside [0,1] did not clamp to the source endpoint");
+  }
 }
 
 // Selected-local refusals are distinct from aggregate omission; neither drops
@@ -2599,16 +2650,24 @@ for (const mutate of [
   p=>p.blend.raw_bytes++, p=>p.blend.base64_bytes++, p=>p.bones[0].parent=0,
   p=>p.clips[0].locals=p.clips[0].locals.slice(4),
   p=>p.clips[0].frames=Number.MAX_SAFE_INTEGER,
-  p=>{p.blend.omission="aggregate budget exceeded"},
+  p=>{p.blend.omission=BLEND_BUDGET_NOTICE},
 ]) {
   const payload=JSON.parse(JSON.stringify(blendPayload)); mutate(payload);
   // A source count mutation is supplied with its unchanged tiny source stream:
   // do not scrub it; the added path must refuse before touching local data.
-  const state=runSingle(blendParts,blendHtml,payload,{hash:`#with=${encodeURIComponent(payload.clips[1].name)}`});
+  const state=runSingle(blendParts,blendHtml,payload,{hash:`#with=${encodeURIComponent(payload.clips[1].name)}`,observeAllocations:true});
+  const originals=expectedSourceSnapshot(payload);
+  if(sourceSnapshot(state)!==originals) throw new Error("refusal changed viewer-owned source authority before interaction");
   enableBlend(state);
+  // Source decode owns one byte/float buffer per clip. Each source upload
+  // owns its vertex buffer and camera matrix; no other typed storage is due.
+  const counts=Object.fromEntries(["Uint8Array","Float32Array","Float64Array","DataView"].map(kind=>[kind,state.allocations.filter(a=>a.kind===kind).length]));
+  if(counts.Uint8Array!==payload.clips.length || counts.Float32Array!==payload.clips.length+2*state.nodes.gl.gl.buffers.length || counts.Float64Array!==0 || counts.DataView!==0) throw new Error("aggregate refusal allocated local/FK storage");
+  if(sourceSnapshot(state)!==originals) throw new Error("aggregate refusal changed viewer-owned source authority");
+  if(payload.blend.omission===BLEND_BUDGET_NOTICE && state.nodes["blend-status"].textContent!==BLEND_BUDGET_NOTICE) throw new Error("aggregate budget notice changed");
   if (state.decoded.count!==2 || repaint(state).passes.length!==2 || !state.nodes["blend-controls"].hidden || !state.nodes["blend-enable"].disabled) throw new Error("invalid aggregate authority decoded locals, offered blending or hid source playback");
 }
-for (const value of [NaN, Infinity, 0, 1e-20, 1.001]) {
+for (const value of [NaN, Infinity, 0, 1e-20, 1.001, 1.0002, 0.9998, Math.fround(1.0001), Math.fround(0.9999)]) {
   const payload=JSON.parse(JSON.stringify(blendPayload));
   const raw=Buffer.from(payload.clips[1].locals,"base64");
   raw.writeFloatLE(0,12);raw.writeFloatLE(0,16);raw.writeFloatLE(0,20);raw.writeFloatLE(value,24);
@@ -2617,6 +2676,19 @@ for (const value of [NaN, Infinity, 0, 1e-20, 1.001]) {
   enableBlend(state);
   if (repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("unavailable") || !state.nodes["blend-controls"].hidden || !state.nodes["blend-caption"].hidden) throw new Error("invalid local quaternion offered or drew a blend");
 }
+// The nearest representable binary32 values inside each side of the
+// quaternion admission boundary stay admissible (outside neighbors above).
+for (const [boundary,offset] of [[1.0001,-1],[0.9999,1]]) {
+  const scalar=Buffer.alloc(4);scalar.writeFloatLE(boundary);scalar.writeUInt32LE(scalar.readUInt32LE()+offset);
+  const payload=JSON.parse(JSON.stringify(blendPayload));
+  const raw=Buffer.from(payload.clips[1].locals,"base64");
+  raw.writeFloatLE(0,12);raw.writeFloatLE(0,16);raw.writeFloatLE(0,20);scalar.copy(raw,24);
+  payload.clips[1].locals=raw.toString("base64");
+  const state=runSingle(blendParts,blendHtml,payload,{hash:`#with=${encodeURIComponent(payload.clips[1].name)}`});
+  enableBlend(state);
+  if(state.nodes["blend-controls"].hidden || repaint(state).passes.length!==3) throw new Error("inside quaternion admission neighbor refused");
+}
+
 // Controls appear only after the selected pair is admitted. An omitted clip
 // keeps its source pane and reason while controls are hidden; returning to a
 // valid pair restores controls without enabling the illustrative pane itself.
@@ -2626,24 +2698,32 @@ for (const value of [NaN, Infinity, 0, 1e-20, 1.001]) {
   const state=runSingle(blendParts,blendHtml,payload);
   if(!state.nodes["blend-controls"].hidden || state.decoded.count!==3) throw new Error("alone view offers blending or decodes locals");
   state.nodes["with-select"].value="2";state.nodes["with-select"].listeners.change();
-  if(!state.nodes["blend-controls"].hidden || !state.nodes["blend-enable"].disabled || repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("malformed sampled track")) throw new Error("omitted selected pair loses source view/reason or offers blending");
+  if(!state.nodes["blend-controls"].hidden || !state.nodes["blend-enable"].disabled || repaint(state).passes.length!==2 || state.nodes["blend-status"].textContent!==unavailableBlend("malformed sampled track")) throw new Error("omitted selected pair loses source view/reason or offers blending");
   state.nodes["with-select"].value="1";state.nodes["with-select"].listeners.change();
   if(state.nodes["blend-controls"].hidden || state.nodes["blend-enable"].disabled || !state.nodes["blend-weight"].disabled || repaint(state).passes.length!==2 || state.nodes["blend-status"].textContent.includes("unavailable")) throw new Error("valid pair did not restore optional controls and clear omission");
   const decoded=state.decoded.count;
   enableBlend(state);
   if(repaint(state).passes.length!==3 || state.decoded.count!==decoded) throw new Error("blend toggle decodes or cannot display admitted pair");
   state.nodes["with-select"].value="2";state.nodes["with-select"].listeners.change();
-  if(!state.nodes["blend-controls"].hidden || !state.nodes["blend-caption"].hidden || repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("malformed sampled track")) throw new Error("invalid selection retains blend controls, caption or geometry");
+  if(!state.nodes["blend-controls"].hidden || !state.nodes["blend-caption"].hidden || repaint(state).passes.length!==2 || state.nodes["blend-status"].textContent!==unavailableBlend("malformed sampled track")) throw new Error("invalid selection retains blend controls, caption or geometry");
   state.nodes["with-select"].value="";state.nodes["with-select"].listeners.change();
   if(!state.nodes["blend-controls"].hidden || repaint(state).passes.length!==1 || vm.runInContext('localCache.size',state.context)!==0) throw new Error("clearing pair retains controls, geometry or locals");
 }
 
 // Duplicate names are addressable by array identity through controls only.
 const duplicateCase=goldenBundle.cases.find(c=>c.name==="quaternion-hemispheres");
-const duplicateHtml=fs.readFileSync(`${generatedIn}/${duplicateCase.html}`,"utf8");
+let duplicateHtml=fs.readFileSync(`${generatedIn}/${duplicateCase.html}`,"utf8");
 const duplicateParts=singleReportParts(duplicateHtml);
 const duplicates=JSON.parse(duplicateParts.payload);
 duplicates.clips[1].name=duplicates.clips[0].name;
+// Give each root-path frame distinct coordinates, so a wrong name/frame
+// lookup cannot pass just because this rotation fixture has a stationary root.
+duplicateHtml=duplicateHtml.replace(/<figure class="chart"[\s\S]*?<\/figure>/g,figure=>{
+  if(!figure.includes('data-kind="rootpath"')) return figure;
+  const index=Number(figure.match(/data-clipindex="(\d+)"/)[1]);
+  const points=Array.from({length:duplicates.clips[index].frames},(_,frame)=>`${1000*index+frame*7},${1000*index+frame*11}`);
+  return figure.replace(/(class="pathpoints">)[^<]*/,`$1${points.join(";")}`);
+});
 const duplicateState=runSingle(duplicateParts,duplicateHtml,duplicates,{hash:`#clip=${encodeURIComponent(duplicates.clips[0].name)}&with=${encodeURIComponent(duplicates.clips[0].name)}`});
 if (duplicateState.nodes["with-select"].value!=="" || !duplicateState.nodes["pair-notice"].textContent.includes("ambiguous")) throw new Error("ambiguous deep link silently selected first duplicate");
 duplicateState.nodes["with-select"].value="1";duplicateState.nodes["with-select"].listeners.change();enableBlend(duplicateState);
@@ -2660,12 +2740,38 @@ for(const chart of duplicateGaitCharts) {
   if(chart.query[".playhead"].attrs.x1!==expected) throw new Error("duplicate-name chart follows the other source clip frame");
 }
 
+const duplicateRootCharts=duplicateState.charts.filter(c=>c.dataset.kind==="rootpath");
+if(duplicateRootCharts.length!==2) throw new Error("duplicate fixture lacks both root-path charts");
+for(const chart of duplicateRootCharts) {
+  const index=Number(chart.dataset.clipindex), frame=duplicateFrames[index];
+  const dot=chart.query[".pathdot"];
+  if(chart.style.display==="none" || dot.attrs.display==="none" || dot.attrs.cx!==String(1000*index+frame*7) || dot.attrs.cy!==String(1000*index+frame*11)) throw new Error("duplicate root-path dot follows the wrong clip/frame");
+}
 duplicateState.nodes["clip-select"].value="1";duplicateState.nodes["clip-select"].listeners.change();
 if(duplicateState.nodes["with-select"].value!=="") throw new Error("selecting pair as primary did not clear pair");
+// Finding names cannot identify one of two duplicate clips. Refuse both a
+// click and deep link without applying its source time to an unrelated clip.
+{
+  const payload=JSON.parse(JSON.stringify(blendPayload));
+  payload.clips=["unrelated first","duplicate","duplicate","unique target"].map(name=>({...payload.clips[0],name}));
+  payload.blend.raw_bytes=payload.clips.reduce((sum,c)=>sum+c.frames*payload.bones.length*40,0);
+  payload.blend.base64_bytes=payload.clips.reduce((sum,c)=>sum+c.locals.length,0);
+  payload.findings=[{check:"fixture",severity:"warning",clip:"duplicate",bone:"child",time:0.75,message:"ambiguous source"},{check:"fixture",severity:"warning",clip:"unique target",time:0.5,message:"unique source"}];
+  for(const deep of [false,true]) {
+    const state=runSingle(blendParts,blendHtml,payload,{hash:"#clip=unique%20target&frame=1"});
+    const before=JSON.stringify({selection:state.nodes["clip-select"].value,frame:state.nodes.scrub.value,source:sourceSnapshot(state)});
+    if(deep) navigate(state,"#finding=0"); else state.nodes.findings.children[0].listeners.click();
+    const after=JSON.stringify({selection:state.nodes["clip-select"].value,frame:state.nodes.scrub.value,source:sourceSnapshot(state)});
+    if(before!==after || state.nodes["pair-notice"].textContent!=="Finding clip is missing or ambiguous; source selection and frame are unchanged.") throw new Error("ambiguous finding moved source selection/frame or lacks refusal notice");
+    state.nodes["clip-select"].value="0";state.nodes["clip-select"].listeners.change();
+    state.nodes.findings.children[1].listeners.click();
+    if(state.nodes["clip-select"].value!=="3" || Number(state.nodes.scrub.value)!==Math.round(0.5/payload.clips[3].duration*(payload.clips[3].frames-1)) || state.nodes["pair-notice"].textContent!=="") throw new Error("unique finding no longer selects its own clip/time and clears refusal");
+  }
+}
 for(const source of [singleEvidenceHtml,multiEvidenceHtml]) {
   const payload=JSON.parse(singleReportParts(source).payload);
   if(payload.blend || payload.clips.some(c=>c.locals!==undefined) || source.includes('id="blend-enable"') || source.includes('id="blend-caption"')) throw new Error("evidence-only document carries local authority or blend controls");
-  if(!source.includes("No sampled positions or local transforms are embedded.")) throw new Error("missing evidence-only local disclosure");
+  if(!source.includes('<p id="gl-notice" class="notice">Pose playback and illustrative blending are omitted in this evidence-only report. No sampled positions or local transforms are embedded.</p>') || !/\.notice\s*\{/.test(source)) throw new Error("missing or unstyled evidence-only local disclosure");
 }
 console.log("sampled-local-trs-blend-v1: 90 Rust-reference poses, admission and selection checks passed");
 
@@ -2686,15 +2792,50 @@ function resourcePayload(bones, counts) {
   payload.blend.base64_bytes=payload.clips.reduce((s,c)=>s+c.locals.length,0);
   return payload;
 }
+// An admitted pair can exceed binary32 only at an interior weight. Both
+// source child positions are zero: A has root sx=1e20/child tx=0, B has
+// sx=0/tx=1e20. At .5 the child x is .5e20*.5e20 ≈2.5e39.
+{
+  const payload=resourcePayload(2,[3,3]);
+  payload.clips.forEach((clip,index)=>{
+    const raw=Buffer.from(clip.locals,"base64");
+    for(let frame=0;frame<3;frame++) {
+      raw.writeFloatLE(index===0?1e20:0,(frame*2)*40+28);
+      raw.writeFloatLE(index===0?0:1e20,(frame*2+1)*40);
+    }
+    clip.locals=raw.toString("base64");
+    clip.positions=Buffer.alloc(3*2*12).toString("base64");
+  });
+  const state=runSingle(blendParts,blendHtml,payload,{hash:"#with=resource-1"});
+  const original=sourceSnapshot(state);
+  setWeight(state,0);enableBlend(state);
+  if(repaint(state).passes.length!==3) throw new Error("admitted overflow fixture rejected its finite source endpoint");
+  setWeight(state,0.5);
+  if(repaint(state).passes.length!==2 || state.nodes["blend-status"].textContent!==unavailableBlend("computed pose is not finite or representable as binary32")) throw new Error("interior binary32 overflow left stale geometry or lost its reason");
+  setWeight(state,1);
+  if(repaint(state).passes.length!==3 || sourceSnapshot(state)!==original) throw new Error("overflow recovery lost source endpoint/authority");
+}
+
 {
   const boundary=resourcePayload(1,[838857,3]);
   const state=runSingle(blendParts,blendHtml,boundary,{hash:"#with=resource-1"});
   enableBlend(state);
   if(repaint(state).passes.length!==3 || state.decoded.count!==4) throw new Error("inclusive local-record cap refused");
-  vm.runInContext('let blendMathCalls=0; const originalMath=Math; Math=Object.create(originalMath); Math.hypot=(...values)=>{blendMathCalls++;return originalMath.hypot(...values)}',state.context);
+  // Intentionally implementation-aware work instrumentation: selected reads,
+  // finite validation and quaternion work must depend on bones, not frames.
+  vm.runInContext(`let blendMathCalls=0, blendFiniteCalls=0, blendLocalReads=0;
+    const originalMath=Math, originalNumber=Number;
+    Math=Object.create(originalMath); Math.hypot=(...values)=>{blendMathCalls++;return originalMath.hypot(...values)};
+    Number=new Proxy(originalNumber,{get(target,key){if(key==="isFinite") return value=>{blendFiniteCalls++;return target.isFinite(value)};return target[key]}});
+    for (const [clip,values] of localCache) localCache.set(clip,new Proxy(values,{get(target,key,receiver){
+      if(typeof key==="string" && /^\\d+$/.test(key)) blendLocalReads++;
+      if(key===Symbol.iterator || typeof Array.prototype[key]==="function") return Array.prototype[key].bind(receiver);
+      return Reflect.get(target,key,target);
+    }}));`,state.context);
   const allocations=vm.runInContext('({world:blendWorld,output:blendOutput,local:blendLocal})',state.context);
   for(let i=0;i<8;i++) setWeight(state,(i+1)/10);
-  if(vm.runInContext('blendMathCalls',state.context)>8*20) throw new Error("repaint scans prior local frames instead of one O(bones) pose");
+  const work=vm.runInContext('({math:blendMathCalls,finite:blendFiniteCalls,reads:blendLocalReads})',state.context);
+  if(work.math>8*20 || work.finite>8*100 || work.reads>8*100) throw new Error("repaint scans/validates prior local frames instead of one O(bones) pose");
   const after=vm.runInContext('({world:blendWorld,output:blendOutput,local:blendLocal})',state.context);
   if(allocations.world!==after.world || allocations.output!==after.output || allocations.local!==after.local || state.decoded.count!==4) throw new Error("redraw reallocates FK buffers or decodes prior frames");
   // N+1 local records exceeds the raw cap with canonical base64 lengths.
@@ -2723,17 +2864,17 @@ for(const count of [4096,4097]) {
     // Array-identity resolution belongs to selection, not repaint. Make the
     // full clip array reject iteration/linear lookup while weight, phase,
     // camera redraw and playback advance the already selected pair.
-    vm.runInContext(`const savedClipMethods = new Map();
-      for (const method of ["indexOf", "find", "findIndex", "map", "filter", "forEach", "reduce", "some", "every", Symbol.iterator]) {
-        savedClipMethods.set(method, data.clips[method]);
-        data.clips[method] = () => { throw new Error("repaint traversed all clips"); };
-      }`,state.context);
+    vm.runInContext(`const originalClips=data.clips;
+      data.clips=new Proxy(originalClips,{get(target,key,receiver){
+        if(typeof key==="string" && /^\\d+$/.test(key)) throw new Error("repaint read the clip array");
+        return Reflect.get(target,key,receiver);
+      }});`,state.context);
     setWeight(state,0.25);
     state.nodes.scrub.value="1";state.nodes.scrub.listeners.input();
     repaint(state);
     state.nodes.gl.listeners.wheel({deltaY:12,preventDefault(){}});
     state.nodes.play.listeners.click();stepFrame(state,0);stepFrame(state,0.1);
-    vm.runInContext('for (const [method,original] of savedClipMethods) data.clips[method]=original',state.context);
+    vm.runInContext('data.clips=originalClips',state.context);
     state.nodes.scrub.value="0";state.nodes.scrub.listeners.input();
     // Choosing a new partner retains the primary decoded stream and evicts
     // the old partner. Playback continues from the same phase.

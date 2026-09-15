@@ -15,6 +15,10 @@ authority. It produces no finding, metric, animation export or engine-runtime
 conformance claim. The separate before/after comparison report keeps its
 existing source-pose and overlay behavior.
 
+A finding whose clip name is missing or ambiguous shows a refusal notice and
+leaves the source selection and frame unchanged. A uniquely named finding
+still selects its source clip and judged time.
+
 ### Samples and blend math
 
 Each included, admitted clip carries a dense local-transform stream alongside
