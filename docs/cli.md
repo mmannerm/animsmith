@@ -239,14 +239,28 @@ The transport drives the selected clip, and each half is shown at the frame
 nearest the transport's normalized phase in its own grid, with both source
 times labelled. That one frame is also where that clip's chart playhead and
 root-path dot sit, so a chart never reports a frame other than the one its
-pose is drawn at. The mapping is a presentation mapping between two
-timelines, not a retime and not a blend: it selects samples the checks
-already judged, nothing is resampled or interpolated, and the report makes no
-claim about what a runtime blend of the two would look like. An empty value,
-a name the document does not carry, and the selected clip's own name all mean
-the default, which is that clip alone. An evidence-only report has no pose
-grid to draw, so the omission notice stands where the two halves would and
-the pairing selects charts only.
+pose is drawn at. This source-phase mapping selects samples the checks
+already judged; it does not retime or resample authored clip time. An empty
+value, a missing or ambiguous name, and the selected clip's own name clear
+the pair. An evidence-only report has no sampled positions or local transforms
+to draw, so the omission notice replaces playback and the pairing selects
+charts only.
+
+With two clips selected, enable `illustrative blend` to add a third pane.
+The `weight` slider runs from the primary clip at 0 to the paired clip at 1,
+starting at 0.5. The pane blends their sampled local transforms and runs
+forward kinematics; it does not interpolate model-space joint positions.
+It is labelled **engine-agnostic illustrative blend**, not Bevy, Unity, Unreal
+or Godot runtime evidence. Both source frames/times and the weight remain
+visible. The phase still chooses the nearest frame independently in each grid,
+so unequal durations are paired by phase rather than source seconds.
+
+All panes share the source-based camera and existing orbit/zoom controls.
+Interior rotations can extend beyond the initial source bounds; zoom out if
+needed. Oversized added local data or malformed local samples show a blending
+omission reason without removing source findings or playback. The
+[HTML blend contract](output.md#html-report-source-poses-and-illustrative-blending)
+defines the math, limits and motion-data boundary.
 
 A key that is absent leaves that state as it is, so following one of those
 anchors inside an embedded, theme-pinned report does not un-pin it. A key that

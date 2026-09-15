@@ -1,6 +1,6 @@
 [package]
 name = "animsmith-report"
-description = "Self-contained offline HTML reports for animsmith: WebGL skeleton playback driven by the exact pose data the checks judged, plus SVG metric charts"
+description = "Offline HTML reports for animsmith: judged skeleton playback, illustrative local-transform blending, and SVG metric charts"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

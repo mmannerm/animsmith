@@ -105,11 +105,13 @@ The HTML report is a single self-contained file with no CDN dependency. It
 plays back the exact pose-grid frames judged by the checks, with foot/root
 trails, metric charts, and a clickable findings list. A second clip of the
 same file can play beside the first at a shared normalized phase, with both
-source times labelled, so a directional blend set is read side by side rather
-than one member at a time. It follows the reader's light or dark system theme,
+source times labelled. An optional third pane illustrates a local-transform
+blend of that pair; it is presentation, not engine-runtime evidence. It follows
+the reader's light or dark system theme,
 and a URL fragment can pin the theme, embed it in a page, or deep-link a clip,
-that pairing, a frame, or a finding. `--evidence-only` leaves the sampled poses
-out so the report can be shared where the source motion cannot.
+that pairing, a frame, or a finding. `--evidence-only` leaves sampled positions
+and local transforms out so the report can be shared where the source motion
+cannot.
 
 ## Checks
 

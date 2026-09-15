@@ -6,7 +6,9 @@
 //!
 //! The returned HTML is self-contained: CSS, JavaScript, findings, charts,
 //! and sampled pose data are embedded in the string. There is no runtime
-//! CDN dependency and no JavaScript-side resampling of the clip.
+//! CDN dependency and no JavaScript-side resampling of authored clip time.
+//! Source panes draw sampled Rust positions; the illustrative blend interpolates
+//! embedded sampled local transforms across blend weight and runs forward kinematics.
 //!
 //! # Quick start
 //!
@@ -26,7 +28,7 @@
 //!
 //! # Sharing a report without the motion
 //!
-//! [`ReportOptions::evidence_only`] leaves the sampled pose grid out of both
+//! [`ReportOptions::evidence_only`] leaves sampled positions and local transforms out of both
 //! report forms. The grid *is* the motion: it is the model-space joint
 //! position of every bone on every judged frame, so a full report of a
 //! licensed clip carries that clip. An evidence-only report keeps the
@@ -86,6 +88,7 @@
 //! selected one. The `with` control and the `with=NAME` fragment key both
 //! choose it; the empty value, a name the document does not carry, and the
 //! selected clip's own name all mean the default, which is that clip alone.
+//! Names must be unique for fragment selection; controls use clip array identity.
 //! The two poses share one canvas as two scissored halves, drawn through one
 //! camera fitted to both clips' bounds so they are at one scale, coloured by
 //! the report's own left/right tokens, and named by a key below the canvas
@@ -97,9 +100,22 @@
 //! and root-path dot sit at that same frame, so no surface of the document
 //! reports a frame other than the one it draws. The mapping is a
 //! presentation mapping between two timelines, not a retime — it selects
-//! samples the checks already judged, nothing is resampled, blended, or
-//! interpolated, and the report makes no claim about what a runtime blend of
-//! the two would look like.
+//! samples the checks already judged without resampling authored clip time.
+//!
+//! The optional illustrative third pane uses `sampled-local-trs-blend-v1`:
+//! componentwise binary64 translation/scale lerp, normalized shortest-hemisphere
+//! quaternion nlerp (retaining the second sign at zero dot), then full affine
+//! `T * R * S` forward kinematics over the same sampled local transforms.
+//! Weights 0 and 1 bypass this calculation and use exact source positions.
+//! It is engine-agnostic presentation, not a finding or runtime prediction.
+//! Invalid clips lose their complete local stream; aggregate budget excess
+//! omits all local streams while preserving source playback and findings.
+//! Added locals are capped at 32 MiB raw, 1024 bones, 4096 included clips and
+//! 65536 aggregate track records. These limits do not cap existing source data
+//! or sampling. The shared source camera can clip an interior pose; zoom out.
+//! See the [HTML report contract] for the limits and numerical boundaries.
+//!
+//! [HTML report contract]: https://github.com/mmannerm/animsmith/blob/main/docs/output.md#html-report-source-poses-and-illustrative-blending
 //!
 //! An evidence-only report carries no pose grid, so it has no halves to draw
 //! and renders the omission notice where they would be; the pairing still
@@ -119,6 +135,10 @@
 //! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
 //!
 #![warn(missing_docs)]
+
+mod blend;
+#[cfg(test)]
+mod blend_golden;
 
 use animsmith_core::metrics::{
     GaitMemberPhase, GaitPhaseEvidence, GaitPhaseOutcome, MetricGrids,
@@ -200,7 +220,7 @@ pub struct ComparisonPreflight {
 /// own clip.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReportOptions {
-    /// Omit the sampled pose grid from the embedded data and mark the report
+    /// Omit sampled positions and local transforms from embedded data and mark the report
     /// `evidence_only`.
     ///
     /// The grid is the motion — every bone's model-space position on every
@@ -1719,6 +1739,10 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         (Role::RightFoot, "right_foot"),
     ];
 
+    let mut blend_preflight = (!options.evidence_only).then(blend::Preflight::default);
+    let mut blend_grids = Vec::new();
+    let mut blend_raw_bytes = 0usize;
+    let mut blend_base64_bytes = 0usize;
     let mut clips_json: Vec<Value> = Vec::new();
     // The cross-clip figures come first: a group figure is evidence about
     // its members rather than about one clip, so it opens the Charts column
@@ -1728,9 +1752,14 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         if clip_filter.is_some_and(|f| f != clip.name) {
             continue;
         }
+        if let Some(preflight) = &mut blend_preflight {
+            preflight.include(clip);
+        }
         let Some(grid) = grids.grid(clip_index) else {
             continue;
         };
+        #[cfg(test)]
+        blend::work::note(|trace| trace.source(clip_index, &grid));
         let frames = grid.frame_count();
         let nb = doc.skeleton.bones.len();
         let sampled_positions = || {
@@ -1764,13 +1793,34 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         if let Some(encoded) = encoded_positions(options, sampled_positions) {
             clip_json["positions"] = json!(encoded);
         }
+        if blend_preflight.as_mut().is_some_and(|p| p.grid(nb, frames)) {
+            #[cfg(test)]
+            blend::work::note(|trace| trace.retained.push((clip_index, Rc::as_ptr(&grid))));
+            blend_grids.push((clip_index, clips_json.len(), Rc::clone(&grid)));
+        }
         clips_json.push(clip_json);
         charts_html.push_str(&clip_charts(
-            &clip.name,
+            Subject::Clip(&clip.name, clips_json.len() - 1),
             grid.as_ref(),
             roles,
             &clip_contract(checks, &clip.name),
         ));
+    }
+
+    let blend_admission = blend_preflight.map(|p| p.finish(doc));
+    #[cfg(test)]
+    blend::work::note(|trace| trace.preflight_finished = blend_admission.is_some());
+    if matches!(blend_admission, Some(Ok(()))) {
+        for (clip_index, json_index, grid) in blend_grids {
+            match blend::encode(&doc.clips[clip_index], &grid) {
+                Ok(locals) => {
+                    blend_raw_bytes += grid.frame_count() * grid.bone_count() * 40;
+                    blend_base64_bytes += locals.len();
+                    clips_json[json_index]["locals"] = json!(locals);
+                }
+                Err(reason) => clips_json[json_index]["blend_omission"] = json!(reason),
+            }
+        }
     }
 
     let findings_json: Vec<Value> = checks
@@ -1816,7 +1866,7 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         })
         .collect();
 
-    let data = json!({
+    let mut data = json!({
         "file": doc.source.path,
         "profile": roles.profile,
         "evidence_only": options.evidence_only,
@@ -1832,6 +1882,15 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         "predictions": predictions_json,
     });
 
+    if let Some(admission) = blend_admission {
+        data["blend"] = json!({
+            "kind": "sampled-local-trs-blend-v1",
+            "raw_bytes": blend_raw_bytes,
+            "base64_bytes": blend_base64_bytes,
+            "omission": admission.err(),
+        });
+    }
+
     // Everything the omitted pose grid changes about this document, decided
     // once. The colour key belongs to the canvas, so a document that renders
     // the omission notice instead carries no key to name halves it does not
@@ -1839,18 +1898,21 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
     // is disabled.
     let (pose, play_state, hint) = if options.evidence_only {
         (
-            pose_surface("gl", true),
+            "<p id=\"gl-notice\" class=\"notice\">Pose playback and illustrative blending are omitted in this evidence-only report. No sampled positions or local transforms are embedded.</p>".to_owned(),
             " disabled",
             "sampled poses were omitted · findings, coverage, and charts are the evidence \
              this report carries",
         )
     } else {
         (
-            format!("{}\n<p id=\"pane-labels\"></p>", pose_surface("gl", false)),
+            format!(
+                "{}\n<p id=\"pane-labels\"></p><div id=\"blend-controls\" hidden><label><input id=\"blend-enable\" type=\"checkbox\"> illustrative blend</label> <label for=\"blend-weight\">weight</label> <input id=\"blend-weight\" type=\"range\" min=\"0\" max=\"1\" step=\"0.001\" value=\"0.5\"></div><p id=\"blend-caption\" hidden>Engine-agnostic illustrative blend of sampled local transforms (nlerp rotations). Normalized phase, not a time warp. Not Bevy, Unity, Unreal or Godot runtime evidence.</p><p id=\"blend-status\" aria-live=\"polite\"></p>",
+                pose_surface("gl", false)
+            ),
             "",
             "drag to orbit · wheel to zoom · with plays a second clip of this document beside \
-             the first at the same normalized phase · frames shown are exactly the grid the \
-             checks judged",
+             the first at the same normalized phase · source panes show exactly the grid the \
+             checks judged · the optional illustrative pane blends sampled local transforms",
         )
     };
     let shared_js = shared_runtime();
@@ -1874,12 +1936,13 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
            <div id=\"controls\">\n\
              <label for=\"clip-select\">clip</label>\n\
              <select id=\"clip-select\"></select>\n\
-             <label for=\"with-select\">with</label>\n\
+             <label id=\"with-label\" for=\"with-select\">with</label>\n\
              <select id=\"with-select\"></select>\n\
              <button id=\"play\" aria-label=\"Play the clip\"{play_state}>▶</button>\n\
              <input type=\"range\" id=\"scrub\" min=\"0\" value=\"0\" step=\"1\">\n\
              <span id=\"time\"></span>\n\
            </div>\n\
+           <p id=\"pair-notice\" aria-live=\"polite\"></p>\n\
            {pose}\n\
            <p class=\"hint\">{hint}</p>\n\
          </section>\n\
@@ -1954,7 +2017,7 @@ q('evaluation').textContent=JSON.stringify(d.evaluation,null,2);
 /// the `.playhead`/`.pathdot` elements the viewer syncs are part of that
 /// contract too.
 fn clip_charts(
-    clip_name: &str,
+    subject: Subject<'_>,
     grid: &PoseGrid,
     roles: &ResolvedRoles,
     contract: &ClipContract,
@@ -1973,7 +2036,7 @@ fn clip_charts(
         let r: Vec<f64> = (0..frames).map(|f| rel_y(f, right)).collect();
         let d: Vec<f64> = l.iter().zip(&r).map(|(a, b)| a - b).collect();
         out.push_str(&line_chart(
-            clip_name,
+            subject,
             "gait",
             "foot height relative to hips",
             &contract.gait_guidance(false),
@@ -2009,7 +2072,7 @@ fn clip_charts(
             .map(|f| grid.model_position(f, root).z as f64)
             .collect();
         out.push_str(&path_chart(
-            clip_name,
+            subject,
             "root path (top-down)",
             &xs,
             &zs,
@@ -2526,7 +2589,7 @@ struct AxisLabel {
 #[derive(Clone, Copy)]
 enum Subject<'a> {
     /// One clip of the rendered document.
-    Clip(&'a str),
+    Clip(&'a str, usize),
     /// One declared gait group, drawn from its members.
     Group(&'a str),
 }
@@ -2535,7 +2598,7 @@ impl<'a> Subject<'a> {
     /// The name a caption and an `aria-label` open with.
     fn name(self) -> &'a str {
         match self {
-            Subject::Clip(name) | Subject::Group(name) => name,
+            Subject::Clip(name, _) | Subject::Group(name) => name,
         }
     }
 
@@ -2551,7 +2614,9 @@ impl<'a> Subject<'a> {
     /// a name is a string, and `data-group` is the key that joins the two.
     fn attribute(self) -> String {
         match self {
-            Subject::Clip(name) => format!("data-clip=\"{}\"", esc(name)),
+            Subject::Clip(name, index) => {
+                format!("data-clip=\"{}\" data-clipindex=\"{index}\"", esc(name))
+            }
             Subject::Group(name) => format!("data-group=\"{}\"", esc(name)),
         }
     }
@@ -3034,7 +3099,7 @@ fn joint_extent(points: &[(f64, f64)]) -> Option<((f64, f64), (f64, f64))> {
 /// line at the bottom of the plot — the picture stops showing the thing
 /// the reader came for.
 fn line_chart(
-    clip: &str,
+    subject: Subject<'_>,
     kind: &'static str,
     title: &'static str,
     guidance: &str,
@@ -3176,7 +3241,7 @@ fn line_chart(
         ),
     };
     Chart {
-        subject: Subject::Clip(clip),
+        subject,
         kind,
         title,
         description: format!("{title} over frames 0 to {last_frame}: {described}"),
@@ -3194,7 +3259,13 @@ fn line_chart(
     .render()
 }
 
-fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance: &str) -> String {
+fn path_chart(
+    subject: Subject<'_>,
+    title: &'static str,
+    xs: &[f64],
+    zs: &[f64],
+    guidance: &str,
+) -> String {
     if xs.is_empty() {
         return String::new();
     }
@@ -3213,7 +3284,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance:
         .collect();
     let Some(((min_x, max_x), (min_z, max_z))) = joint_extent(&plotted) else {
         return Chart {
-            subject: Subject::Clip(clip),
+            subject,
             kind: "rootpath",
             title,
             description: format!(
@@ -3347,7 +3418,7 @@ fn path_chart(clip: &str, title: &'static str, xs: &[f64], zs: &[f64], guidance:
     };
 
     Chart {
-        subject: Subject::Clip(clip),
+        subject,
         kind: "rootpath",
         title,
         description: if stationary {

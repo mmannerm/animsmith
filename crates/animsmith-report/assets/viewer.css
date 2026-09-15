@@ -83,3 +83,7 @@ path.series-member-5 { stroke-dasharray: 1 4; }
 .axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
+#blend-controls { margin-top: 0.6rem; font-size: 0.8rem; }
+#blend-caption, #blend-status, #pair-notice { font-size: 0.78rem; margin-top: 0.5rem; color: var(--muted); }
+#blend-caption { color: var(--pass); }
+#pane-labels > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

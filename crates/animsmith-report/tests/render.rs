@@ -1983,7 +1983,7 @@ fn both_single_clip_forms_offer_pairing_and_only_a_full_one_names_the_two_halves
         // the word the label and the fragment key share.
         for (control, name) in [("clip-select", "clip"), ("with-select", "with")] {
             assert!(
-                html.contains(&format!("<label for=\"{control}\">{name}</label>")),
+                html.contains(&format!("for=\"{control}\">{name}</label>")),
                 "{kind}: {control} is named in the control row"
             );
         }
@@ -2006,7 +2006,8 @@ fn both_single_clip_forms_offer_pairing_and_only_a_full_one_names_the_two_halves
         "an evidence-only report renders neither the canvas nor a key to its halves"
     );
     assert!(
-        element_with_id(&evidence_html, "gl-notice").contains("Pose playback omitted"),
+        element_with_id(&evidence_html, "gl-notice")
+            .contains("Pose playback and illustrative blending are omitted"),
         "the omission notice stands where both panes would"
     );
 
@@ -3373,7 +3374,8 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
     // The document, not the viewer, decides there is no pose view.
     assert!(!has_id(&html, "gl"), "no canvas is rendered");
     assert!(
-        element_with_id(&html, "gl-notice").contains("Pose playback omitted"),
+        element_with_id(&html, "gl-notice")
+            .contains("Pose playback and illustrative blending are omitted"),
         "a notice stands where the pose view would be"
     );
     assert!(

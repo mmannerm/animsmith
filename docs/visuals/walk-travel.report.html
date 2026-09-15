@@ -168,6 +168,10 @@ path.series-member-5 { stroke-dasharray: 1 4; }
 .axis, .legend { fill: var(--muted); font-size: var(--chart-type); }
 .playhead { stroke: var(--error); stroke-width: 1; }
 .pathdot { fill: var(--error); }
+#blend-controls { margin-top: 0.6rem; font-size: 0.8rem; }
+#blend-caption, #blend-status, #pair-notice { font-size: 0.78rem; margin-top: 0.5rem; color: var(--muted); }
+#blend-caption { color: var(--pass); }
+#pane-labels > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -177,15 +181,16 @@ path.series-member-5 { stroke-dasharray: 1 4; }
 <div id="controls">
 <label for="clip-select">clip</label>
 <select id="clip-select"></select>
-<label for="with-select">with</label>
+<label id="with-label" for="with-select">with</label>
 <select id="with-select"></select>
 <button id="play" aria-label="Play the clip">▶</button>
 <input type="range" id="scrub" min="0" value="0" step="1">
 <span id="time"></span>
 </div>
+<p id="pair-notice" aria-live="polite"></p>
 <canvas id="gl"></canvas>
-<p id="pane-labels"></p>
-<p class="hint">drag to orbit · wheel to zoom · with plays a second clip of this document beside the first at the same normalized phase · frames shown are exactly the grid the checks judged</p>
+<p id="pane-labels"></p><div id="blend-controls" hidden><label><input id="blend-enable" type="checkbox"> illustrative blend</label> <label for="blend-weight">weight</label> <input id="blend-weight" type="range" min="0" max="1" step="0.001" value="0.5"></div><p id="blend-caption" hidden>Engine-agnostic illustrative blend of sampled local transforms (nlerp rotations). Normalized phase, not a time warp. Not Bevy, Unity, Unreal or Godot runtime evidence.</p><p id="blend-status" aria-live="polite"></p>
+<p class="hint">drag to orbit · wheel to zoom · with plays a second clip of this document beside the first at the same normalized phase · source panes show exactly the grid the checks judged · the optional illustrative pane blends sampled local transforms</p>
 </section>
 <section id="side">
 <h2>Findings</h2>
@@ -195,7 +200,7 @@ path.series-member-5 { stroke-dasharray: 1 4; }
 <h2>Engine predictions</h2>
 <ul id="predictions"></ul>
 <h2>Charts</h2>
-<div id="charts"><figure class="chart" data-clip="walk_travel" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>walk_travel — foot height relative to hips · what to look for: no loop or stance contract declared: the checks judged only in-place, so the heights are shown as measured rather than against an expectation</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk_travel — foot height relative to hips over frames 0 to 32: L foot, R foot -1.05 to -0.95 m; L−R -0.10 to 0.10 m on its own right-hand axis"><title>walk_travel — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="131.3" x2="141.3" y1="9" y2="9"/><text class="legend" x="144.3" y="12.0">R foot</text><line class="series-diff" x1="228.7" x2="238.7" y1="9" y2="9"/><text class="legend" x="241.7" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,76.0L43.1,64.7L52.2,53.8L61.4,43.8L70.5,35.0L79.6,27.8L88.8,22.4L97.9,19.1L107.0,18.0L116.1,19.1L125.2,22.4L134.4,27.8L143.5,35.0L152.6,43.8L161.8,53.8L170.9,64.7L180.0,76.0L189.1,87.3L198.2,98.2L207.4,108.2L216.5,117.0L225.6,124.2L234.8,129.6L243.9,132.9L253.0,134.0L262.1,132.9L271.2,129.6L280.4,124.2L289.5,117.0L298.6,108.2L307.8,98.2L316.9,87.3L326.0,76.0" fill="none"/><path class="series-right" d="M34.0,76.0L43.1,87.3L52.2,98.2L61.4,108.2L70.5,117.0L79.6,124.2L88.8,129.6L97.9,132.9L107.0,134.0L116.1,132.9L125.2,129.6L134.4,124.2L143.5,117.0L152.6,108.2L161.8,98.2L170.9,87.3L180.0,76.0L189.1,64.7L198.2,53.8L207.4,43.8L216.5,35.0L225.6,27.8L234.8,22.4L243.9,19.1L253.0,18.0L262.1,19.1L271.2,22.4L280.4,27.8L289.5,35.0L298.6,43.8L307.8,53.8L316.9,64.7L326.0,76.0" fill="none"/><path class="series-diff" d="M34.0,76.0L43.1,64.7L52.2,53.8L61.4,43.8L70.5,35.0L79.6,27.8L88.8,22.4L97.9,19.1L107.0,18.0L116.1,19.1L125.2,22.4L134.4,27.8L143.5,35.0L152.6,43.8L161.8,53.8L170.9,64.7L180.0,76.0L189.1,87.3L198.2,98.2L207.4,108.2L216.5,117.0L225.6,124.2L234.8,129.6L243.9,132.9L253.0,134.0L262.1,132.9L271.2,129.6L280.4,124.2L289.5,117.0L298.6,108.2L307.8,98.2L316.9,87.3L326.0,76.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">-0.95 m</text><text class="axis" x="2.0" y="134.0">-1.05 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.10 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.10 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 32</text></svg></figure><figure class="chart" data-clip="walk_travel" data-kind="rootpath"><figcaption>walk_travel — root path (top-down) · what to look for: this clip declares who owns its horizontal travel and the in-place check judged the root against that declaration, so the path is the evidence for it · the dot is the current frame, the hollow circle where the track starts and the square where it ends · the path spans 1.200 m at its widest · the track ends 1.200 m from its start</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk_travel — root path (top-down): X 0.00 to 0.00 m, Z 0.00 to 1.20 m, 33 frames on one uniform scale"><title>walk_travel — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><circle class="pathstart" cx="136.3" cy="9" r="6"/><text class="legend" x="144.3" y="12.0">start</text><rect class="pathend" x="230.7" y="6.0" width="6" height="6"/><text class="legend" x="241.7" y="12.0">end</text><path class="root-path" d="M180.0,134.0L180.0,130.4L180.0,126.8L180.0,123.1L180.0,119.5L180.0,115.9L180.0,112.2L180.0,108.6L180.0,105.0L180.0,101.4L180.0,97.8L180.0,94.1L180.0,90.5L180.0,86.9L180.0,83.2L180.0,79.6L180.0,76.0L180.0,72.4L180.0,68.8L180.0,65.1L180.0,61.5L180.0,57.9L180.0,54.2L180.0,50.6L180.0,47.0L180.0,43.4L180.0,39.8L180.0,36.1L180.0,32.5L180.0,28.9L180.0,25.3L180.0,21.6L180.0,18.0" fill="none"/><circle class="pathstart" cx="180.0" cy="134.0" r="6"/><rect class="pathend" x="177.0" y="15.0" width="6" height="6"/><circle class="pathdot" r="3" cx="180.0" cy="134.0"/><text class="axis" x="2.0" y="146.0">X 0.00…0.00 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…1.20 m</text></svg><template class="pathpoints">180.0,134.0;180.0,130.4;180.0,126.8;180.0,123.1;180.0,119.5;180.0,115.9;180.0,112.2;180.0,108.6;180.0,105.0;180.0,101.4;180.0,97.8;180.0,94.1;180.0,90.5;180.0,86.9;180.0,83.2;180.0,79.6;180.0,76.0;180.0,72.4;180.0,68.8;180.0,65.1;180.0,61.5;180.0,57.9;180.0,54.2;180.0,50.6;180.0,47.0;180.0,43.4;180.0,39.8;180.0,36.1;180.0,32.5;180.0,28.9;180.0,25.3;180.0,21.6;180.0,18.0</template></figure></div>
+<div id="charts"><figure class="chart" data-clip="walk_travel" data-clipindex="0" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>walk_travel — foot height relative to hips · what to look for: no loop or stance contract declared: the checks judged only in-place, so the heights are shown as measured rather than against an expectation</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk_travel — foot height relative to hips over frames 0 to 32: L foot, R foot -1.05 to -0.95 m; L−R -0.10 to 0.10 m on its own right-hand axis"><title>walk_travel — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="131.3" x2="141.3" y1="9" y2="9"/><text class="legend" x="144.3" y="12.0">R foot</text><line class="series-diff" x1="228.7" x2="238.7" y1="9" y2="9"/><text class="legend" x="241.7" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,76.0L43.1,64.7L52.2,53.8L61.4,43.8L70.5,35.0L79.6,27.8L88.8,22.4L97.9,19.1L107.0,18.0L116.1,19.1L125.2,22.4L134.4,27.8L143.5,35.0L152.6,43.8L161.8,53.8L170.9,64.7L180.0,76.0L189.1,87.3L198.2,98.2L207.4,108.2L216.5,117.0L225.6,124.2L234.8,129.6L243.9,132.9L253.0,134.0L262.1,132.9L271.2,129.6L280.4,124.2L289.5,117.0L298.6,108.2L307.8,98.2L316.9,87.3L326.0,76.0" fill="none"/><path class="series-right" d="M34.0,76.0L43.1,87.3L52.2,98.2L61.4,108.2L70.5,117.0L79.6,124.2L88.8,129.6L97.9,132.9L107.0,134.0L116.1,132.9L125.2,129.6L134.4,124.2L143.5,117.0L152.6,108.2L161.8,98.2L170.9,87.3L180.0,76.0L189.1,64.7L198.2,53.8L207.4,43.8L216.5,35.0L225.6,27.8L234.8,22.4L243.9,19.1L253.0,18.0L262.1,19.1L271.2,22.4L280.4,27.8L289.5,35.0L298.6,43.8L307.8,53.8L316.9,64.7L326.0,76.0" fill="none"/><path class="series-diff" d="M34.0,76.0L43.1,64.7L52.2,53.8L61.4,43.8L70.5,35.0L79.6,27.8L88.8,22.4L97.9,19.1L107.0,18.0L116.1,19.1L125.2,22.4L134.4,27.8L143.5,35.0L152.6,43.8L161.8,53.8L170.9,64.7L180.0,76.0L189.1,87.3L198.2,98.2L207.4,108.2L216.5,117.0L225.6,124.2L234.8,129.6L243.9,132.9L253.0,134.0L262.1,132.9L271.2,129.6L280.4,124.2L289.5,117.0L298.6,108.2L307.8,98.2L316.9,87.3L326.0,76.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">-0.95 m</text><text class="axis" x="2.0" y="134.0">-1.05 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.10 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.10 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 32</text></svg></figure><figure class="chart" data-clip="walk_travel" data-clipindex="0" data-kind="rootpath"><figcaption>walk_travel — root path (top-down) · what to look for: this clip declares who owns its horizontal travel and the in-place check judged the root against that declaration, so the path is the evidence for it · the dot is the current frame, the hollow circle where the track starts and the square where it ends · the path spans 1.200 m at its widest · the track ends 1.200 m from its start</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="walk_travel — root path (top-down): X 0.00 to 0.00 m, Z 0.00 to 1.20 m, 33 frames on one uniform scale"><title>walk_travel — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><circle class="pathstart" cx="136.3" cy="9" r="6"/><text class="legend" x="144.3" y="12.0">start</text><rect class="pathend" x="230.7" y="6.0" width="6" height="6"/><text class="legend" x="241.7" y="12.0">end</text><path class="root-path" d="M180.0,134.0L180.0,130.4L180.0,126.8L180.0,123.1L180.0,119.5L180.0,115.9L180.0,112.2L180.0,108.6L180.0,105.0L180.0,101.4L180.0,97.8L180.0,94.1L180.0,90.5L180.0,86.9L180.0,83.2L180.0,79.6L180.0,76.0L180.0,72.4L180.0,68.8L180.0,65.1L180.0,61.5L180.0,57.9L180.0,54.2L180.0,50.6L180.0,47.0L180.0,43.4L180.0,39.8L180.0,36.1L180.0,32.5L180.0,28.9L180.0,25.3L180.0,21.6L180.0,18.0" fill="none"/><circle class="pathstart" cx="180.0" cy="134.0" r="6"/><rect class="pathend" x="177.0" y="15.0" width="6" height="6"/><circle class="pathdot" r="3" cx="180.0" cy="134.0"/><text class="axis" x="2.0" y="146.0">X 0.00…0.00 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…1.20 m</text></svg><template class="pathpoints">180.0,134.0;180.0,130.4;180.0,126.8;180.0,123.1;180.0,119.5;180.0,115.9;180.0,112.2;180.0,108.6;180.0,105.0;180.0,101.4;180.0,97.8;180.0,94.1;180.0,90.5;180.0,86.9;180.0,83.2;180.0,79.6;180.0,76.0;180.0,72.4;180.0,68.8;180.0,65.1;180.0,61.5;180.0,57.9;180.0,54.2;180.0,50.6;180.0,47.0;180.0,43.4;180.0,39.8;180.0,36.1;180.0,32.5;180.0,28.9;180.0,25.3;180.0,21.6;180.0,18.0</template></figure></div>
 </section>
 </main>
 <script>// animsmith report shared runtime — the pure helpers both generated viewers
@@ -383,10 +388,10 @@ function animsmithFrameLoop(advance) {
   };
 }
 </script>
-<script type="application/json" id="report-data">{"bones":[{"name":"pelvis","parent":-1},{"name":"foot_l","parent":0},{"name":"foot_r","parent":0}],"clips":[{"cycle":32,"duration":1.0,"frames":33,"name":"walk_travel","positions":"AAAAAAAAgD8AAAAAzczMPQAAAAAAAAAAzczMvQAAAAAAAAAAAAAAAAAAgD+amRk9zczMPYDRHzxUu4g9zczMvYDRH7wu8gY8AAAAAAAAgD+amZk9zczMPUC/nDyHlAc+zczMvUC/nLyaKJA8AAAAAAAAgD9nZuY9zczMPcCP4zwdiUg+zczMvcCP47xQ6u48AAAAAAAAgD+amRk+zczMPcDQED0WG4M+zczMvcDQEL0g9DM9AAAAAAAAgD8AAEA+zczMPfBIKj1c258+zczMvQBJKr2RkoA9AAAAAAAAgD9nZmY+zczMPeA1PT1qJ7o+zczMveA1Pb32+7A9AAAAAAAAgD9nZoY+zczMPWDdSD1tudE+zczMvWDdSL2ETew9AAAAAAAAgD+amZk+zczMPdDMTD1nZuY+zczMvcDMTL2amRk+AAAAAAAAgD/NzKw+zczMPWDdSD3TH/g+zczMvWDdSL2O80I+AAAAAAAAgD8AAMA+zczMPeA1PT0begM/zczMveA1Pb2UF3I+AAAAAAAAgD80M9M+zczMPfBIKj1Ihwk/zczMvQBJKr3YV5M+AAAAAAAAgD9nZuY+zczMPcDQED1YWg4/zczMvcDQEL0eGLA+AAAAAAAAgD+amfk+zczMPcCP4zxHIhI/zczMvcCP47yl7s4+AAAAAAAAgD9nZgY/zczMPUC/nDxVGBU/zczMvUC/nLzxaO8+AAAAAAAAgD8AABA/zczMPYDRHzzRfRc/zczMvYDRH7wvggg/AAAAAAAAgD+amRk/zczMPQAAAACamRk/zczMvQAAAACamRk/AAAAAAAAgD80MyM/zczMPYDRH7xjtRs/zczMvYDRHzwFsSo/AAAAAAAAgD/NzCw/zczMPUC/nLzfGh4/zczMvUC/nDy7fjs/AAAAAAAAgD9nZjY/zczMPcCP47ztECE/zczMvcCP4zzhu0s/AAAAAAAAgD8AAEA/zczMPcDQEL3c2CQ/zczMvcDQED0kJ1s/AAAAAAAAgD+amUk/zczMPQBJKr3sqyk/zczMvfBIKj1Ih2k/AAAAAAAAgD80M1M/zczMPeA1Pb0ZuS8/zczMveA1PT1PrXY/AAAAAAAAgD/NzFw/zczMPWDdSL1KIzc/zczMvWDdSD0oO4E/AAAAAAAAgD9nZmY/zczMPcDMTL0AAEA/zczMvdDMTD1nZoY/AAAAAAAAgD8BAHA/zczMPWDdSL1+Vko/zczMvWDdSD3C1Io/AAAAAAAAgD+amXk/zczMPeA1Pb1/H1Y/zczMveA1PT3aiY4/AAAAAAAAgD+amYE/zczMPQBJKr2GRWM/zczMvfBIKj1xkJE/AAAAAAAAgD9nZoY/zczMPcDQEL2qpXE/zczMvcDQED35+ZM/AAAAAAAAgD80M4s/zczMPcCP47x3iIA/zczMvcCP4zzx3ZU/AAAAAAAAgD8AAJA/zczMPUC/nLwJp4g/zczMvUC/nDz3WJc/AAAAAAAAgD/NzJQ/zczMPYDRH7zlDZE/zczMvYDRHzy1i5g/AAAAAAAAgD+amZk/zczMPQAAAACamZk/zczMvQAAAACamZk/","trails":{"hips":0,"left_foot":1,"right_foot":2}}],"evidence_only":false,"file":"walk-travel.glb","findings":[{"bone":null,"check":"in-place","clip":"walk_travel","message":"declared in-place but the root travels at 1.20 m/s — the character will glide at runtime","node":null,"severity":"error","time":null}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"walk_travel"}}],"groups":[],"prediction_provenance":null,"predictions":[],"profile":"ue-mannequin"}</script>
+<script type="application/json" id="report-data">{"blend":{"base64_bytes":5280,"kind":"sampled-local-trs-blend-v1","omission":null,"raw_bytes":3960},"bones":[{"name":"pelvis","parent":-1},{"name":"foot_l","parent":0},{"name":"foot_r","parent":0}],"clips":[{"cycle":32,"duration":1.0,"frames":33,"locals":"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","name":"walk_travel","positions":"AAAAAAAAgD8AAAAAzczMPQAAAAAAAAAAzczMvQAAAAAAAAAAAAAAAAAAgD+amRk9zczMPYDRHzxUu4g9zczMvYDRH7wu8gY8AAAAAAAAgD+amZk9zczMPUC/nDyHlAc+zczMvUC/nLyaKJA8AAAAAAAAgD9nZuY9zczMPcCP4zwdiUg+zczMvcCP47xQ6u48AAAAAAAAgD+amRk+zczMPcDQED0WG4M+zczMvcDQEL0g9DM9AAAAAAAAgD8AAEA+zczMPfBIKj1c258+zczMvQBJKr2RkoA9AAAAAAAAgD9nZmY+zczMPeA1PT1qJ7o+zczMveA1Pb32+7A9AAAAAAAAgD9nZoY+zczMPWDdSD1tudE+zczMvWDdSL2ETew9AAAAAAAAgD+amZk+zczMPdDMTD1nZuY+zczMvcDMTL2amRk+AAAAAAAAgD/NzKw+zczMPWDdSD3TH/g+zczMvWDdSL2O80I+AAAAAAAAgD8AAMA+zczMPeA1PT0begM/zczMveA1Pb2UF3I+AAAAAAAAgD80M9M+zczMPfBIKj1Ihwk/zczMvQBJKr3YV5M+AAAAAAAAgD9nZuY+zczMPcDQED1YWg4/zczMvcDQEL0eGLA+AAAAAAAAgD+amfk+zczMPcCP4zxHIhI/zczMvcCP47yl7s4+AAAAAAAAgD9nZgY/zczMPUC/nDxVGBU/zczMvUC/nLzxaO8+AAAAAAAAgD8AABA/zczMPYDRHzzRfRc/zczMvYDRH7wvggg/AAAAAAAAgD+amRk/zczMPQAAAACamRk/zczMvQAAAACamRk/AAAAAAAAgD80MyM/zczMPYDRH7xjtRs/zczMvYDRHzwFsSo/AAAAAAAAgD/NzCw/zczMPUC/nLzfGh4/zczMvUC/nDy7fjs/AAAAAAAAgD9nZjY/zczMPcCP47ztECE/zczMvcCP4zzhu0s/AAAAAAAAgD8AAEA/zczMPcDQEL3c2CQ/zczMvcDQED0kJ1s/AAAAAAAAgD+amUk/zczMPQBJKr3sqyk/zczMvfBIKj1Ih2k/AAAAAAAAgD80M1M/zczMPeA1Pb0ZuS8/zczMveA1PT1PrXY/AAAAAAAAgD/NzFw/zczMPWDdSL1KIzc/zczMvWDdSD0oO4E/AAAAAAAAgD9nZmY/zczMPcDMTL0AAEA/zczMvdDMTD1nZoY/AAAAAAAAgD8BAHA/zczMPWDdSL1+Vko/zczMvWDdSD3C1Io/AAAAAAAAgD+amXk/zczMPeA1Pb1/H1Y/zczMveA1PT3aiY4/AAAAAAAAgD+amYE/zczMPQBJKr2GRWM/zczMvfBIKj1xkJE/AAAAAAAAgD9nZoY/zczMPcDQEL2qpXE/zczMvcDQED35+ZM/AAAAAAAAgD80M4s/zczMPcCP47x3iIA/zczMvcCP4zzx3ZU/AAAAAAAAgD8AAJA/zczMPUC/nLwJp4g/zczMvUC/nDz3WJc/AAAAAAAAgD/NzJQ/zczMPYDRH7zlDZE/zczMvYDRHzy1i5g/AAAAAAAAgD+amZk/zczMPQAAAACamZk/zczMvQAAAACamZk/","trails":{"hips":0,"left_foot":1,"right_foot":2}}],"evidence_only":false,"file":"walk-travel.glb","findings":[{"bone":null,"check":"in-place","clip":"walk_travel","message":"declared in-place but the root travels at 1.20 m/s — the character will glide at runtime","node":null,"severity":"error","time":null}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 0 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"walk_travel"}}],"groups":[],"prediction_provenance":null,"predictions":[],"profile":"ue-mannequin"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
-// Renders exactly the pose-grid frames the checks judged; no animation
-// sampling happens here.
+// Source panes draw judged pose-grid frames. The optional illustrative pane
+// blends sampled locals across weight; authored clip time is never resampled.
 "use strict";
 
 const data = JSON.parse(document.getElementById("report-data").textContent);
@@ -430,6 +435,119 @@ for (const clip of data.clips) {
 
 const boneCount = data.bones.length;
 const parents = data.bones.map((b) => b.parent);
+
+// ---- sampled-local-trs-blend-v1 ----------------------------------------
+// This authority is optional and separate from the judged source positions.
+// Validate aggregate lengths before any local decode; selected streams only.
+function blendAuthorityError() {
+  const b = data.blend;
+  if (!canvas) return "pose data omitted";
+  if (!b || b.kind !== "sampled-local-trs-blend-v1") return "missing sampled local authority";
+  if (b.omission) return b.omission;
+  if (boneCount < 1 || boneCount > 1024 || data.clips.length > 4096 ||
+      parents.some((p, i) => !Number.isInteger(p) || p < -1 || p >= i)) return "invalid blend counts or parent hierarchy";
+  let raw = 0, encoded = 0;
+  for (const c of data.clips) {
+    if (c.locals === undefined) continue;
+    const bytes = c.frames * boneCount * 40;
+    if (!Number.isSafeInteger(c.frames) || c.frames < 1 || !Number.isSafeInteger(bytes) ||
+        typeof c.locals !== "string" || c.locals.length !== 4 * Math.ceil(bytes / 3)) return "invalid local stream length";
+    raw += bytes; encoded += c.locals.length;
+    if (raw > 33554432 || encoded > 44750164) return "added local-transform data exceeds the report blend budget";
+  }
+  return raw === b.raw_bytes && encoded === b.base64_bytes ? null : "aggregate local byte counts do not match";
+}
+const blendAuthorityReason = blendAuthorityError();
+let localCache = new Map();
+let selectedBlendReason = null;
+let blendWeight = 0.5;
+let blendEnabled = false;
+// Buffers are allocated only after aggregate admission, once per document.
+const blendWorld = !blendAuthorityReason ? new Float64Array(boneCount * 16) : null;
+const blendOutput = !blendAuthorityReason ? new Float32Array(boneCount * 3) : null;
+const blendLocal = !blendAuthorityReason ? new Float64Array(16) : null;
+function decodeLocals(c) {
+  if (!Number.isFinite(c.duration) || typeof c.locals !== "string") throw new Error(c.blend_omission || "missing sampled locals");
+  // Strict alphabet and length/padding as well as decoded length: atob implementations
+  // may accept whitespace and noncanonical encodings. Validation precedes buffers.
+  const bytes = c.frames * boneCount * 40;
+  const padding = (3 - bytes % 3) % 3;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(c.locals) ||
+      (c.locals.match(/=*$/)[0].length !== padding)) throw new Error("invalid local base64");
+  const raw = atob(c.locals);
+  if (raw.length !== bytes) throw new Error("invalid decoded local length");
+  const packed = new Uint8Array(bytes);
+  for (let i = 0; i < bytes; i++) packed[i] = raw.charCodeAt(i);
+  const view = new DataView(packed.buffer);
+  const values = new Float32Array(bytes / 4);
+  for (let i = 0; i < values.length; i++) {
+    values[i] = view.getFloat32(i * 4, true);
+    if (!Number.isFinite(values[i])) throw new Error("non-finite sampled local transform");
+  }
+  for (let i = 0; i < values.length; i += 10) {
+    const n = Math.hypot(values[i+3], values[i+4], values[i+5], values[i+6]);
+    if (!Number.isFinite(n) || n === 0 || Math.abs(n - 1) > 1e-4) throw new Error("sampled quaternion length is outside 1 +/- 1e-4");
+  }
+  return values;
+}
+function selectBlendLocals() {
+  selectedBlendReason = blendAuthorityReason;
+  // Evict first, so switching pairs never retains three decoded streams.
+  for (const c of localCache.keys()) if (!withClip || (c !== clip && c !== withClip)) localCache.delete(c);
+  if (!withClip || selectedBlendReason) return;
+  for (const c of [clip, withClip]) {
+    try { if (!localCache.has(c)) localCache.set(c, decodeLocals(c)); }
+    catch (error) { selectedBlendReason = error.message; localCache.clear(); return; }
+  }
+}
+function blendPose(aFrame, bFrame) {
+  if (selectedBlendReason) return null;
+  // Endpoint positions are copied from complete judged source poses, exactly.
+  if (blendWeight === 0 || blendWeight === 1) {
+    const c = blendWeight === 0 ? clip : withClip;
+    const start = (blendWeight === 0 ? aFrame : bFrame) * boneCount * 3;
+    for (let i = 0; i < blendOutput.length; i++) {
+      const value = c.pos[start+i];
+      if (!Number.isFinite(value)) return null;
+      blendOutput[i] = value;
+    }
+    return blendOutput;
+  }
+  const a = localCache.get(clip), b = localCache.get(withClip);
+  if (!a || !b) return null;
+  const w = blendWeight, v = 1-w, m = blendLocal;
+  for (let bone = 0; bone < boneCount; bone++) {
+    const ai = (aFrame * boneCount + bone) * 10, bi = (bFrame * boneCount + bone) * 10;
+    const an = Math.hypot(a[ai+3],a[ai+4],a[ai+5],a[ai+6]), bn = Math.hypot(b[bi+3],b[bi+4],b[bi+5],b[bi+6]);
+    const ax=a[ai+3]/an, ay=a[ai+4]/an, az=a[ai+5]/an, aw=a[ai+6]/an;
+    let bx=b[bi+3]/bn, by=b[bi+4]/bn, bz=b[bi+5]/bn, bw=b[bi+6]/bn;
+    if (ax*bx + ay*by + az*bz + aw*bw < 0) { bx=-bx; by=-by; bz=-bz; bw=-bw; }
+    let x=v*ax+w*bx, y=v*ay+w*by, z=v*az+w*bz, q=v*aw+w*bw;
+    const n=Math.hypot(x,y,z,q); x/=n; y/=n; z/=n; q/=n;
+    const sx=v*a[ai+7]+w*b[bi+7], sy=v*a[ai+8]+w*b[bi+8], sz=v*a[ai+9]+w*b[bi+9];
+    // Column-vector T*R*S. Preserve every affine component through the chain.
+    m[0]=(1-2*(y*y+z*z))*sx; m[1]=2*(x*y+q*z)*sx; m[2]=2*(x*z-q*y)*sx; m[3]=0;
+    m[4]=2*(x*y-q*z)*sy; m[5]=(1-2*(x*x+z*z))*sy; m[6]=2*(y*z+q*x)*sy; m[7]=0;
+    m[8]=2*(x*z+q*y)*sz; m[9]=2*(y*z-q*x)*sz; m[10]=(1-2*(x*x+y*y))*sz; m[11]=0;
+    m[12]=v*a[ai]+w*b[bi]; m[13]=v*a[ai+1]+w*b[bi+1]; m[14]=v*a[ai+2]+w*b[bi+2]; m[15]=1;
+    const out=bone*16, parent=parents[bone]*16;
+    for (let col=0; col<4; col++) for (let row=0; row<4; row++) {
+      let value=m[col*4+row];
+      if (parent >= 0) {
+        value=0;
+        for (let k=0;k<4;k++) value += blendWorld[parent+k*4+row]*m[col*4+k];
+      }
+      if (!Number.isFinite(value)) return null;
+      blendWorld[out+col*4+row]=value;
+    }
+    for (let c=0;c<3;c++) {
+      const value=Math.fround(blendWorld[out+12+c]);
+      if (!Number.isFinite(value)) return null;
+      blendOutput[bone*3+c]=value;
+    }
+  }
+  return blendOutput;
+}
 
 // ---- tiny mat4 -------------------------------------------------------
 function perspective(fovy, aspect, near, far) {
@@ -502,6 +620,7 @@ if (canvas) {
 // playback advances continuously.
 let clip = data.clips[0] || null;
 let withClip = null;
+let clipIndex = 0, withClipIndex = -1;
 let frame = 0;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
@@ -526,6 +645,7 @@ function refreshShown() {
     const key = index === 0 ? c.name : "with " + c.name;
     return {
       clip: c,
+      index: index === 0 ? clipIndex : withClipIndex,
       // Every pane is at the same phase, in its own frame count.
       at: animsmithFrameAtPhase(c.frames, phase),
       bones,
@@ -595,6 +715,36 @@ function buildVertices(palette, pane) {
 // #gl at all — keeps working unchanged.
 function draw() {
   if (!gl || !shown.length) return;
+  // Clear and reconstruct the pane list on every draw: a failed calculation
+  // cannot keep uploading a previously valid blend buffer.
+  const panes = shown.slice();
+  if (blendStatus) {
+    blendCaption.hidden = !blendEnabled || !withClip || Boolean(selectedBlendReason);
+    blendStatus.textContent = blendAuthorityReason || (withClip && selectedBlendReason
+      ? "Illustrative blend unavailable for the selected clips: " + selectedBlendReason + ". Source findings remain available."
+      : "");
+  }
+  if (blendEnabled && withClip && !selectedBlendReason) {
+    const positions = blendPose(shown[0].at, shown[1].at);
+    if (positions) {
+      panes.push({clip: {pos: positions}, at: 0, bones: "pass", joints: "pass", key: "illustrative blend"});
+      blendStatus.textContent = clip.name + " " + stamp(shown[0]) + " · " + withClip.name + " " + stamp(shown[1]) + " · weight " + blendWeight.toFixed(3);
+    } else {
+      blendStatus.textContent = "Illustrative blend unavailable for the selected clips: " + (selectedBlendReason || "computed pose is not finite or representable as binary32") + ". Source findings remain available.";
+    }
+  }
+  if (paneLabels) {
+    paneLabels.replaceChildren();
+    for (const pane of panes) {
+      const span = document.createElement("span");
+      span.textContent = pane.key;
+      span.style.color = "var(--" + pane.bones + ")";
+      paneLabels.appendChild(span);
+    }
+  }
+  // Keep source viewport proportions when adding the third pane. Camera fit,
+  // orbit and zoom remain the same; only the canvas layout becomes shorter.
+  canvas.style.aspectRatio = panes.length === 3 ? "2 / 1" : "4 / 3";
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -605,9 +755,9 @@ function draw() {
     center[2] + dist * Math.cos(pitch) * Math.cos(yaw),
   ];
   gl.enable(gl.SCISSOR_TEST);
-  const wide = Math.floor(w / shown.length);
-  shown.forEach((pane, index) => {
-    const x = index * wide, pw = index === shown.length - 1 ? w - x : wide;
+  const wide = Math.floor(w / panes.length);
+  panes.forEach((pane, index) => {
+    const x = index * wide, pw = index === panes.length - 1 ? w - x : wide;
     // Scissoring keeps each pane's clear inside its own slice, so neither
     // pose can paint over the other's.
     gl.viewport(x, 0, pw, h);
@@ -630,6 +780,11 @@ function draw() {
 // ---- UI ----------------------------------------------------------------
 const clipSelect = document.getElementById("clip-select");
 const withSelect = document.getElementById("with-select");
+const pairNotice = document.getElementById("pair-notice");
+const blendToggle = canvas ? document.getElementById("blend-enable") : null;
+const weightInput = canvas ? document.getElementById("blend-weight") : null;
+const blendStatus = canvas ? document.getElementById("blend-status") : null;
+const blendCaption = canvas ? document.getElementById("blend-caption") : null;
 const scrub = document.getElementById("scrub");
 const playBtn = document.getElementById("play");
 const timeLabel = document.getElementById("time");
@@ -644,41 +799,38 @@ const option = (value, text) => {
   opt.textContent = text;
   return opt;
 };
-for (const c of data.clips) clipSelect.appendChild(option(c.name, c.name));
+for (const [index, c] of data.clips.entries()) clipSelect.appendChild(option(String(index), c.name));
 
 // The chrome that follows the selection rather than the transport: the
 // second select's own options, which never offer the clip already selected,
 // and the colour key naming each half in the token its skeleton is drawn in.
 // Both are rebuilt when the selection changes, not on every frame.
 function refreshPairing() {
-  const chosen = withClip ? withClip.name : "";
+  const chosen = withClip ? String(data.clips.indexOf(withClip)) : "";
   withSelect.replaceChildren();
   withSelect.appendChild(option("", "alone"));
-  for (const c of data.clips) {
-    if (clip && c.name === clip.name) continue;
-    withSelect.appendChild(option(c.name, c.name));
+  for (const [index, c] of data.clips.entries()) {
+    if (c === clip) continue;
+    withSelect.appendChild(option(String(index), c.name));
   }
   withSelect.value = chosen;
   // A document with one clip has nothing to pair it with.
   withSelect.disabled = data.clips.length < 2;
-  // An evidence-only document draws no halves, so it carries no key to fill.
-  if (paneLabels) {
-    paneLabels.replaceChildren();
-    for (const pane of shown) {
-      // textContent throughout: clip names come from the linted asset. The
-      // colour is the pane's own token, so the key cannot name a half in a
-      // colour that half is not drawn in.
-      const span = document.createElement("span");
-      span.textContent = pane.key;
-      span.style.color = "var(--" + pane.bones + ")";
-      paneLabels.appendChild(span);
-    }
+  withSelect.hidden = data.clips.length < 2;
+  document.getElementById("with-label").hidden = data.clips.length < 2;
+  if (blendToggle) {
+    const admissible = Boolean(withClip) && !selectedBlendReason;
+    blendToggle.disabled = !admissible;
+    weightInput.disabled = !admissible || !blendEnabled;
+    document.getElementById("blend-controls").hidden = !admissible;
   }
+
 }
 
 // One clip's position in its own timeline, as the label states it.
-const stamp = (pane) =>
-  (animsmithPhaseOf(pane.clip.frames, pane.at) * pane.clip.duration).toFixed(3) + "s / " +
+const stamp = (pane) => !Number.isFinite(pane.clip.duration)
+  ? "time unavailable (frame " + pane.at + ")"
+  : (animsmithPhaseOf(pane.clip.frames, pane.at) * pane.clip.duration).toFixed(3) + "s / " +
   pane.clip.duration.toFixed(3) + "s (frame " + pane.at + ")";
 
 // The transport moved: rebuild the panes and everything that reads them.
@@ -696,29 +848,38 @@ function refresh() {
 // Which clips are shown changed, so the selection-driven chrome and the
 // camera follow before the repaint.
 function reselect() {
+  // Resolve array identity only when selection changes, never per repaint.
+  clipIndex = data.clips.indexOf(clip);
+  withClipIndex = data.clips.indexOf(withClip);
   refreshShown();
+  selectBlendLocals();
   refreshPairing();
   fitCamera();
   refresh();
 }
 
-function selectClip(name) {
-  clip = data.clips.find((c) => c.name === name) || data.clips[0];
+function uniqueClip(name) {
+  const matches = data.clips.filter((c) => c.name === name);
+  return matches.length === 1 ? matches[0] : null;
+}
+function selectClip(name, index = null) {
+  clip = index === null ? uniqueClip(name) || data.clips[0] : data.clips[index];
   if (!clip) return;
-  clipSelect.value = clip.name;
+  clipSelect.value = String(data.clips.indexOf(clip));
   scrub.max = clip.frames - 1;
   // A clip cannot be paired with itself, so selecting the paired clip as the
   // primary one leaves it alone rather than drawing it twice.
-  if (withClip && withClip.name === clip.name) withClip = null;
+  if (withClip === clip) withClip = null;
   frame = Math.min(frame, clip.frames - 1);
   reselect();
 }
 
 // The empty name, an unknown clip, and the clip already selected all mean
 // alone, which is the default this state returns to.
-function selectWith(name) {
-  const found = name ? data.clips.find((c) => c.name === name) : null;
-  withClip = found && clip && found.name !== clip.name ? found : null;
+function selectWith(name, index = null) {
+  const found = index === null ? (name ? uniqueClip(name) : null) : data.clips[index];
+  withClip = found && clip && found !== clip ? found : null;
+  pairNotice.textContent = name && !withClip ? "Paired clip is missing, ambiguous, or the primary clip; showing the primary clip alone." : "";
   reselect();
 }
 
@@ -734,7 +895,7 @@ const groupMembers = new Map((data.groups || []).map((g) => [g.name, g.members])
 
 function updateCharts() {
   if (!clip) return;
-  const paneOf = new Map(shown.map((pane) => [pane.clip.name, pane]));
+  const paneOf = new Map(shown.map((pane) => [pane.index, pane]));
   // A group figure's axis is the stride cycle its members were measured on,
   // which excludes the duplicate wrap sample a longer grid repeats, and it is
   // the selected clip's cycle: pairing a second clip beside it adds a pane,
@@ -756,7 +917,7 @@ function updateCharts() {
     // one of the panes on screen — the selected one, or the clip paired
     // beside it — and it is driven by that pane's own frame.
     const members = "group" in fig.dataset ? (groupMembers.get(fig.dataset.group) || []) : null;
-    const pane = members ? null : paneOf.get(fig.dataset.clip);
+    const pane = members ? null : paneOf.get(Number(fig.dataset.clipindex));
     const active = members ? members.includes(clip.name) : Boolean(pane);
     fig.style.display = active ? "" : "none";
     if (!active) continue;
@@ -790,11 +951,23 @@ function updateCharts() {
   }
 }
 
-clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
+clipSelect.addEventListener("change", () => { frame = 0; selectClip(null, Number(clipSelect.value)); });
 // Pairing is not a position, so it neither moves the transport nor stops
 // it — a running report keeps playing and the second clip follows from the
 // frame the first is already on.
-withSelect.addEventListener("change", () => selectWith(withSelect.value));
+withSelect.addEventListener("change", () => selectWith(null, withSelect.value === "" ? null : Number(withSelect.value)));
+if (blendToggle) {
+  blendToggle.addEventListener("change", () => {
+    blendEnabled = blendToggle.checked;
+    refreshPairing();
+    refresh();
+  });
+  weightInput.addEventListener("input", () => {
+    const weight = Number(weightInput.value);
+    blendWeight = Number.isFinite(weight) ? Math.max(0, Math.min(1, weight)) : 0.5;
+    refresh();
+  });
+}
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
 // The frame loop's ownership lives in the shared runtime, so both documents
@@ -815,7 +988,7 @@ function pausePlayback() {
   playBtn.setAttribute("aria-label", "Play the clip");
 }
 playBtn.addEventListener("click", () => {
-  if (!canvas) return;
+  if (!canvas || !Number.isFinite(clip?.duration) || clip.duration <= 0) return;
   if (playLoop.running) { pausePlayback(); return; }
   last = performance.now();
   playLoop.start();
@@ -862,7 +1035,13 @@ function selectFinding(index) {
   item.classList.add("selected");
   if (item.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   if (!f.clip) return;
-  selectClip(f.clip);
+  const target = uniqueClip(f.clip);
+  if (!target) {
+    pairNotice.textContent = "Finding clip is missing or ambiguous; source selection and frame are unchanged.";
+    return;
+  }
+  pairNotice.textContent = "";
+  selectClip(null, data.clips.indexOf(target));
   if (f.time != null && clip && clip.duration > 0)
     setFrame((f.time / clip.duration) * (clip.frames - 1));
 }
@@ -946,8 +1125,7 @@ function applyFragment() {
   // `embed` leave playback alone.
   if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
-    const known = data.clips.some((c) => c.name === options.clip);
-    selectClip(known ? options.clip : data.clips[0].name);
+    selectClip(options.clip);
     setFrame(0);
   }
   // After `clip`, because which clip a name may not equal is the clip this
@@ -962,7 +1140,7 @@ function applyFragment() {
 window.addEventListener("resize", draw);
 window.addEventListener("hashchange", applyFragment);
 animsmithOnSchemeChange(() => { palette = animsmithPalette(); draw(); });
-if (clip) { selectClip(clip.name); setFrame(0); }
+if (clip) { selectClip(null, 0); setFrame(0); }
 applyFragment();
 </script>
 </body>

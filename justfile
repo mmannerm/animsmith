@@ -188,6 +188,7 @@ report-browser:
     single --output "${out}/report-evidence.html" --evidence-only
     ring --output "${out}/multi.html"
     ring --output "${out}/multi-evidence.html" --evidence-only
+    ANIMSMITH_BLEND_GOLDENS="${out}" cargo test -q -p animsmith-report --lib blend_golden::write_blend_goldens
     node scripts/test-report-viewers.js "${out}"
     # The documentation site's theme bridge drives those same viewers through
     # their fragment, so its rewrite rule is executed in the same harness step.
