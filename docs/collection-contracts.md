@@ -246,7 +246,11 @@ the map at that instant. `FootCycleClipWarpKnotV1` is the one definition of that
 question and `time_warp_rows_v1` the one answer to which keys a track emits and
 in what order; the independent output proof consumes those rows for the
 sequence alone and derives every expected time and value itself, a knot's own
-times included.
+times included. Regression tests freeze those rows and independently perturb
+producer output times for both knot-bearing row kinds and source times for
+inserted knots. A coalesced row always retains its authored value: its source
+time is unused metadata after row selection, and perturbing it alone does not
+invalidate the correct candidate.
 That holds for a track's own first and last authored key too: the span test is
 inclusive of one place on either side, so which side of a rounding step the
 reconstructed instant lands on does not decide whether that key takes its
