@@ -2194,6 +2194,10 @@ pub(crate) mod tests {
             .err()
             .expect("second proof mutation must fail the whole batch");
         assert_eq!(error.kind(), FootCycleProofKind::ContactTopology);
+        assert_eq!(
+            error.to_string(),
+            "foot-cycle proof failed (ContactTopology)"
+        );
         assert_eq!(runtime.grids_built, 2);
     }
 
@@ -2261,6 +2265,12 @@ pub(crate) mod tests {
                 .err()
                 .expect("mutated output proof grid must fail the whole transaction");
             assert_eq!(error.kind(), expected);
+            if expected == FootCycleProofKind::RootTrajectory {
+                assert_eq!(
+                    error.to_string(),
+                    "foot-cycle proof failed (RootTrajectory)"
+                );
+            }
             assert_eq!(runtime.grids_built, 2);
         }
     }
