@@ -266,9 +266,9 @@ mod tests {
             .unwrap();
         assert_eq!(raw.len(), 3 * 40);
         let expected = [4.0f32, 5.0, 6.0, 0.0, 0.0, 0.0, 1.0, -1.0, 0.0, 2.0];
-        for frame in raw.chunks_exact(40) {
-            for (value, bytes) in expected.iter().zip(frame.chunks_exact(4)) {
-                assert_eq!(value.to_le_bytes(), bytes);
+        for frame in raw.as_chunks::<40>().0 {
+            for (value, bytes) in expected.iter().zip(frame.as_chunks::<4>().0) {
+                assert_eq!(&value.to_le_bytes(), bytes);
             }
         }
         assert_eq!(full["blend"]["raw_bytes"], 120);
@@ -329,12 +329,12 @@ mod tests {
                 let raw = base64::engine::general_purpose::STANDARD
                     .decode(data["clips"][1]["locals"].as_str().unwrap())
                     .unwrap();
-                for record in raw.chunks_exact(40) {
+                for record in raw.as_chunks::<40>().0 {
                     let norm = record[12..28]
-                        .chunks_exact(4)
-                        .map(|bytes| {
-                            f64::from(f32::from_le_bytes(bytes.try_into().unwrap())).powi(2)
-                        })
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|bytes| f64::from(f32::from_le_bytes(*bytes)).powi(2))
                         .sum::<f64>()
                         .sqrt();
                     assert!((norm - 1.0).abs() <= 1e-4, "mutation {mutation}");
