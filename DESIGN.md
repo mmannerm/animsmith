@@ -4064,9 +4064,13 @@ sequence and reads only the index, narrowing the control point itself rather
 than spelling coincidence a second way. What the proof takes from core is which
 keys exist and in what order; every number is its own, including a knot's two
 times, which it narrows again from the control point the row names rather than
-reading the producer's resolution of them. A resolution that drifted by one
-binary32 place is then a mismatch rather than a shared assumption. That holds
-for every authored key the map has a control point for, including a track's
+reading the producer's resolution of them. Tests freeze the row sequence and
+perturb producer times by one binary32 place in both directions: the proof
+rejects changed stored outputs and inserted-knot samples while still accepting
+the independently correct candidate. A coalesced row retains its authored
+value, so its source-time metadata is unused after row selection; perturbing
+that metadata alone remains accepted, while resampling a changed value is
+rejected. That holds for every authored key the map has a control point for, including a track's
 own first and last: the span test is inclusive of one place on either side, so
 which side of a rounding step the reconstructed instant lands on does not
 decide the outcome. A key the knot is bit-equal to binds before a key it is

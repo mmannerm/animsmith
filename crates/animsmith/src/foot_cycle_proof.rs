@@ -793,53 +793,74 @@ fn prove_clip_map(
             }
             continue;
         }
-        // Which keys the candidate stores, and in what order, is the
-        // producer's contract rather than this proof's opinion, so the rows
-        // come from the one shared answer (`FootCycleClipWarpRowV1`). Every
-        // number in the expectation is this proof's own: an authored key's
-        // output through its own `map_source_time`, a knot's two times
-        // narrowed here from the control point the row names, each stored
-        // value taken from the source clip — all compared bit for bit against
-        // the reread candidate.
-        let mut expected = Vec::with_capacity(source.times.len() + control_points.len());
-        for row in time_warp_rows_v1(control_points, duration, source) {
-            let expectation = match row {
-                FootCycleClipWarpRowV1::Authored(key) => (
-                    map_source_time(source.times[key], duration, control_points)?,
+        prove_track_map_rows(
+            source,
+            output,
+            control_points,
+            duration,
+            time_warp_rows_v1(control_points, duration, source),
+        )?;
+    }
+    Ok(())
+}
+
+/// Compare the selected rows using independently reconstructed times and values.
+/// Keeping the row input private lets tests vary producer metadata without
+/// changing the shared row selection or duplicating the production proof.
+fn prove_track_map_rows(
+    source: &Track,
+    output: &Track,
+    control_points: &[ContactTimeWarpControlPointV1],
+    duration: f32,
+    rows: impl IntoIterator<Item = FootCycleClipWarpRowV1>,
+) -> Result<(), FootCycleProofError> {
+    // Which keys the candidate stores, and in what order, is the
+    // producer's contract rather than this proof's opinion, so the rows
+    // come from the one shared answer (`FootCycleClipWarpRowV1`). Every
+    // number in the expectation is this proof's own: an authored key's
+    // output through its own `map_source_time`, a knot's two times
+    // narrowed here from the control point the row names, each stored
+    // value taken from the source clip — all compared bit for bit against
+    // the reread candidate.
+    let mut expected = Vec::with_capacity(source.times.len() + control_points.len());
+    for row in rows {
+        let expectation = match row {
+            FootCycleClipWarpRowV1::Authored(key) => (
+                map_source_time(source.times[key], duration, control_points)?,
+                key_sample(source, key)?,
+            ),
+            FootCycleClipWarpRowV1::Knot(knot) => {
+                let point = warp_control_point(control_points, knot.control_point_index())?;
+                (
+                    narrow_normalized(point.output_time(), duration),
+                    sample_track(source, narrow_normalized(point.input_time(), duration)),
+                )
+            }
+            FootCycleClipWarpRowV1::Coalesced(key, knot) => {
+                let point = warp_control_point(control_points, knot.control_point_index())?;
+                (
+                    narrow_normalized(point.output_time(), duration),
                     key_sample(source, key)?,
-                ),
-                FootCycleClipWarpRowV1::Knot(knot) => {
-                    let point = warp_control_point(control_points, knot.control_point_index())?;
-                    (
-                        narrow_normalized(point.output_time(), duration),
-                        sample_track(source, narrow_normalized(point.input_time(), duration)),
-                    )
-                }
-                FootCycleClipWarpRowV1::Coalesced(key, knot) => {
-                    let point = warp_control_point(control_points, knot.control_point_index())?;
-                    (
-                        narrow_normalized(point.output_time(), duration),
-                        key_sample(source, key)?,
-                    )
-                }
-            };
-            expected.push(expectation);
-        }
-        if expected.len() != output.times.len()
-            || expected.windows(2).any(|pair| pair[0].0 >= pair[1].0)
-            || expected
-                .iter()
-                .zip(&output.times)
-                .any(|((expected, _), actual)| expected.to_bits() != actual.to_bits())
-            || expected.iter().enumerate().any(|(key, (_, expected))| {
-                match key_sample(output, key) {
-                    Ok(actual) => !samples_equal_bits(*expected, actual),
-                    Err(_) => true,
-                }
+                )
+            }
+        };
+        expected.push(expectation);
+    }
+    if expected.len() != output.times.len()
+        || expected.windows(2).any(|pair| pair[0].0 >= pair[1].0)
+        || expected
+            .iter()
+            .zip(&output.times)
+            .any(|((expected, _), actual)| expected.to_bits() != actual.to_bits())
+        || expected
+            .iter()
+            .enumerate()
+            .any(|(key, (_, expected))| match key_sample(output, key) {
+                Ok(actual) => !samples_equal_bits(*expected, actual),
+                Err(_) => true,
             })
-        {
-            return Err(FootCycleProofError::new(FootCycleProofKind::ClipMap));
-        }
+    {
+        return Err(FootCycleProofError::new(FootCycleProofKind::ClipMap));
     }
     Ok(())
 }
@@ -1882,81 +1903,217 @@ pub(crate) mod tests {
         );
     }
 
-    /// The proof narrows a knot's stored time itself.
-    ///
-    /// A knot row names a control point; the time the candidate must store for
-    /// it is that point's normalized output times the narrowed duration,
-    /// narrowed once — arithmetic this proof does rather than reads, so a
-    /// producer that resolved the same knot one binary32 place away is a
-    /// mismatch instead of a shared assumption. Both row kinds that carry a
-    /// control point's output are pinned, in both directions.
-    #[test]
-    fn clip_map_proof_narrows_a_knot_output_time_itself() {
-        let coincident = 0.25_f32;
-        let knot_time = 0.375_f32;
-        let values = vec![
-            animsmith_core::glam::Vec3::ZERO,
-            animsmith_core::glam::Vec3::ONE,
-            animsmith_core::glam::Vec3::splat(2.0),
-            animsmith_core::glam::Vec3::splat(3.0),
-        ];
-        let track = |times: Vec<f32>, values: Vec<animsmith_core::glam::Vec3>| Track {
+    // All coordinates are dyadic: the analytic source value is splat(t - 0.25),
+    // including at each adjacent binary32 instant used below. The authored
+    // quarter-point coalesces; the half-point inserts a sampled knot.
+    fn producer_time_fixture() -> (
+        animsmith_core::Clip,
+        animsmith_core::Clip,
+        ContactTransformOperationV1,
+    ) {
+        let track = |times: Vec<f32>, values: Vec<f32>| Track {
             bone: 0,
             property: animsmith_core::Property::Translation,
             interpolation: Interpolation::Linear,
             times,
-            values: TrackValues::Vec3s(values),
+            values: TrackValues::Vec3s(
+                values
+                    .into_iter()
+                    .map(animsmith_core::glam::Vec3::splat)
+                    .collect(),
+            ),
         };
-        let clip = |tracks: Vec<Track>| animsmith_core::Clip {
+        let clip = |track| animsmith_core::Clip {
             name: "walk".to_owned(),
             duration_s: 1.0,
-            tracks,
+            tracks: vec![track],
         };
-        let source = clip(vec![track(vec![0.0, coincident, 0.5, 1.0], values.clone())]);
-        let control_points = vec![
-            ContactTimeWarpControlPointV1::new(0.0, 0.0),
-            ContactTimeWarpControlPointV1::new(f64::from(coincident), 0.1),
-            ContactTimeWarpControlPointV1::new(f64::from(knot_time), 0.6),
-            ContactTimeWarpControlPointV1::new(1.0, 1.0),
-        ];
-        let operation = ContactTransformOperationV1::time_warp(1.0, control_points.clone());
+        let source = clip(track(
+            vec![0.0, 0.25, 0.75, 1.0],
+            vec![-0.25, 0.0, 0.5, 0.75],
+        ));
+        let candidate = clip(track(
+            vec![0.0, 0.125, 0.625, 0.8125, 1.0],
+            vec![-0.25, 0.0, 0.25, 0.5, 0.75],
+        ));
+        let operation = ContactTransformOperationV1::time_warp(
+            1.0,
+            vec![
+                ContactTimeWarpControlPointV1::new(0.0, 0.0),
+                ContactTimeWarpControlPointV1::new(0.25, 0.125),
+                ContactTimeWarpControlPointV1::new(0.5, 0.625),
+                ContactTimeWarpControlPointV1::new(1.0, 1.0),
+            ],
+        );
+        // Exercise the whole production entry as well as the row seam.
+        prove_clip_map(&source, &candidate, &operation).unwrap();
+        (source, candidate, operation)
+    }
 
-        // The two stored times this proof must derive, narrowed here from the
-        // control points rather than taken from any resolution of them.
-        let coalesced_output = narrow_normalized(control_points[1].output_time(), 1.0);
-        let knot_output = narrow_normalized(control_points[2].output_time(), 1.0);
-        let knot_value = match sample_track(&source.tracks[0], knot_time) {
-            TrackSample::Vec3(value) => value,
-            TrackSample::Quat(_) => unreachable!("translation track"),
+    /// Obtain altered metadata through public row generation, then splice only
+    /// the knot object into the original sequence. Row kinds/order, authored
+    /// indices, and control-point indices remain the trusted shared authority;
+    /// neither the proof's operation nor its source clip changes.
+    fn rows_with_producer_time(
+        source: &Track,
+        points: &[ContactTimeWarpControlPointV1],
+        row_index: usize,
+        source_time: f32,
+        output_time: f32,
+    ) -> Vec<FootCycleClipWarpRowV1> {
+        let mut rows = time_warp_rows_v1(points, 1.0, source).collect::<Vec<_>>();
+        assert!(matches!(
+            rows.as_slice(),
+            [
+                FootCycleClipWarpRowV1::Authored(0),
+                FootCycleClipWarpRowV1::Coalesced(1, _),
+                FootCycleClipWarpRowV1::Knot(_),
+                FootCycleClipWarpRowV1::Authored(2),
+                FootCycleClipWarpRowV1::Authored(3),
+            ]
+        ));
+        let original = rows.clone();
+        let knot_of = |row| match row {
+            FootCycleClipWarpRowV1::Knot(knot) | FootCycleClipWarpRowV1::Coalesced(_, knot) => knot,
+            FootCycleClipWarpRowV1::Authored(_) => panic!("expected a knot-bearing row"),
         };
-        let mapped = map_source_time(0.5, 1.0, &control_points).unwrap();
-        assert!(knot_output < mapped, "the knot precedes the authored key");
-        let times = vec![0.0, coalesced_output, knot_output, mapped, 1.0];
-        let stored = vec![values[0], values[1], knot_value, values[2], values[3]];
-        prove_clip_map(
-            &source,
-            &clip(vec![track(times.clone(), stored.clone())]),
-            &operation,
-        )
-        .unwrap();
-
-        for index in [1_usize, 2] {
-            for shifted in [times[index].next_up(), times[index].next_down()] {
-                let mut mutated = times.clone();
-                mutated[index] = shifted;
-                assert_eq!(
-                    prove_clip_map(
-                        &source,
-                        &clip(vec![track(mutated, stored.clone())]),
-                        &operation
-                    )
-                    .unwrap_err()
-                    .kind(),
-                    FootCycleProofKind::ClipMap,
-                    "key {index} stored one place from the control point's own output"
-                );
+        let original_knot = knot_of(rows[row_index]);
+        let point_index = original_knot.control_point_index();
+        assert_eq!(point_index, row_index);
+        let mut alternate = points.to_vec();
+        alternate[point_index] =
+            ContactTimeWarpControlPointV1::new(f64::from(source_time), f64::from(output_time));
+        let altered_knot = time_warp_rows_v1(&alternate, 1.0, source)
+            .find_map(|row| match row {
+                FootCycleClipWarpRowV1::Knot(knot) | FootCycleClipWarpRowV1::Coalesced(_, knot)
+                    if knot.control_point_index() == point_index =>
+                {
+                    Some(knot)
+                }
+                _ => None,
+            })
+            .expect("interior alternate knot remains present");
+        assert_eq!(
+            altered_knot.control_point_index(),
+            original_knot.control_point_index()
+        );
+        assert_eq!(altered_knot.source_time().to_bits(), source_time.to_bits());
+        assert_eq!(altered_knot.output_time().to_bits(), output_time.to_bits());
+        rows[row_index] = match rows[row_index] {
+            FootCycleClipWarpRowV1::Knot(_) => FootCycleClipWarpRowV1::Knot(altered_knot),
+            FootCycleClipWarpRowV1::Coalesced(key, _) => {
+                FootCycleClipWarpRowV1::Coalesced(key, altered_knot)
+            }
+            FootCycleClipWarpRowV1::Authored(_) => unreachable!(),
+        };
+        for (index, (before, after)) in original.iter().zip(&rows).enumerate() {
+            if index != row_index {
+                assert_eq!(before, after, "only the selected knot metadata changes");
             }
         }
+        rows
+    }
+
+    fn assert_producer_output_time_is_ignored(row_index: usize) {
+        let (source, correct, operation) = producer_time_fixture();
+        let ContactTransformOperationV1::TimeWarp { control_points, .. } = &operation else {
+            unreachable!()
+        };
+        let source = &source.tracks[0];
+        let correct = &correct.tracks[0];
+        let output_time = correct.times[row_index];
+        for altered_time in [output_time.next_down(), output_time.next_up()] {
+            assert_eq!(altered_time.to_bits().abs_diff(output_time.to_bits()), 1);
+            let rows = rows_with_producer_time(
+                source,
+                control_points,
+                row_index,
+                control_points[row_index].input_time() as f32,
+                altered_time,
+            );
+            let mut wrong = correct.clone();
+            wrong.times[row_index] = altered_time;
+            assert_eq!(
+                prove_track_map_rows(source, &wrong, control_points, 1.0, rows.clone())
+                    .unwrap_err()
+                    .kind(),
+                FootCycleProofKind::ClipMap,
+                "must reject producer output {altered_time:?} at row {row_index}"
+            );
+            prove_track_map_rows(source, correct, control_points, 1.0, rows).unwrap();
+        }
+    }
+
+    #[test]
+    fn clip_map_proof_ignores_knot_producer_output_time() {
+        assert_producer_output_time_is_ignored(2);
+    }
+
+    #[test]
+    fn clip_map_proof_ignores_coalesced_producer_output_time() {
+        assert_producer_output_time_is_ignored(1);
+    }
+
+    fn assert_producer_source_time_is_ignored(row_index: usize) {
+        let (source, correct, operation) = producer_time_fixture();
+        let ContactTransformOperationV1::TimeWarp { control_points, .. } = &operation else {
+            unreachable!()
+        };
+        let source = &source.tracks[0];
+        let correct = &correct.tracks[0];
+        let source_time = control_points[row_index].input_time() as f32;
+        for altered_time in [source_time.next_down(), source_time.next_up()] {
+            assert_eq!(altered_time.to_bits().abs_diff(source_time.to_bits()), 1);
+            let rows = rows_with_producer_time(
+                source,
+                control_points,
+                row_index,
+                altered_time,
+                correct.times[row_index],
+            );
+            let TrackSample::Vec3(sampled) = sample_track(source, altered_time) else {
+                unreachable!("translation fixture")
+            };
+            assert!(
+                sampled
+                    .to_array()
+                    .iter()
+                    .all(|v| v.to_bits() == (altered_time - 0.25).to_bits()),
+                "analytic sample preserves the one-place source delta"
+            );
+            assert!(
+                !samples_equal_bits(
+                    TrackSample::Vec3(sampled),
+                    key_sample(correct, row_index).unwrap()
+                ),
+                "the perturbation must change stored sample bits in both directions"
+            );
+            let mut wrong = correct.clone();
+            let TrackValues::Vec3s(values) = &mut wrong.values else {
+                unreachable!()
+            };
+            values[row_index] = sampled;
+            // For Coalesced, source metadata is unused once the authored index
+            // is frozen: accepting the authored value is part of the contract.
+            prove_track_map_rows(source, correct, control_points, 1.0, rows.clone()).unwrap();
+            assert_eq!(
+                prove_track_map_rows(source, &wrong, control_points, 1.0, rows)
+                    .unwrap_err()
+                    .kind(),
+                FootCycleProofKind::ClipMap,
+                "must reject resampling at producer source {altered_time:?} at row {row_index}"
+            );
+        }
+    }
+
+    #[test]
+    fn clip_map_proof_ignores_knot_producer_source_time() {
+        assert_producer_source_time_is_ignored(2);
+    }
+
+    #[test]
+    fn clip_map_proof_keeps_coalesced_authored_value_despite_producer_source_time() {
+        assert_producer_source_time_is_ignored(1);
     }
 
     /// The far edge of the same contract, from the proof's side: a control
