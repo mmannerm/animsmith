@@ -1076,6 +1076,44 @@ mod tests {
     use super::*;
     use crate::foot_cycle_source_prep::tests::{Fixture, FixtureOptions};
 
+    #[test]
+    fn every_planner_variant_keeps_its_route_and_names_its_rule_and_member() {
+        let cases = crate::foot_cycle_source_prep::tests::planner_diagnostic_cases();
+        let mut labels = std::collections::BTreeSet::new();
+        for (error, expected, operator) in cases {
+            assert!(
+                labels.insert(expected.clone()),
+                "each variant needs its own label"
+            );
+            match classify_preparation(error) {
+                ProducerFailure::Operator(detail) => {
+                    assert!(operator, "unexpected operator failure: {detail}");
+                    assert_eq!(detail, expected);
+                }
+                ProducerFailure::Refusal(rejection) => {
+                    assert!(!operator, "unexpected refusal: {}", rejection.detail);
+                    let json = serde_json::to_value(rejection).unwrap();
+                    assert_eq!(json["stage"], "analysis");
+                    assert_eq!(json["kind"], "asset-recipe-mismatch");
+                    assert_eq!(json["detail"], expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn proof_refusals_name_the_judged_member_including_clips_sharing_a_source() {
+        for (error, expected) in crate::foot_cycle_proof::tests::member_diagnostic_cases() {
+            let ProducerFailure::Refusal(rejection) = classify_proof(error) else {
+                panic!("member proof failure must remain a refusal");
+            };
+            let json = serde_json::to_value(rejection).unwrap();
+            assert_eq!(json["stage"], "proof");
+            assert_eq!(json["kind"], "proof-failed");
+            assert_eq!(json["detail"], expected);
+        }
+    }
+
     struct BrokenPipe;
 
     impl std::io::Write for BrokenPipe {

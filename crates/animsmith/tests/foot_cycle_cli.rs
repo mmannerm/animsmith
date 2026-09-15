@@ -576,8 +576,8 @@ fn public_command_splits_plan_and_source_refusals_from_operator_failures() {
     let result = noncanonical.run();
     assert_eq!(result.status.code(), Some(2));
     assert!(result.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("contact-invalid"));
-    assert!(!noncanonical.destination.exists());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("non-canonical-fragment"));
+    assert_no_published_output_or_host_paths(&noncanonical, &result);
 
     let mismatch = FootCycleFixture::create();
     rewrite_canonical_json(&mismatch.root.join("contacts/a.json"), |fragment| {
@@ -586,8 +586,8 @@ fn public_command_splits_plan_and_source_refusals_from_operator_failures() {
     let result = mismatch.run();
     assert_eq!(result.status.code(), Some(2));
     assert!(result.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&result.stderr).contains("plan-binding-mismatch"));
-    assert!(!mismatch.destination.exists());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("fragment-clip-mismatch"));
+    assert_no_published_output_or_host_paths(&mismatch, &result);
 
     let unsupported = FootCycleFixture::create();
     rewrite_canonical_json(&unsupported.root.join("contacts/a.json"), |fragment| {
@@ -601,7 +601,11 @@ fn public_command_splits_plan_and_source_refusals_from_operator_failures() {
     assert_eq!(refusal["command"], "collection-transform-foot-cycle");
     assert_eq!(refusal["rejection"]["stage"], "analysis");
     assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
-    assert!(!unsupported.destination.exists());
+    assert_eq!(
+        refusal["rejection"]["detail"],
+        "foot-cycle source preparation failed (unsupported-contact-extension)"
+    );
+    assert_no_published_output_or_host_paths(&unsupported, &result);
 
     let invalid_topology = FootCycleFixture::create();
     rewrite_canonical_json(&invalid_topology.root.join("contacts/a.json"), |fragment| {
@@ -623,7 +627,11 @@ fn public_command_splits_plan_and_source_refusals_from_operator_failures() {
     let refusal: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(refusal["rejection"]["stage"], "analysis");
     assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
-    assert!(!invalid_topology.destination.exists());
+    assert_eq!(
+        refusal["rejection"]["detail"],
+        "foot-cycle source preparation failed (invalid-contact-topology)"
+    );
+    assert_no_published_output_or_host_paths(&invalid_topology, &result);
 
     let invalid_asset = FootCycleFixture::create();
     fs::write(invalid_asset.root.join("assets/a.gltf"), b"{}").unwrap();
@@ -645,6 +653,117 @@ fn public_command_splits_plan_and_source_refusals_from_operator_failures() {
         b"animsmith: foot-cycle source preparation failed (control)\n"
     );
     assert!(!missing_config.destination.exists());
+}
+
+fn assert_no_published_output_or_host_paths(fixture: &FootCycleFixture, result: &Output) {
+    assert!(!fixture.destination.exists());
+    assert_eq!(
+        fs::read_dir(fixture.root.join("generated"))
+            .unwrap()
+            .count(),
+        0
+    );
+    for bytes in [&result.stdout, &result.stderr] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains(fixture.root.to_str().unwrap()),
+            "host path in {text}"
+        );
+        assert!(!text.contains("contacts/a.json"));
+        assert!(!text.contains("assets/a.gltf"));
+    }
+}
+
+fn assert_planner_refusal(fixture: &FootCycleFixture, expected_detail: &str) {
+    let result = fixture.run();
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stdout: {} stderr: {}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stderr.is_empty());
+    let refusal: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(refusal["schema"], "urn:animsmith:schema:producer-refusal:1");
+    assert_eq!(refusal["command"], "collection-transform-foot-cycle");
+    assert_eq!(refusal["rejection"]["stage"], "analysis");
+    assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
+    assert_eq!(refusal["rejection"]["detail"], expected_detail);
+    assert_no_published_output_or_host_paths(fixture, &result);
+}
+
+fn rewrite_contact_windows(fixture: &FootCycleFixture, member: &str, windows: &[(&str, f64, f64)]) {
+    rewrite_canonical_json(
+        &fixture.root.join(format!("contacts/{member}.json")),
+        |fragment| {
+            let events = windows.iter().enumerate().flat_map(|(index, (role, start, end))| [
+            json!({"event_id": format!("support/{index}"), "role": role, "phase": "begin", "window": {"start": start, "end": end}}),
+            json!({"event_id": format!("marker/{index}"), "role": role, "phase": "marker", "time": (start + end) / 2.0}),
+        ]).collect::<Vec<_>>();
+            fragment["events"] = json!(events);
+        },
+    );
+}
+
+#[test]
+fn planner_diagnostics_distinguish_topology_map_and_member_root_failures() {
+    let topology = FootCycleFixture::create();
+    rewrite_contact_windows(
+        &topology,
+        "b",
+        &[
+            ("left_foot", 0.05, 0.1),
+            ("right_foot", 0.2, 0.3),
+            ("left_foot", 0.5, 0.6),
+            ("right_foot", 0.8, 0.9),
+        ],
+    );
+    assert_planner_refusal(
+        &topology,
+        "foot-cycle source preparation failed (topology-mismatch)",
+    );
+
+    let nonmonotone = FootCycleFixture::create();
+    rewrite_contact_windows(
+        &nonmonotone,
+        "a",
+        &[("left_foot", 0.1, 0.3), ("right_foot", 0.3, 0.6)],
+    );
+    rewrite_contact_windows(
+        &nonmonotone,
+        "b",
+        &[("left_foot", 0.1, 0.25), ("right_foot", 0.3, 0.6)],
+    );
+    assert_planner_refusal(
+        &nonmonotone,
+        "foot-cycle source preparation failed (non-monotone-mapping)",
+    );
+
+    let slope = FootCycleFixture::create();
+    let text = fs::read_to_string(&slope.parameterization)
+        .unwrap()
+        .replace(
+            "minimum_segment_slope = 0.25",
+            "minimum_segment_slope = 1.0",
+        )
+        .replace("maximum_segment_slope = 4.0", "maximum_segment_slope = 1.0");
+    fs::write(&slope.parameterization, text).unwrap();
+    assert_planner_refusal(
+        &slope,
+        "foot-cycle source preparation failed (segment-slope-out-of-range)",
+    );
+
+    let missing_root = FootCycleFixture::create();
+    let config = missing_root.root.join("config.toml");
+    let text = fs::read_to_string(&config)
+        .unwrap()
+        .replace("root = \"R0\", hips = \"H0\", ", "");
+    fs::write(config, text).unwrap();
+    assert_planner_refusal(
+        &missing_root,
+        "foot-cycle source preparation failed (root-motion-evidence-unavailable) for member com.example/a",
+    );
 }
 
 #[test]
