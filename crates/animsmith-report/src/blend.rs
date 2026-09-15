@@ -280,8 +280,8 @@ mod tests {
         assert_eq!(full["findings"], evidence["findings"]);
     }
     #[test]
-    fn invalid_clip_omission_preserves_other_clips_and_source_data() {
-        for mutation in 0..7 {
+    fn clip_admission_preserves_other_clips_and_source_data() {
+        for mutation in 0..10 {
             let mut doc = document();
             let good = payload(&doc, false, None);
             let mut bad = doc.clips[0].clone();
@@ -311,14 +311,35 @@ mod tests {
             doc.clips.push(bad);
             let data = payload(&doc, false, None);
             assert_eq!(data["clips"][0], good["clips"][0]);
-            assert!(
-                data["clips"][1].get("locals").is_none(),
+            // The existing temporal sampler normalizes finite authored
+            // quaternions. Admission judges its sampled results, not original
+            // key lengths; missing/rest quaternions are covered separately.
+            let admitted = matches!(mutation, 7 | 8);
+            assert_eq!(
+                data["clips"][1]["locals"].is_string(),
+                admitted,
                 "mutation {mutation}"
             );
-            assert!(
+            assert_eq!(
                 data["clips"][1]["blend_omission"].is_string(),
+                !admitted,
                 "mutation {mutation}"
             );
+            if admitted {
+                let raw = base64::engine::general_purpose::STANDARD
+                    .decode(data["clips"][1]["locals"].as_str().unwrap())
+                    .unwrap();
+                for record in raw.chunks_exact(40) {
+                    let norm = record[12..28]
+                        .chunks_exact(4)
+                        .map(|bytes| {
+                            f64::from(f32::from_le_bytes(bytes.try_into().unwrap())).powi(2)
+                        })
+                        .sum::<f64>()
+                        .sqrt();
+                    assert!((norm - 1.0).abs() <= 1e-4, "mutation {mutation}");
+                }
+            }
             assert!(data["clips"][1]["positions"].is_string());
             assert_eq!(data["findings"], good["findings"]);
             assert_eq!(
