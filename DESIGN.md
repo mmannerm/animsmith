@@ -694,7 +694,7 @@ side-specific, so a missing finding cannot read as acceptance.
   in JS.** The Rust side already computed the `PoseGrid` — model-space
   joint positions for every frame the checks judged. Embed that.
 
-So the viewer is a hand-written **WebGL2 skeleton renderer (~15KB)**:
+The source viewer is a hand-written **WebGL2 skeleton renderer**:
 bones as line segments, joint dots, root-motion and foot trails, orbit
 camera, play/scrub transport. It renders exactly the frames the checks
 measured — when `loop-seam` flags the wrap at frame N, the viewer scrubs
@@ -726,9 +726,22 @@ to *that* frame N. Determinism is the feature.
   labelled. Both viewers place their two timelines through that one shared
   mapping and label it with one shared disclosure sentence.
   Like the comparison's shared phase it is a presentation mapping between two
-  timelines, not a retime: it selects samples the checks judged, nothing is
-  resampled, interpolated, or blended, so the view claims nothing about a
-  runtime blend of the pair.
+  timelines, not a retime: the source panes select the samples the checks
+  judged and never resample authored clip time.
+- **Illustrative local blend**: an optional third pane in the single-document
+  report interpolates dense Rust-sampled local TRS, then runs full affine FK.
+  Its continuous weight uses T/S lerp and shortest-hemisphere quaternion nlerp
+  in binary64; exact endpoint weights reuse the source positions. A private
+  binary64 Rust reference supplies synthetic conformance fixtures. No authored
+  key sampler, rest-pose duplicate, all-pairs table, core measurement or engine
+  runtime claim is introduced. The existing shared camera/orbit/zoom remains;
+  interior poses may extend beyond its initial source bounds.
+  The added local authority has a 32 MiB aggregate raw-byte cap plus clip,
+  bone and metadata limits. Aggregate excess omits all local streams; invalid
+  clips omit their own stream. Neither changes source findings, source playback
+  or the public infallible render API. Evidence-only embeds neither positions
+  nor locals. [The output guide](docs/output.md#html-report-source-poses-and-illustrative-blending)
+  owns the detailed math, limits, omission and presentation contract.
 - A skinned-mesh view (vendored three.js, `--report full`) is a P2 option
   the crate layout leaves room for; it is presentation polish, not v1.
 

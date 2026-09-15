@@ -44,7 +44,13 @@ which one to re-anchor to the project.
 [Open the interactive report](../visuals/run-ring.report.html) to play the two
 members together at one phase; the `with` selector pairs any two members, and
 both source times are labelled because the pairing is a presentation mapping
-between two timelines rather than a retime.
+between two timelines rather than a retime. Enable `illustrative blend` and
+move the weight slider to inspect a third pose computed from their sampled
+local transforms. The source panes keep the judged frames; the third pane is
+engine-agnostic presentation and adds no measured finding. It does not model
+your engine's masks, controller, root-motion policy or contact handling. Check
+the result in the intended runtime; zoom out if an interior pose extends beyond
+the source-based camera fit.
 
 ## What the finding looks like
 

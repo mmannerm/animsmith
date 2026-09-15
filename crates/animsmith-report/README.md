@@ -13,8 +13,10 @@ the crate returns self-contained HTML without flattening predictions into findin
 
 The report embeds the pose-grid frames computed on the Rust side and
 plays back exactly those frames in a small hand-written WebGL viewer.
-There is no CDN, no three.js dependency, and no JavaScript resampling;
-when a finding names a frame, the viewer scrubs to that judged frame.
+There is no CDN, no three.js dependency, and no JavaScript resampling of
+authored clip time; when a finding names a frame, the source viewer scrubs to
+that judged frame. An optional illustrative pane interpolates embedded sampled
+local transforms across blend weight and runs forward kinematics.
 
 The viewer's `with` control plays a second clip of the same document beside
 the selected one, in two scissored halves of the one canvas, through one
@@ -22,9 +24,20 @@ camera fitted to both clips' bounds, with a key naming each half in the token
 its skeleton is drawn in. Each half is shown at the frame nearest a shared
 normalized phase in its own grid — the same frame its chart playhead and path
 dot use — with both source times labelled: a presentation mapping between two
-timelines, not a retime and not a blend.
+timelines, not a retime. With a pair selected, the `illustrative blend` checkbox
+adds a third pane and a weight slider. It uses translation/scale lerp and
+shortest-hemisphere quaternion nlerp, followed by full affine forward
+kinematics. Source positions remain the exact judged samples. This view is
+engine-agnostic presentation, not a check or runtime conformance result.
 
-`ReportOptions::evidence_only` omits the sampled pose grid from either report
+The additional sampled local streams have a 32 MiB aggregate raw-byte budget;
+exceeding it omits blending while preserving source playback and findings.
+Malformed clips omit their own blend capability. The existing `render` API
+remains infallible, and this added-data budget does not bound all report memory.
+See the [blend presentation contract](https://github.com/mmannerm/animsmith/blob/main/docs/output.md#html-report-source-poses-and-illustrative-blending)
+for the exact math, work bounds, omission rules and camera limitations.
+
+`ReportOptions::evidence_only` omits sampled positions and local transforms from either report
 form, for sharing evidence where the motion itself cannot travel; the
 [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#commands)
 describes exactly what it keeps and drops.

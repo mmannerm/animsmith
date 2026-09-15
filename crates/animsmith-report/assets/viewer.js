@@ -1,6 +1,6 @@
 // animsmith report viewer — hand-written WebGL2 skeleton renderer.
-// Renders exactly the pose-grid frames the checks judged; no animation
-// sampling happens here.
+// Source panes draw judged pose-grid frames. The optional illustrative pane
+// blends sampled locals across weight; authored clip time is never resampled.
 "use strict";
 
 const data = JSON.parse(document.getElementById("report-data").textContent);
@@ -44,6 +44,119 @@ for (const clip of data.clips) {
 
 const boneCount = data.bones.length;
 const parents = data.bones.map((b) => b.parent);
+
+// ---- sampled-local-trs-blend-v1 ----------------------------------------
+// This authority is optional and separate from the judged source positions.
+// Validate aggregate lengths before any local decode; selected streams only.
+function blendAuthorityError() {
+  const b = data.blend;
+  if (!canvas) return "pose data omitted";
+  if (!b || b.kind !== "sampled-local-trs-blend-v1") return "missing sampled local authority";
+  if (b.omission) return b.omission;
+  if (boneCount < 1 || boneCount > 1024 || data.clips.length > 4096 ||
+      parents.some((p, i) => !Number.isInteger(p) || p < -1 || p >= i)) return "invalid blend counts or parent hierarchy";
+  let raw = 0, encoded = 0;
+  for (const c of data.clips) {
+    if (c.locals === undefined) continue;
+    const bytes = c.frames * boneCount * 40;
+    if (!Number.isSafeInteger(c.frames) || c.frames < 1 || !Number.isSafeInteger(bytes) ||
+        typeof c.locals !== "string" || c.locals.length !== 4 * Math.ceil(bytes / 3)) return "invalid local stream length";
+    raw += bytes; encoded += c.locals.length;
+    if (raw > 33554432 || encoded > 44750164) return "added local-transform data exceeds the report blend budget";
+  }
+  return raw === b.raw_bytes && encoded === b.base64_bytes ? null : "aggregate local byte counts do not match";
+}
+const blendAuthorityReason = blendAuthorityError();
+let localCache = new Map();
+let selectedBlendReason = null;
+let blendWeight = 0.5;
+let blendEnabled = false;
+// Buffers are allocated only after aggregate admission, once per document.
+const blendWorld = !blendAuthorityReason ? new Float64Array(boneCount * 16) : null;
+const blendOutput = !blendAuthorityReason ? new Float32Array(boneCount * 3) : null;
+const blendLocal = !blendAuthorityReason ? new Float64Array(16) : null;
+function decodeLocals(c) {
+  if (!Number.isFinite(c.duration) || typeof c.locals !== "string") throw new Error(c.blend_omission || "missing sampled locals");
+  // Strict alphabet and length/padding as well as decoded length: atob implementations
+  // may accept whitespace and noncanonical encodings. Validation precedes buffers.
+  const bytes = c.frames * boneCount * 40;
+  const padding = (3 - bytes % 3) % 3;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(c.locals) ||
+      (c.locals.match(/=*$/)[0].length !== padding)) throw new Error("invalid local base64");
+  const raw = atob(c.locals);
+  if (raw.length !== bytes) throw new Error("invalid decoded local length");
+  const packed = new Uint8Array(bytes);
+  for (let i = 0; i < bytes; i++) packed[i] = raw.charCodeAt(i);
+  const view = new DataView(packed.buffer);
+  const values = new Float32Array(bytes / 4);
+  for (let i = 0; i < values.length; i++) {
+    values[i] = view.getFloat32(i * 4, true);
+    if (!Number.isFinite(values[i])) throw new Error("non-finite sampled local transform");
+  }
+  for (let i = 0; i < values.length; i += 10) {
+    const n = Math.hypot(values[i+3], values[i+4], values[i+5], values[i+6]);
+    if (!Number.isFinite(n) || n === 0 || Math.abs(n - 1) > 1e-4) throw new Error("sampled quaternion length is outside 1 +/- 1e-4");
+  }
+  return values;
+}
+function selectBlendLocals() {
+  selectedBlendReason = blendAuthorityReason;
+  // Evict first, so switching pairs never retains three decoded streams.
+  for (const c of localCache.keys()) if (!blendEnabled || !withClip || (c !== clip && c !== withClip)) localCache.delete(c);
+  if (!blendEnabled || !withClip || selectedBlendReason) return;
+  for (const c of [clip, withClip]) {
+    try { if (!localCache.has(c)) localCache.set(c, decodeLocals(c)); }
+    catch (error) { selectedBlendReason = error.message; localCache.clear(); return; }
+  }
+}
+function blendPose(aFrame, bFrame) {
+  if (selectedBlendReason) return null;
+  // Endpoint positions are copied from complete judged source poses, exactly.
+  if (blendWeight === 0 || blendWeight === 1) {
+    const c = blendWeight === 0 ? clip : withClip;
+    const start = (blendWeight === 0 ? aFrame : bFrame) * boneCount * 3;
+    for (let i = 0; i < blendOutput.length; i++) {
+      const value = c.pos[start+i];
+      if (!Number.isFinite(value)) return null;
+      blendOutput[i] = value;
+    }
+    return blendOutput;
+  }
+  const a = localCache.get(clip), b = localCache.get(withClip);
+  if (!a || !b) return null;
+  const w = blendWeight, v = 1-w, m = blendLocal;
+  for (let bone = 0; bone < boneCount; bone++) {
+    const ai = (aFrame * boneCount + bone) * 10, bi = (bFrame * boneCount + bone) * 10;
+    const an = Math.hypot(a[ai+3],a[ai+4],a[ai+5],a[ai+6]), bn = Math.hypot(b[bi+3],b[bi+4],b[bi+5],b[bi+6]);
+    const ax=a[ai+3]/an, ay=a[ai+4]/an, az=a[ai+5]/an, aw=a[ai+6]/an;
+    let bx=b[bi+3]/bn, by=b[bi+4]/bn, bz=b[bi+5]/bn, bw=b[bi+6]/bn;
+    if (ax*bx + ay*by + az*bz + aw*bw < 0) { bx=-bx; by=-by; bz=-bz; bw=-bw; }
+    let x=v*ax+w*bx, y=v*ay+w*by, z=v*az+w*bz, q=v*aw+w*bw;
+    const n=Math.hypot(x,y,z,q); x/=n; y/=n; z/=n; q/=n;
+    const sx=v*a[ai+7]+w*b[bi+7], sy=v*a[ai+8]+w*b[bi+8], sz=v*a[ai+9]+w*b[bi+9];
+    // Column-vector T*R*S. Preserve every affine component through the chain.
+    m[0]=(1-2*(y*y+z*z))*sx; m[1]=2*(x*y+q*z)*sx; m[2]=2*(x*z-q*y)*sx; m[3]=0;
+    m[4]=2*(x*y-q*z)*sy; m[5]=(1-2*(x*x+z*z))*sy; m[6]=2*(y*z+q*x)*sy; m[7]=0;
+    m[8]=2*(x*z+q*y)*sz; m[9]=2*(y*z-q*x)*sz; m[10]=(1-2*(x*x+y*y))*sz; m[11]=0;
+    m[12]=v*a[ai]+w*b[bi]; m[13]=v*a[ai+1]+w*b[bi+1]; m[14]=v*a[ai+2]+w*b[bi+2]; m[15]=1;
+    const out=bone*16, parent=parents[bone]*16;
+    for (let col=0; col<4; col++) for (let row=0; row<4; row++) {
+      let value=m[col*4+row];
+      if (parent >= 0) {
+        value=0;
+        for (let k=0;k<4;k++) value += blendWorld[parent+k*4+row]*m[col*4+k];
+      }
+      if (!Number.isFinite(value)) return null;
+      blendWorld[out+col*4+row]=value;
+    }
+    for (let c=0;c<3;c++) {
+      const value=Math.fround(blendWorld[out+12+c]);
+      if (!Number.isFinite(value)) return null;
+      blendOutput[bone*3+c]=value;
+    }
+  }
+  return blendOutput;
+}
 
 // ---- tiny mat4 -------------------------------------------------------
 function perspective(fovy, aspect, near, far) {
@@ -209,6 +322,34 @@ function buildVertices(palette, pane) {
 // #gl at all — keeps working unchanged.
 function draw() {
   if (!gl || !shown.length) return;
+  // Clear and reconstruct the pane list on every draw: a failed calculation
+  // cannot keep uploading a previously valid blend buffer.
+  const panes = shown.slice();
+  if (blendStatus) {
+    blendCaption.hidden = !blendEnabled || !withClip;
+    blendStatus.textContent = blendAuthorityReason || "";
+  }
+  if (blendEnabled && withClip) {
+    const positions = blendPose(shown[0].at, shown[1].at);
+    if (positions) {
+      panes.push({clip: {pos: positions}, at: 0, bones: "pass", joints: "pass", key: "illustrative blend"});
+      blendStatus.textContent = clip.name + " " + stamp(shown[0]) + " · " + withClip.name + " " + stamp(shown[1]) + " · weight " + blendWeight.toFixed(3);
+    } else {
+      blendStatus.textContent = "Illustrative blend unavailable for the selected clips: " + (selectedBlendReason || "computed pose is not finite or representable as binary32") + ". Source findings remain available.";
+    }
+  }
+  if (paneLabels) {
+    paneLabels.replaceChildren();
+    for (const pane of panes) {
+      const span = document.createElement("span");
+      span.textContent = pane.key;
+      span.style.color = "var(--" + pane.bones + ")";
+      paneLabels.appendChild(span);
+    }
+  }
+  // Keep source viewport proportions when adding the third pane. Camera fit,
+  // orbit and zoom remain the same; only the canvas layout becomes shorter.
+  canvas.style.aspectRatio = panes.length === 3 ? "2 / 1" : "4 / 3";
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth * dpr, h = canvas.clientHeight * dpr;
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -219,9 +360,9 @@ function draw() {
     center[2] + dist * Math.cos(pitch) * Math.cos(yaw),
   ];
   gl.enable(gl.SCISSOR_TEST);
-  const wide = Math.floor(w / shown.length);
-  shown.forEach((pane, index) => {
-    const x = index * wide, pw = index === shown.length - 1 ? w - x : wide;
+  const wide = Math.floor(w / panes.length);
+  panes.forEach((pane, index) => {
+    const x = index * wide, pw = index === panes.length - 1 ? w - x : wide;
     // Scissoring keeps each pane's clear inside its own slice, so neither
     // pose can paint over the other's.
     gl.viewport(x, 0, pw, h);
@@ -244,6 +385,11 @@ function draw() {
 // ---- UI ----------------------------------------------------------------
 const clipSelect = document.getElementById("clip-select");
 const withSelect = document.getElementById("with-select");
+const pairNotice = document.getElementById("pair-notice");
+const blendToggle = canvas ? document.getElementById("blend-enable") : null;
+const weightInput = canvas ? document.getElementById("blend-weight") : null;
+const blendStatus = canvas ? document.getElementById("blend-status") : null;
+const blendCaption = canvas ? document.getElementById("blend-caption") : null;
 const scrub = document.getElementById("scrub");
 const playBtn = document.getElementById("play");
 const timeLabel = document.getElementById("time");
@@ -258,41 +404,37 @@ const option = (value, text) => {
   opt.textContent = text;
   return opt;
 };
-for (const c of data.clips) clipSelect.appendChild(option(c.name, c.name));
+for (const [index, c] of data.clips.entries()) clipSelect.appendChild(option(String(index), c.name));
 
 // The chrome that follows the selection rather than the transport: the
 // second select's own options, which never offer the clip already selected,
 // and the colour key naming each half in the token its skeleton is drawn in.
 // Both are rebuilt when the selection changes, not on every frame.
 function refreshPairing() {
-  const chosen = withClip ? withClip.name : "";
+  const chosen = withClip ? String(data.clips.indexOf(withClip)) : "";
   withSelect.replaceChildren();
   withSelect.appendChild(option("", "alone"));
-  for (const c of data.clips) {
-    if (clip && c.name === clip.name) continue;
-    withSelect.appendChild(option(c.name, c.name));
+  for (const [index, c] of data.clips.entries()) {
+    if (c === clip) continue;
+    withSelect.appendChild(option(String(index), c.name));
   }
   withSelect.value = chosen;
   // A document with one clip has nothing to pair it with.
   withSelect.disabled = data.clips.length < 2;
-  // An evidence-only document draws no halves, so it carries no key to fill.
-  if (paneLabels) {
-    paneLabels.replaceChildren();
-    for (const pane of shown) {
-      // textContent throughout: clip names come from the linted asset. The
-      // colour is the pane's own token, so the key cannot name a half in a
-      // colour that half is not drawn in.
-      const span = document.createElement("span");
-      span.textContent = pane.key;
-      span.style.color = "var(--" + pane.bones + ")";
-      paneLabels.appendChild(span);
-    }
+  withSelect.hidden = data.clips.length < 2;
+  document.getElementById("with-label").hidden = data.clips.length < 2;
+  if (blendToggle) {
+    blendToggle.disabled = !withClip;
+    weightInput.disabled = !withClip || !blendEnabled;
+    document.getElementById("blend-controls").hidden = data.clips.length < 2;
   }
+
 }
 
 // One clip's position in its own timeline, as the label states it.
-const stamp = (pane) =>
-  (animsmithPhaseOf(pane.clip.frames, pane.at) * pane.clip.duration).toFixed(3) + "s / " +
+const stamp = (pane) => !Number.isFinite(pane.clip.duration)
+  ? "time unavailable (frame " + pane.at + ")"
+  : (animsmithPhaseOf(pane.clip.frames, pane.at) * pane.clip.duration).toFixed(3) + "s / " +
   pane.clip.duration.toFixed(3) + "s (frame " + pane.at + ")";
 
 // The transport moved: rebuild the panes and everything that reads them.
@@ -312,27 +454,33 @@ function refresh() {
 function reselect() {
   refreshShown();
   refreshPairing();
+  selectBlendLocals();
   fitCamera();
   refresh();
 }
 
-function selectClip(name) {
-  clip = data.clips.find((c) => c.name === name) || data.clips[0];
+function uniqueClip(name) {
+  const matches = data.clips.filter((c) => c.name === name);
+  return matches.length === 1 ? matches[0] : null;
+}
+function selectClip(name, index = null) {
+  clip = index === null ? uniqueClip(name) || data.clips[0] : data.clips[index];
   if (!clip) return;
-  clipSelect.value = clip.name;
+  clipSelect.value = String(data.clips.indexOf(clip));
   scrub.max = clip.frames - 1;
   // A clip cannot be paired with itself, so selecting the paired clip as the
   // primary one leaves it alone rather than drawing it twice.
-  if (withClip && withClip.name === clip.name) withClip = null;
+  if (withClip === clip) withClip = null;
   frame = Math.min(frame, clip.frames - 1);
   reselect();
 }
 
 // The empty name, an unknown clip, and the clip already selected all mean
 // alone, which is the default this state returns to.
-function selectWith(name) {
-  const found = name ? data.clips.find((c) => c.name === name) : null;
-  withClip = found && clip && found.name !== clip.name ? found : null;
+function selectWith(name, index = null) {
+  const found = index === null ? (name ? uniqueClip(name) : null) : data.clips[index];
+  withClip = found && clip && found !== clip ? found : null;
+  pairNotice.textContent = name && !withClip ? "Paired clip is missing, ambiguous, or the primary clip; showing the primary clip alone." : "";
   reselect();
 }
 
@@ -348,7 +496,7 @@ const groupMembers = new Map((data.groups || []).map((g) => [g.name, g.members])
 
 function updateCharts() {
   if (!clip) return;
-  const paneOf = new Map(shown.map((pane) => [pane.clip.name, pane]));
+  const paneOf = new Map(shown.map((pane) => [data.clips.indexOf(pane.clip), pane]));
   // A group figure's axis is the stride cycle its members were measured on,
   // which excludes the duplicate wrap sample a longer grid repeats, and it is
   // the selected clip's cycle: pairing a second clip beside it adds a pane,
@@ -370,7 +518,7 @@ function updateCharts() {
     // one of the panes on screen — the selected one, or the clip paired
     // beside it — and it is driven by that pane's own frame.
     const members = "group" in fig.dataset ? (groupMembers.get(fig.dataset.group) || []) : null;
-    const pane = members ? null : paneOf.get(fig.dataset.clip);
+    const pane = members ? null : paneOf.get(Number(fig.dataset.clipindex));
     const active = members ? members.includes(clip.name) : Boolean(pane);
     fig.style.display = active ? "" : "none";
     if (!active) continue;
@@ -404,11 +552,24 @@ function updateCharts() {
   }
 }
 
-clipSelect.addEventListener("change", () => { frame = 0; selectClip(clipSelect.value); });
+clipSelect.addEventListener("change", () => { frame = 0; selectClip(null, Number(clipSelect.value)); });
 // Pairing is not a position, so it neither moves the transport nor stops
 // it — a running report keeps playing and the second clip follows from the
 // frame the first is already on.
-withSelect.addEventListener("change", () => selectWith(withSelect.value));
+withSelect.addEventListener("change", () => selectWith(null, withSelect.value === "" ? null : Number(withSelect.value)));
+if (blendToggle) {
+  blendToggle.addEventListener("change", () => {
+    blendEnabled = blendToggle.checked;
+    selectBlendLocals();
+    refreshPairing();
+    refresh();
+  });
+  weightInput.addEventListener("input", () => {
+    const weight = Number(weightInput.value);
+    blendWeight = Number.isFinite(weight) ? Math.max(0, Math.min(1, weight)) : 0.5;
+    refresh();
+  });
+}
 scrub.addEventListener("input", () => { pausePlayback(); setFrame(+scrub.value); });
 
 // The frame loop's ownership lives in the shared runtime, so both documents
@@ -429,7 +590,7 @@ function pausePlayback() {
   playBtn.setAttribute("aria-label", "Play the clip");
 }
 playBtn.addEventListener("click", () => {
-  if (!canvas) return;
+  if (!canvas || !Number.isFinite(clip?.duration) || clip.duration <= 0) return;
   if (playLoop.running) { pausePlayback(); return; }
   last = performance.now();
   playLoop.start();
@@ -560,8 +721,7 @@ function applyFragment() {
   // `embed` leave playback alone.
   if (options.clip !== undefined || options.finding !== undefined || options.frame !== undefined) pausePlayback();
   if (options.clip !== undefined && data.clips.length) {
-    const known = data.clips.some((c) => c.name === options.clip);
-    selectClip(known ? options.clip : data.clips[0].name);
+    selectClip(options.clip);
     setFrame(0);
   }
   // After `clip`, because which clip a name may not equal is the clip this
@@ -576,5 +736,5 @@ function applyFragment() {
 window.addEventListener("resize", draw);
 window.addEventListener("hashchange", applyFragment);
 animsmithOnSchemeChange(() => { palette = animsmithPalette(); draw(); });
-if (clip) { selectClip(clip.name); setFrame(0); }
+if (clip) { selectClip(null, 0); setFrame(0); }
 applyFragment();

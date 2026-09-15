@@ -5,6 +5,92 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## HTML report: source poses and illustrative blending
+
+The single-document report keeps source playback separate from its optional
+illustrative blend. Source panes draw the exact Rust model-space pose-grid
+positions judged by checks. With a pair selected, `illustrative blend` adds a
+third pane computed from the embedded `sampled-local-trs-blend-v1` presentation
+authority. It produces no finding, metric, animation export or engine-runtime
+conformance claim. The separate before/after comparison report keeps its
+existing source-pose and overlay behavior.
+
+### Samples and blend math
+
+Each included, admitted clip carries a dense local-transform stream alongside
+its source positions: frame-major, then bone-major, ten little-endian f32
+components per record in `tx, ty, tz, qx, qy, qz, qw, sx, sy, sz` order. Existing
+parent indices identify roots or earlier bones. Rust sampling has already
+filled absent channels from the rest transform; malformed channel storage is
+not treated as an absent channel. No rest-pose copy or authored animation
+tracks are added to the report.
+
+At shared normalized phase `u`, each clip selects its own nearest frame,
+`round(u * (frames - 1))`, clamped to its grid. The primary clip drives playback;
+both actual source times are labelled. This selects sampled frames and does
+not resample or time-warp authored clips. Pairing is available across admitted
+clips of the document and does not require gait-group membership. Name-based
+links resolve only unique names; an invalid or self-pair clears pairing.
+
+At an interior weight `w`, translation and scale use componentwise
+`(1-w)*a + w*b`. Rotations use shortest-hemisphere normalized linear
+interpolation (nlerp): normalize both quaternions, negate the second only when
+their dot product is negative, retain its sign at an exact zero-dot tie, then
+normalize the weighted sum. These calculations use binary64 arithmetic.
+Full column-vector affine matrices compose `T * R * S`, with each root's own
+transform and `world[parent] * local[child]`; this retains shear from rotated
+nonuniform-scale ancestors. Finite zero and negative scales are allowed.
+
+Weights 0 and 1 instead draw the corresponding source positions exactly.
+This explicit endpoint branch guarantees agreement with the source panes;
+it does not promise a universal continuity or imperceptibility bound for
+arbitrary scaled chains. Interior results must remain finite and representable
+as f32 before GPU upload; unavailable results clear the prior blend instead of
+displaying stale geometry. The binary64 Rust reference uses the same embedded
+f32 samples as the browser. Its synthetic-fixture conformance tolerance is
+`1e-5 + 1e-5 * abs(reference)` metres per position component, not an engine
+acceptance threshold or a proof for arbitrary skeletons.
+
+### Added-data limits and omissions
+
+The new local-authority path admits at most 1,024 bones, 4,096 included clips,
+65,536 aggregate track-metadata records and **32 MiB of added raw local data**
+(40 bytes per bone/frame, at most 838,860 complete records). Checked aggregate
+counts and byte arithmetic precede local-value inspection and stream
+allocation. The aggregate base64 allocation is also checked. Budget excess or
+arithmetic overflow omits all local streams, rather than keeping whichever
+clips fit first. Source playback, findings and report success remain intact.
+
+After aggregate admission, malformed track targets, properties, storage,
+cardinalities or duplicate channels omit that clip's complete local stream.
+Non-finite sampled components or quaternion length outside `1 +/- 1e-4` do the
+same. Invalid shared parent topology makes all blends unavailable. Each refusal
+shows a reason; source findings remain available. The browser retains at most
+two decoded local streams and uses reusable storage for one O(bones) blend/FK
+pass per repaint, with no all-pairs table or blended trail.
+
+This cap bounds added local data and its processing, not existing source pose
+allocation, sampling, checks, loader/caller data, full JSON or full HTML memory.
+`render(inputs) -> String` keeps its existing public API. The comparison's
+separate 32 MiB pose budget remains per side and is unchanged.
+
+All three panes use the same fixed source-based camera. Interior blended
+rotations can extend outside those bounds; use the existing orbit/zoom controls.
+There is no guarantee every interior pose fits the initial view and no
+weight-dependent automatic refit.
+
+The persistent caption reads:
+
+> Engine-agnostic illustrative blend of sampled local transforms (nlerp rotations).
+> Normalized phase, not a time warp. Not Bevy, Unity, Unreal or Godot runtime evidence.
+
+`--evidence-only` omits both source positions and local transforms and skips
+local-authority work. Both are motion-bearing data; neither belongs in a shared
+report when the source-motion license forbids it. The notice reads:
+
+> Pose playback and illustrative blending are omitted in this evidence-only report.
+> No sampled positions or local transforms are embedded.
+
 ## Skeleton compatibility
 
 `animsmith skeleton compare` emits one immutable

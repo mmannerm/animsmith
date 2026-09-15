@@ -25,7 +25,12 @@ scrubbed to the first finding:
 wheel to zoom, and click a finding to jump to its frame. When the file holds
 more than one clip, the `with` control plays a second one beside the first at
 the same normalized phase, with both source times labelled — a presentation
-mapping between two timelines, not a retime or a blend. The charts share a
+mapping between two timelines, not a retime. With a pair selected, enable
+`illustrative blend` for an optional third pane and a continuous weight slider.
+This engine-agnostic presentation interpolates sampled local transforms and
+runs forward kinematics; it adds no measured finding or runtime evidence. See
+[the blend contract](output.md#html-report-source-poses-and-illustrative-blending).
+The source charts share a
 playhead with the 3D view, and each chart caption says what to look for in
 it — derived from what your configuration declares for that clip and what the
 checks judged, not from an assumption about what the clip is. A clip declared

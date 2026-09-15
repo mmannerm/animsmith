@@ -58,6 +58,8 @@ for (let frame = 0; frame < frames; frame++) for (let bone = 0; bone < bones; bo
 
 class Node {
   constructor(id) { this.id=id; this.tag=null; this.children=[]; this.style={}; this.attrs={}; this.listeners={}; this.classes=new Set(); this.dataset={}; this.query={}; this.clientWidth=360; this.clientHeight=270; this.value="0"; this.textContent=""; }
+  get selectedText(){return this.value === "" ? "" : this.children.find(x => x.value === this.value)?.textContent}
+  set selectedText(text){this.value = text === "" ? "" : this.children.find(x => x.textContent === text)?.value}
   append(x){this.children.push(x)} appendChild(x){this.children.push(x); return x} replaceChildren(){this.children=[]}
   addEventListener(k,f){this.listeners[k]=f}
   setAttribute(k,v){this.attrs[k]=v} removeAttribute(k){delete this.attrs[k]}
@@ -1583,7 +1585,7 @@ if (!plain.nodes.gl.gl.clears.length) throw new Error("the WebGL view never clea
 // One clip is nothing to pair, so the control is present but inert rather
 // than offering a pairing this document cannot make.
 if (plain.nodes["with-select"].children.map((child) => child.value).join("|") !== "") throw new Error("a one-clip report lists something to pair with");
-if (!plain.nodes["with-select"].disabled) throw new Error("a one-clip report offers a pairing it cannot make");
+if (!plain.nodes["with-select"].disabled || !plain.nodes["with-select"].hidden || !plain.nodes["with-label"].hidden || !plain.nodes["blend-controls"].hidden) throw new Error("a one-clip report offers a pairing it cannot make");
 if ("data-theme" in plain.root.attrs || "data-embed" in plain.root.attrs) throw new Error("an empty fragment must leave the document defaults alone");
 
 // The 3D view paints from the live tokens: bones, joints, trails, and the
@@ -1666,7 +1668,7 @@ if (Number(runSingle(single, singleHtml, singlePayload, {hash:"#frame=1.5"}).nod
 const embedded = runSingle(single, singleHtml, singlePayload, {hash:`#embed=1&theme=light&clip=${encodeURIComponent(singleClip.name)}&frame=${Math.min(2, lastFrame)}`});
 if (embedded.root.attrs["data-theme"] !== "light" || embedded.root.attrs["data-embed"] !== "1") throw new Error("the single-clip viewer ignored embed/theme");
 if (Number(embedded.nodes.scrub.value) !== Math.min(2, lastFrame)) throw new Error("a deep-linked frame did not scrub the viewer");
-if (embedded.nodes["clip-select"].value !== singleClip.name) throw new Error("a deep-linked clip was not selected");
+if (embedded.nodes["clip-select"].selectedText !== singleClip.name) throw new Error("a deep-linked clip was not selected");
 for (const hostile of [
   "#frame=999999999", "#frame=-1", "#clip=%E0%A4%A", "#clip=no-such-clip", "#finding=999999999",
   "#finding=" + "9".repeat(400), "#theme=%3Cimg%3E", "#embed=maybe", "#unknown=1",
@@ -1764,18 +1766,18 @@ if (multiPayload.clips.length < 2) throw new Error("the multi-clip fixture must 
 const [firstClip, secondClip] = multiPayload.clips;
 if (firstClip.name === secondClip.name) throw new Error("the multi-clip fixture must embed two distinguishable clips");
 const runMulti = (hash) => runSingle(multi, multiHtml, multiPayload, hash === undefined ? undefined : {hash});
-if (runMulti().nodes["clip-select"].value !== firstClip.name) throw new Error("a report opens on its first clip");
-if (runMulti(`#clip=${encodeURIComponent(secondClip.name)}`).nodes["clip-select"].value !== secondClip.name) throw new Error("clip= did not select the named clip");
-if (runMulti("#clip=no-such-clip").nodes["clip-select"].value !== firstClip.name) throw new Error("an unknown clip did not restore the first clip");
-if (runMulti("#clip=%E0%A4%A").nodes["clip-select"].value !== firstClip.name) throw new Error("a malformed clip did not restore the first clip");
+if (runMulti().nodes["clip-select"].selectedText !== firstClip.name) throw new Error("a report opens on its first clip");
+if (runMulti(`#clip=${encodeURIComponent(secondClip.name)}`).nodes["clip-select"].selectedText !== secondClip.name) throw new Error("clip= did not select the named clip");
+if (runMulti("#clip=no-such-clip").nodes["clip-select"].selectedText !== firstClip.name) throw new Error("an unknown clip did not restore the first clip");
+if (runMulti("#clip=%E0%A4%A").nodes["clip-select"].selectedText !== firstClip.name) throw new Error("a malformed clip did not restore the first clip");
 const clipNav = runMulti();
 navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
-if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("navigating to a clip did not select it");
+if (clipNav.nodes["clip-select"].selectedText !== secondClip.name) throw new Error("navigating to a clip did not select it");
 navigate(clipNav, "#clip=no-such-clip");
-if (clipNav.nodes["clip-select"].value !== firstClip.name) throw new Error("an unusable clip did not restore the first clip on navigation");
+if (clipNav.nodes["clip-select"].selectedText !== firstClip.name) throw new Error("an unusable clip did not restore the first clip on navigation");
 navigate(clipNav, `#clip=${encodeURIComponent(secondClip.name)}`);
 navigate(clipNav, "#theme=light");
-if (clipNav.nodes["clip-select"].value !== secondClip.name) throw new Error("a fragment without a clip changed the selected clip");
+if (clipNav.nodes["clip-select"].selectedText !== secondClip.name) throw new Error("a fragment without a clip changed the selected clip");
 
 // Selecting another clip through the fragment is the same ask as a frame or
 // a finding: a running report would put the first clip's next frame over it.
@@ -1784,11 +1786,11 @@ clipWhilePlaying.nodes.play.listeners.click();
 if (!clipWhilePlaying.clock.pending.size) throw new Error("the multi-clip playback fixture never started playing");
 navigate(clipWhilePlaying, `#clip=${encodeURIComponent(secondClip.name)}`);
 if (clipWhilePlaying.nodes.play.textContent !== "▶") throw new Error("navigating to another clip did not pause the multi-clip report");
-if (clipWhilePlaying.nodes["clip-select"].value !== secondClip.name) throw new Error("navigating to another clip did not select it");
+if (clipWhilePlaying.nodes["clip-select"].selectedText !== secondClip.name) throw new Error("navigating to another clip did not select it");
 const selectedFrame = Number(clipWhilePlaying.nodes.scrub.value);
 stepFrame(clipWhilePlaying, 1);
 stepFrame(clipWhilePlaying, 1);
-if (clipWhilePlaying.nodes["clip-select"].value !== secondClip.name) throw new Error("a frame callback moved off the deep-linked clip");
+if (clipWhilePlaying.nodes["clip-select"].selectedText !== secondClip.name) throw new Error("a frame callback moved off the deep-linked clip");
 if (Number(clipWhilePlaying.nodes.scrub.value) !== selectedFrame) throw new Error(`a frame callback overwrote the frame the deep-linked clip opened on: ${clipWhilePlaying.nodes.scrub.value} against ${selectedFrame}`);
 assertNoHashWrites(clipWhilePlaying, "deep-linking a clip while playing");
 
@@ -1848,7 +1850,7 @@ if (!clipD) throw new Error("the paired fixture needs a fourth clip");
 const pairHash = `#clip=${encodeURIComponent(clipA)}&with=${encodeURIComponent(clipB)}`;
 // The frame numbers the time label carries, in the order it names them.
 const labelFrames = (state) => [...state.nodes.time.textContent.matchAll(/\(frame (\d+)\)/g)].map((match) => Number(match[1]));
-const withOptions = (state) => state.nodes["with-select"].children.map((child) => child.value);
+const withOptions = (state) => state.nodes["with-select"].children.map((child) => child.value === "" ? "" : child.textContent);
 function chartsOf(state, name) {
   const figures = state.charts.filter((figure) => figure.dataset.clip === name);
   if (!figures.length) throw new Error(`the document renders no charts for ${name}`);
@@ -1878,9 +1880,9 @@ function assertPairing(why, runPaired, payload) {
   if (JSON.stringify(withOptions(paired)) !== JSON.stringify(["", clipB, clipC, clipD])) {
     throw new Error(`${why}: the with select offers ${JSON.stringify(withOptions(paired))}`);
   }
-  if (paired.nodes["with-select"].value !== clipB) throw new Error(`${why}: with= did not pair the named clip`);
+  if (paired.nodes["with-select"].selectedText !== clipB) throw new Error(`${why}: with= did not pair the named clip`);
   if (paired.nodes["with-select"].disabled) throw new Error(`${why}: a four-clip document must offer pairing`);
-  if (runPaired(`#clip=${encodeURIComponent(clipA)}`).nodes["with-select"].value !== "") throw new Error(`${why}: a report without with= opens unpaired`);
+  if (runPaired(`#clip=${encodeURIComponent(clipA)}`).nodes["with-select"].selectedText !== "") throw new Error(`${why}: a report without with= opens unpaired`);
 
   for (const [frameA, secondsA, frameB, secondsB] of PAIR_PHASES) {
     const expected = pairedLabel(secondsA, frameA, secondsB, frameB);
@@ -1934,17 +1936,17 @@ function assertPairing(why, runPaired, payload) {
     ["an empty name", `#clip=${encodeURIComponent(clipA)}&with=`],
   ]) {
     const state = runPaired(hash);
-    if (state.nodes["with-select"].value !== "") throw new Error(`${why}: ${asked} left a pairing standing`);
+    if (state.nodes["with-select"].selectedText !== "") throw new Error(`${why}: ${asked} left a pairing standing`);
     if (labelFrames(state).length !== 1) throw new Error(`${why}: ${asked} left the label naming two clips`);
-    if (state.nodes["clip-select"].value !== clipA) throw new Error(`${why}: ${asked} changed the selected clip`);
+    if (state.nodes["clip-select"].selectedText !== clipA) throw new Error(`${why}: ${asked} changed the selected clip`);
   }
 
   // `with` is applied after `clip`, whichever order the fragment spells them
   // in: the pairing is judged against the clip that fragment selected, not
   // against the one the document opened on.
   const reversed = runPaired(`#clip=${encodeURIComponent(clipB)}&with=${encodeURIComponent(clipA)}&frame=10`);
-  if (reversed.nodes["clip-select"].value !== clipB || reversed.nodes["with-select"].value !== clipA) {
-    throw new Error(`${why}: #clip=B&with=A selected ${reversed.nodes["clip-select"].value} with ${reversed.nodes["with-select"].value}`);
+  if (reversed.nodes["clip-select"].selectedText !== clipB || reversed.nodes["with-select"].selectedText !== clipA) {
+    throw new Error(`${why}: #clip=B&with=A selected ${reversed.nodes["clip-select"].selectedText} with ${reversed.nodes["with-select"].selectedText}`);
   }
   if (reversed.nodes.time.textContent !== `0.400s / 0.800s (frame 10) · with ${clipA} 0.750s / 1.500s (frame 15) · normalized phase, not a time warp`) {
     throw new Error(`${why}: the reversed pair reads ${JSON.stringify(reversed.nodes.time.textContent)}`);
@@ -1953,13 +1955,13 @@ function assertPairing(why, runPaired, payload) {
   // Pairing through the select is the same ask as pairing through the
   // fragment, and it neither moves the transport nor rewrites the URL.
   const viaSelect = runPaired(`#clip=${encodeURIComponent(clipA)}&frame=15`);
-  viaSelect.nodes["with-select"].value = clipB;
+  viaSelect.nodes["with-select"].selectedText = clipB;
   viaSelect.nodes["with-select"].listeners.change();
   if (viaSelect.nodes.time.textContent !== pairedLabel("0.750", 15, "0.400", 10)) {
     throw new Error(`${why}: pairing through the select and through the fragment disagree`);
   }
   if (Number(viaSelect.nodes.scrub.value) !== 15) throw new Error(`${why}: pairing moved the transport`);
-  viaSelect.nodes["with-select"].value = "";
+  viaSelect.nodes["with-select"].selectedText = "";
   viaSelect.nodes["with-select"].listeners.change();
   if (labelFrames(viaSelect).length !== 1) throw new Error(`${why}: returning the select to alone left the pairing standing`);
   assertNoHashWrites(viaSelect, `${why}: pairing through the select`);
@@ -1969,22 +1971,22 @@ function assertPairing(why, runPaired, payload) {
   // offers the clip that has just stopped being primary.
   const pairNav = runPaired(pairHash);
   navigate(pairNav, `#clip=${encodeURIComponent(clipC)}`);
-  if (pairNav.nodes["with-select"].value !== clipB) throw new Error(`${why}: selecting a third clip dropped the pairing`);
+  if (pairNav.nodes["with-select"].selectedText !== clipB) throw new Error(`${why}: selecting a third clip dropped the pairing`);
   if (!withOptions(pairNav).includes(clipA)) throw new Error(`${why}: the with select does not offer the clip that stopped being primary`);
   if (withOptions(pairNav).includes(clipC)) throw new Error(`${why}: the with select still offers the clip that is already selected`);
   navigate(pairNav, `#clip=${encodeURIComponent(clipB)}`);
-  if (pairNav.nodes["with-select"].value !== "") throw new Error(`${why}: selecting the paired clip as the primary one left it paired with itself`);
+  if (pairNav.nodes["with-select"].selectedText !== "") throw new Error(`${why}: selecting the paired clip as the primary one left it paired with itself`);
   navigate(pairNav, `#with=${encodeURIComponent(clipA)}`);
-  if (pairNav.nodes["with-select"].value !== clipA) throw new Error(`${why}: navigating to with= did not pair that clip`);
+  if (pairNav.nodes["with-select"].selectedText !== clipA) throw new Error(`${why}: navigating to with= did not pair that clip`);
   navigate(pairNav, "#theme=light");
-  if (pairNav.nodes["with-select"].value !== clipA) throw new Error(`${why}: a fragment without with changed the pairing`);
+  if (pairNav.nodes["with-select"].selectedText !== clipA) throw new Error(`${why}: a fragment without with changed the pairing`);
   assertNoHashWrites(pairNav, `${why}: navigating a pairing`);
 
   // The time label follows the selected clip's own duration through the
   // select, not only through a deep link: changing clips used to leave the
   // previous clip's duration standing beside the new clip's frame.
   const relabelled = runPaired(`#clip=${encodeURIComponent(clipA)}&frame=30`);
-  relabelled.nodes["clip-select"].value = clipB;
+  relabelled.nodes["clip-select"].selectedText = clipB;
   relabelled.nodes["clip-select"].listeners.change();
   if (relabelled.nodes.time.textContent !== "0.000s / 0.800s (frame 0)") {
     throw new Error(`${why}: after changing clips the label reads ${JSON.stringify(relabelled.nodes.time.textContent)}, not the new clip's own duration`);
@@ -1997,8 +1999,8 @@ function assertPairing(why, runPaired, payload) {
   const findingIndexB = withFinding.findings.length - 1;
   const pairedFinding = runPaired(pairHash, withFinding);
   pairedFinding.nodes.findings.children[findingIndexB].listeners.click();
-  if (pairedFinding.nodes["clip-select"].value !== clipB) throw new Error(`${why}: clicking a finding of the paired clip did not select that clip`);
-  if (pairedFinding.nodes["with-select"].value !== "") throw new Error(`${why}: a finding of the paired clip left it paired with itself`);
+  if (pairedFinding.nodes["clip-select"].selectedText !== clipB) throw new Error(`${why}: clicking a finding of the paired clip did not select that clip`);
+  if (pairedFinding.nodes["with-select"].selectedText !== "") throw new Error(`${why}: a finding of the paired clip left it paired with itself`);
   if (labelFrames(pairedFinding).length !== 1) throw new Error(`${why}: the label still names two clips after the pairing was reset`);
   if (Number(pairedFinding.nodes.scrub.value) !== 10) throw new Error(`${why}: the finding at half of B's duration landed on frame ${pairedFinding.nodes.scrub.value}, not 10`);
   assertNoHashWrites(pairedFinding, `${why}: clicking a finding of the paired clip`);
@@ -2301,7 +2303,7 @@ const [firstMember, secondMember] = groupPayload.clips;
 if (firstMember.name === secondMember.name) throw new Error("the gait-group fixture must embed distinguishable members");
 if (groupFigureOf(groupRun).style.display === "none") throw new Error("the group figure is hidden on the clip the report opens with");
 if (memberGaitOf(groupRun, secondMember.name).style.display !== "none") throw new Error("an unselected member's own gait chart stayed visible");
-groupRun.nodes["clip-select"].value = secondMember.name;
+groupRun.nodes["clip-select"].selectedText = secondMember.name;
 groupRun.nodes["clip-select"].listeners.change();
 if (groupFigureOf(groupRun).style.display === "none") throw new Error("selecting another member hid the group figure");
 if (memberGaitOf(groupRun, firstMember.name).style.display !== "none") throw new Error("the previously selected member's own gait chart stayed visible");
@@ -2343,9 +2345,9 @@ const renamed = awkward.clips[1].name;
 awkward.clips[1].name = comma;
 for (const group of awkward.groups) group.members = group.members.map((m) => (m === renamed ? comma : m));
 const awkwardRun = runSingle(group, groupHtml, awkward);
-awkwardRun.nodes["clip-select"].value = comma;
+awkwardRun.nodes["clip-select"].selectedText = comma;
 awkwardRun.nodes["clip-select"].listeners.change();
-if (awkwardRun.nodes["clip-select"].value !== comma) throw new Error("the harness failed to select the awkwardly named member");
+if (awkwardRun.nodes["clip-select"].selectedText !== comma) throw new Error("the harness failed to select the awkwardly named member");
 if (groupFigureOf(awkwardRun).style.display === "none") throw new Error("a member whose name carries the list separator lost its own group figure");
 
 // A clip outside the group is not what the figure draws, and its phase is
@@ -2360,11 +2362,11 @@ const stranger = "clip,outside,the-ring";
 if (groupMembers.includes(stranger)) throw new Error("the harness picked a name the group declares");
 outsider.clips.push(Object.assign({}, outsider.clips[0], {name: stranger}));
 const outsiderRun = runSingle(group, groupHtml, outsider);
-outsiderRun.nodes["clip-select"].value = stranger;
+outsiderRun.nodes["clip-select"].selectedText = stranger;
 outsiderRun.nodes["clip-select"].listeners.change();
-if (outsiderRun.nodes["clip-select"].value !== stranger) throw new Error("the harness failed to select the non-member");
+if (outsiderRun.nodes["clip-select"].selectedText !== stranger) throw new Error("the harness failed to select the non-member");
 if (groupFigureOf(outsiderRun).style.display !== "none") throw new Error("a clip outside the group left its figure visible, with a playhead driven by a phase the figure does not plot");
-outsiderRun.nodes["clip-select"].value = firstMember.name;
+outsiderRun.nodes["clip-select"].selectedText = firstMember.name;
 outsiderRun.nodes["clip-select"].listeners.change();
 if (groupFigureOf(outsiderRun).style.display === "none") throw new Error("selecting a member again did not restore the group figure");
 
@@ -2387,9 +2389,9 @@ assertNoHashWrites(schemeRun, "a system theme change");
 // Selecting a clip and using the transport are viewer actions as much as a
 // click on a finding is: none of them may write the fragment either.
 const actions = runMulti();
-actions.nodes["clip-select"].value = secondClip.name;
+actions.nodes["clip-select"].selectedText = secondClip.name;
 actions.nodes["clip-select"].listeners.change();
-if (actions.nodes["clip-select"].value !== secondClip.name) throw new Error("changing the clip select did not select that clip");
+if (actions.nodes["clip-select"].selectedText !== secondClip.name) throw new Error("changing the clip select did not select that clip");
 if (Number(actions.nodes.scrub.value) !== 0) throw new Error("selecting another clip did not return to its first frame");
 actions.nodes.play.listeners.click();
 if (actions.nodes.play.textContent !== "⏸") throw new Error("the play button did not start playback");
@@ -2521,3 +2523,187 @@ if (pointer.nodes.gl.gl.clears.length <= drawnBefore) throw new Error("orbiting 
 assertNoHashWrites(pointer, "orbiting and zooming");
 
 console.log("report viewer harness passed");
+
+// ---- V1 illustrative blend: independent Rust binary64 geometry oracle --
+const goldenBundle = JSON.parse(fs.readFileSync(`${generatedIn}/blend-goldens.json`, "utf8"));
+function enableBlend(state) {
+  state.nodes["blend-enable"].checked = true;
+  state.nodes["blend-enable"].listeners.change();
+}
+function setWeight(state, weight) {
+  state.nodes["blend-weight"].value = String(weight);
+  state.nodes["blend-weight"].listeners.input();
+}
+function blendJointPositions(drawn, pass) {
+  const points = pass.draws.find(d => d.mode === drawn.POINTS);
+  return Array.from({length: points.count}, (_, b) => pass.verts.slice((points.first+b)*6,(points.first+b)*6+3));
+}
+for (const fixture of goldenBundle.cases) {
+  const html = fs.readFileSync(`${generatedIn}/${fixture.html}`, "utf8");
+  const parts = singleReportParts(html), payload = JSON.parse(parts.payload);
+  if (payload.blend.kind !== "sampled-local-trs-blend-v1") throw new Error("missing versioned presentation contract");
+  const originals = payload.clips.map(c => c.positions);
+  const findings = JSON.stringify(payload.findings);
+  const state = runSingle(parts, html, payload, {hash: `#with=${encodeURIComponent(payload.clips[1].name)}`, styles: tokenStyles(themedTokens)});
+  state.nodes.gl.clientWidth = 900;
+  if (state.decoded.count !== 2) throw new Error("locals decoded before enabling blend");
+  enableBlend(state);
+  if (state.decoded.count !== 4) throw new Error("selected pair was not decoded exactly once");
+  let camera;
+  for (const sample of fixture.samples) {
+    state.nodes.scrub.value = String(sample.phase * (payload.clips[0].frames - 1));
+    state.nodes.scrub.listeners.input();
+    setWeight(state, sample.weight);
+    const drawn = repaint(state);
+    if (drawn.passes.length !== 3) throw new Error(`${fixture.name}: requested blend omitted: ${state.nodes["blend-status"].textContent}`);
+    if(state.nodes.gl.style.aspectRatio!=="2 / 1") throw new Error("third pane narrows existing source viewport proportions");
+    const got = blendJointPositions(drawn, drawn.passes[2]);
+    got.forEach((point, bone) => point.forEach((value, c) => {
+      const reference = sample.expected[bone][c];
+      if (Math.abs(value-reference) > 1e-5+1e-5*Math.abs(reference)) throw new Error(`${fixture.name} phase=${sample.phase} weight=${sample.weight} bone=${bone} component=${c}: ${value} != ${reference}`);
+    }));
+    // Endpoints bypass local FK and use exact source coordinates.
+    if (sample.weight === 0 || sample.weight === 1) {
+      const source = blendJointPositions(drawn, drawn.passes[sample.weight]);
+      if (JSON.stringify(source) !== JSON.stringify(got)) throw new Error("blend endpoint lost exact source coordinates");
+    }
+    const cameras = drawn.passes.map(p => JSON.stringify(p.mvp));
+    if (new Set(cameras).size !== 1) throw new Error("blend and source panes use different cameras");
+    if (camera && camera !== cameras[0]) throw new Error("weight/phase changed shared camera");
+    camera = cameras[0];
+    if (JSON.stringify(regionsOf(drawn)) !== JSON.stringify([[0,0,300,270],[300,0,300,270],[600,0,300,270]])) throw new Error("blend viewports are not aligned");
+    const paints = drawn.passes.map(pass => paneColours(drawn,pass));
+    if (paints[0].bones[0] !== token("accent") || paints[1].bones[0] !== token("warning") || paints[2].bones[0] !== token("pass")) throw new Error("blend/source colours do not match labels");
+    if (drawn.passes[2].draws.some(d => d.mode === drawn.LINE_STRIP)) throw new Error("invented full blended trail");
+    const frames = labelFrames(state);
+    if (JSON.stringify(frames) !== JSON.stringify([sample.frame_a,sample.frame_b])) throw new Error("wrong independently mapped source frames");
+    if (!state.nodes["blend-status"].textContent.includes(`weight ${sample.weight.toFixed(3)}`)) throw new Error("missing weight disclosure");
+  }
+  if (state.decoded.count !== 4) throw new Error("phase/weight/redraw redecoded local streams");
+  if (JSON.stringify(payload.clips.map(c=>c.positions)) !== JSON.stringify(originals) || JSON.stringify(payload.findings) !== findings) throw new Error("blending changed source authority");
+  // A finite-input chain may overflow while blending: retire the old third
+  // pane immediately, then allow a later valid endpoint to restore it.
+  vm.runInContext('localCache.get(clip).fill(3.4028234663852886e38); localCache.get(withClip).fill(3.4028234663852886e38)', state.context);
+  setWeight(state, 0.5);
+  if (repaint(state).passes.length !== 2 || !state.nodes["blend-status"].textContent.includes("unavailable")) throw new Error("failed blend left stale third pane");
+  setWeight(state,0);
+  if (repaint(state).passes.length !== 3) throw new Error("valid source endpoint did not recover");
+}
+
+// Selected-local refusals are distinct from aggregate omission; neither drops
+// the existing source panes or evidence. Every mutation runs real viewer code.
+const goldenCase = goldenBundle.cases[0];
+const blendHtml = fs.readFileSync(`${generatedIn}/${goldenCase.html}`,"utf8");
+const blendParts = singleReportParts(blendHtml), blendPayload = JSON.parse(blendParts.payload);
+for (const mutate of [
+  p=>p.blend.raw_bytes++, p=>p.blend.base64_bytes++, p=>p.bones[0].parent=0,
+  p=>p.clips[0].locals=p.clips[0].locals.slice(4),
+  p=>p.clips[0].frames=Number.MAX_SAFE_INTEGER,
+  p=>{p.blend.omission="aggregate budget exceeded"},
+]) {
+  const payload=JSON.parse(JSON.stringify(blendPayload)); mutate(payload);
+  // A source count mutation is supplied with its unchanged tiny source stream:
+  // do not scrub it; the added path must refuse before touching local data.
+  const state=runSingle(blendParts,blendHtml,payload,{hash:`#with=${encodeURIComponent(payload.clips[1].name)}`});
+  enableBlend(state);
+  if (state.decoded.count!==2 || repaint(state).passes.length!==2) throw new Error("invalid aggregate authority decoded locals or hid source playback");
+}
+for (const value of [NaN, Infinity, 0, 1e-20, 1.001]) {
+  const payload=JSON.parse(JSON.stringify(blendPayload));
+  const raw=Buffer.from(payload.clips[1].locals,"base64");
+  raw.writeFloatLE(0,12);raw.writeFloatLE(0,16);raw.writeFloatLE(0,20);raw.writeFloatLE(value,24);
+  payload.clips[1].locals=raw.toString("base64");
+  const state=runSingle(blendParts,blendHtml,payload,{hash:`#with=${encodeURIComponent(payload.clips[1].name)}`});
+  enableBlend(state);
+  if (repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("unavailable")) throw new Error("invalid local quaternion drew blend");
+}
+// Duplicate names are addressable by array identity through controls only.
+const duplicateCase=goldenBundle.cases.find(c=>c.name==="quaternion-hemispheres");
+const duplicateHtml=fs.readFileSync(`${generatedIn}/${duplicateCase.html}`,"utf8");
+const duplicateParts=singleReportParts(duplicateHtml);
+const duplicates=JSON.parse(duplicateParts.payload);
+duplicates.clips[1].name=duplicates.clips[0].name;
+const duplicateState=runSingle(duplicateParts,duplicateHtml,duplicates,{hash:`#clip=${encodeURIComponent(duplicates.clips[0].name)}&with=${encodeURIComponent(duplicates.clips[0].name)}`});
+if (duplicateState.nodes["with-select"].value!=="" || !duplicateState.nodes["pair-notice"].textContent.includes("ambiguous")) throw new Error("ambiguous deep link silently selected first duplicate");
+duplicateState.nodes["with-select"].value="1";duplicateState.nodes["with-select"].listeners.change();enableBlend(duplicateState);
+if(repaint(duplicateState).passes.length!==3) throw new Error("index selection cannot pair duplicate names");
+duplicateState.nodes.scrub.value=String((duplicates.clips[0].frames-1)*0.25);
+duplicateState.nodes.scrub.listeners.input();
+const duplicateFrames=labelFrames(duplicateState);
+const duplicateGaitCharts=duplicateState.charts.filter(c=>c.dataset.kind==="gait");
+if(duplicateGaitCharts.length!==2) throw new Error("duplicate-name fixture must carry both Rust-rendered source charts");
+for(const chart of duplicateGaitCharts) {
+  const index=Number(chart.dataset.clipindex);
+  const phase=duplicateFrames[index]/(duplicates.clips[index].frames-1);
+  const expected=Number(chart.dataset.pad)+Number(chart.dataset.plotw)*phase;
+  if(chart.query[".playhead"].attrs.x1!==expected) throw new Error("duplicate-name chart follows the other source clip frame");
+}
+
+duplicateState.nodes["clip-select"].value="1";duplicateState.nodes["clip-select"].listeners.change();
+if(duplicateState.nodes["with-select"].value!=="") throw new Error("selecting pair as primary did not clear pair");
+for(const source of [singleEvidenceHtml,multiEvidenceHtml]) {
+  const payload=JSON.parse(singleReportParts(source).payload);
+  if(payload.blend || payload.clips.some(c=>c.locals!==undefined) || source.includes('id="blend-enable"') || source.includes('id="blend-caption"')) throw new Error("evidence-only document carries local authority or blend controls");
+  if(!source.includes("No sampled positions or local transforms are embedded.")) throw new Error("missing evidence-only local disclosure");
+}
+console.log("sampled-local-trs-blend-v1: 90 Rust-reference poses, admission and selection checks passed");
+
+// Resource boundary fixture: identity locals permit the full 838,860-record
+// limit to be exercised without baking an enormous golden into the repo.
+function resourcePayload(bones, counts) {
+  const payload=JSON.parse(JSON.stringify(blendPayload));
+  payload.bones=Array.from({length:bones},(_,i)=>({name:`bone-${i}`,parent:i-1}));
+  payload.clips=counts.map((frames,index)=>{
+    const local=Buffer.alloc(frames*bones*40);
+    for(let i=0;i<frames*bones;i++) {local.writeFloatLE(1,i*40+24);for(let c=7;c<10;c++)local.writeFloatLE(1,i*40+c*4)}
+    // Source arrays are tiny but valid for frame zero, the only frame this
+    // resource test draws; their general admission is outside the new cap.
+    const positions=Buffer.alloc(bones*12).toString("base64");
+    return {name:`resource-${index}`,duration:1,frames,positions,locals:local.toString("base64"),trails:{}};
+  });
+  payload.blend.raw_bytes=counts.reduce((s,f)=>s+f*bones*40,0);
+  payload.blend.base64_bytes=payload.clips.reduce((s,c)=>s+c.locals.length,0);
+  return payload;
+}
+{
+  const boundary=resourcePayload(1,[838857,3]);
+  const state=runSingle(blendParts,blendHtml,boundary,{hash:"#with=resource-1"});
+  enableBlend(state);
+  if(repaint(state).passes.length!==3 || state.decoded.count!==4) throw new Error("inclusive local-record cap refused");
+  vm.runInContext('let blendMathCalls=0; const originalMath=Math; Math=Object.create(originalMath); Math.hypot=(...values)=>{blendMathCalls++;return originalMath.hypot(...values)}',state.context);
+  const allocations=vm.runInContext('({world:blendWorld,output:blendOutput,local:blendLocal})',state.context);
+  for(let i=0;i<8;i++) setWeight(state,(i+1)/10);
+  if(vm.runInContext('blendMathCalls',state.context)>8*20) throw new Error("repaint scans prior local frames instead of one O(bones) pose");
+  const after=vm.runInContext('({world:blendWorld,output:blendOutput,local:blendLocal})',state.context);
+  if(allocations.world!==after.world || allocations.output!==after.output || allocations.local!==after.local || state.decoded.count!==4) throw new Error("redraw reallocates FK buffers or decodes prior frames");
+  // N+1 local records exceeds the raw cap with canonical base64 lengths.
+  const extra=Buffer.from(boundary.clips[1].locals,"base64");
+  boundary.clips[1].locals=Buffer.concat([extra,extra.subarray(0,40)]).toString("base64");
+  boundary.clips[1].frames++;
+  boundary.blend.raw_bytes+=40;
+  boundary.blend.base64_bytes=boundary.clips.reduce((s,c)=>s+c.locals.length,0);
+  const refused=runSingle(blendParts,blendHtml,boundary,{hash:"#with=resource-1"});
+  enableBlend(refused);
+  if(refused.decoded.count!==2 || repaint(refused).passes.length!==2 || !refused.nodes["blend-status"].textContent.includes("budget")) throw new Error("N+1 local-record cap accepted or decoded");
+}
+for(const bones of [1024,1025]) {
+  const payload=resourcePayload(bones,[3,3]);
+  const state=runSingle(blendParts,blendHtml,payload,{hash:"#with=resource-1"});enableBlend(state);
+  if(repaint(state).passes.length!==(bones===1024?3:2)) throw new Error("bone bound is not inclusive at 1024");
+}
+for(const count of [4096,4097]) {
+  const payload=resourcePayload(1,[3,3]);
+  while(payload.clips.length<count) payload.clips.push({...payload.clips[0],name:`resource-${payload.clips.length}`});
+  payload.blend.raw_bytes=count*120;payload.blend.base64_bytes=count*160;
+  const state=runSingle(blendParts,blendHtml,payload,{hash:"#with=resource-1"});enableBlend(state);
+  if(repaint(state).passes.length!==(count===4096?3:2) || state.decoded.count!==count+(count===4096?2:0)) throw new Error("clip bound or selected-only decoding violated");
+  if(count===4096) {
+    // Choosing a new partner retains the primary decoded stream and evicts
+    // the old partner. Playback continues from the same phase.
+    state.nodes.play.listeners.click();
+    state.nodes["with-select"].value="2";state.nodes["with-select"].listeners.change();
+    if(state.decoded.count!==count+3 || state.clock.pending.size!==1 || Number(state.nodes.scrub.value)!==0) throw new Error("pair selection redecoded all locals, stopped playback or moved phase");
+    if(vm.runInContext('localCache.size',state.context)!==2) throw new Error("more than two local streams retained");
+  }
+}
+console.log("blend resource gates: raw records, bones, clips and selected-only reuse passed");
