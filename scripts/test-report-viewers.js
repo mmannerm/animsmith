@@ -2749,20 +2749,21 @@ for(const chart of duplicateRootCharts) {
 }
 duplicateState.nodes["clip-select"].value="1";duplicateState.nodes["clip-select"].listeners.change();
 if(duplicateState.nodes["with-select"].value!=="") throw new Error("selecting pair as primary did not clear pair");
-// Finding names cannot identify one of two duplicate clips. Refuse both a
-// click and deep link without applying its source time to an unrelated clip.
+// Duplicate and absent finding names cannot identify a source clip. Refuse
+// both click and deep link without applying time to an unrelated clip.
 {
   const payload=JSON.parse(JSON.stringify(blendPayload));
   payload.clips=["unrelated first","duplicate","duplicate","unique target"].map(name=>({...payload.clips[0],name}));
   payload.blend.raw_bytes=payload.clips.reduce((sum,c)=>sum+c.frames*payload.bones.length*40,0);
   payload.blend.base64_bytes=payload.clips.reduce((sum,c)=>sum+c.locals.length,0);
   payload.findings=[{check:"fixture",severity:"warning",clip:"duplicate",bone:"child",time:0.75,message:"ambiguous source"},{check:"fixture",severity:"warning",clip:"unique target",time:0.5,message:"unique source"}];
-  for(const deep of [false,true]) {
+  for(const findingName of ["duplicate","absent clip"]) for(const deep of [false,true]) {
+    payload.findings[0].clip=findingName;
     const state=runSingle(blendParts,blendHtml,payload,{hash:"#clip=unique%20target&frame=1"});
     const before=JSON.stringify({selection:state.nodes["clip-select"].value,frame:state.nodes.scrub.value,source:sourceSnapshot(state)});
     if(deep) navigate(state,"#finding=0"); else state.nodes.findings.children[0].listeners.click();
     const after=JSON.stringify({selection:state.nodes["clip-select"].value,frame:state.nodes.scrub.value,source:sourceSnapshot(state)});
-    if(before!==after || state.nodes["pair-notice"].textContent!=="Finding clip is missing or ambiguous; source selection and frame are unchanged.") throw new Error("ambiguous finding moved source selection/frame or lacks refusal notice");
+    if(before!==after || state.nodes["pair-notice"].textContent!=="Finding clip is missing or ambiguous; source selection and frame are unchanged.") throw new Error(`${findingName}: finding moved source selection/frame or lacks refusal notice`);
     state.nodes["clip-select"].value="0";state.nodes["clip-select"].listeners.change();
     state.nodes.findings.children[1].listeners.click();
     if(state.nodes["clip-select"].value!=="3" || Number(state.nodes.scrub.value)!==Math.round(0.5/payload.clips[3].duration*(payload.clips[3].frames-1)) || state.nodes["pair-notice"].textContent!=="") throw new Error("unique finding no longer selects its own clip/time and clears refusal");
