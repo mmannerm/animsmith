@@ -757,6 +757,77 @@ emits no JSON and exits 2. The transformed contact fragments themselves remain
 the existing canonical `contact-fragment:1` contract; the contact transform
 result is proof input and is not an extra generation file.
 
+
+### Foot-cycle failure diagnostics
+
+Foot-cycle planner diagnostics use
+`foot-cycle source preparation failed (<rule>)`, optionally followed by
+` for member <logical-id>`. Asset refusals carry this text in
+`rejection.detail`; operator failures carry it on stderr. The rule identifies
+which planner check failed without exposing source paths or nested parser
+errors. Logical IDs are bounded, validated collection IDs such as
+`com.example/walk`, not source-file locators.
+
+The planner adapter names every current core error:
+
+| Rule | Member ID | Route when received by the planner adapter |
+|---|---|---|
+| `manifest-too-large` | No | Asset refusal, exit 1 |
+| `parameterization-too-large` | No | Asset refusal, exit 1 |
+| `too-few-members` | No | Asset refusal, exit 1 |
+| `too-many-members` | No | Asset refusal, exit 1 |
+| `invalid-slope-bounds` | No | Asset refusal, exit 1 |
+| `invalid-proof-policy` | No | Asset refusal, exit 1 |
+| `duplicate-member` | Yes | Asset refusal, exit 1 |
+| `duplicate-fragment-path` | No | Asset refusal, exit 1 |
+| `output-path-collision` | No | Asset refusal, exit 1 |
+| `missing-reference-member` | No | Asset refusal, exit 1 |
+| `manifest-mismatch` | No | Asset refusal, exit 1 |
+| `runtime-set-mismatch` | No | Asset refusal, exit 1 |
+| `wrong-runtime-set-kind` | No | Asset refusal, exit 1 |
+| `member-order-mismatch` | No | Asset refusal, exit 1 |
+| `evidence-count-mismatch` | No | Asset refusal, exit 1 |
+| `too-many-contact-events` | No | Asset refusal, exit 1 |
+| `too-many-contact-fragment-bytes` | No | Asset refusal, exit 1 |
+| `evidence-member-mismatch` | No | Asset refusal, exit 1 |
+| `non-canonical-fragment` | No | Operator error, exit 2 |
+| `fragment-clip-mismatch` | No | Operator error, exit 2 |
+| `unsupported-contact-extension` | No | Asset refusal, exit 1 |
+| `invalid-detector-provenance` | No | Asset refusal, exit 1 |
+| `detector-policy-mismatch` | No | Asset refusal, exit 1 |
+| `root-motion-binding-mismatch` | Yes | Asset refusal, exit 1 |
+| `root-motion-evidence-unavailable` | Yes | Asset refusal, exit 1 |
+| `root-motion-out-of-range` | Yes | Asset refusal, exit 1 |
+| `invalid-contact-topology` | No | Asset refusal, exit 1 |
+| `topology-mismatch` | No | Asset refusal, exit 1 |
+| `non-monotone-mapping` | No | Asset refusal, exit 1 |
+| `segment-slope-out-of-range` | No | Asset refusal, exit 1 |
+| `too-many-control-points` | No | Asset refusal, exit 1 |
+
+This is the adapter inventory, not a promise that every error can occur after
+CLI admission. The bounded readers, declaration constructors, manifest-binding
+preflight, and evidence assembly reject or prevent some states before the
+planner runs. Their existing diagnostics, validation order, and exit routes
+remain in effect. For example, an invalid declaration still reports `control`;
+the tool does not postpone that validation to obtain a planner label.
+
+Planner asset refusals retain stage `analysis` and kind
+`asset-recipe-mismatch`. The two operator errors in the table still emit no
+JSON. A future unrecognized variant from the non-exhaustive core error enum
+uses the closed compatibility label `unknown-planner-rule` and the same
+asset-refusal route; no current variant uses that fallback. The four member IDs
+above are retained from the core error, and no member is inferred for other
+rules. In particular, the topology and map errors currently carry no member.
+
+Proof refusals retain stage `proof`, kind `proof-failed`, and the existing
+`foot-cycle proof failed (<rule>)` text. `ArtifactPreflight`, `ClipMap`,
+`ContactBoundary`, and `LoopContinuity` append ` for member <logical-id>` for
+the prepared member being judged, including when several members select
+separate clips in one source. `ArtifactPreflight` covers both candidate document
+shape and writer preflight. Other proof diagnostics retain their existing
+text; collection-wide failures such as `GaitSpread` have no member attribution.
+A failure still prevents publication of the generation.
+
 ## Common envelope
 
 ```json

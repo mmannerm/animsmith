@@ -60,25 +60,43 @@ pub(crate) enum FootCycleProofKind {
     LoopContinuity,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FootCycleProofError {
     kind: FootCycleProofKind,
+    member: Option<CollectionLogicalIdV1>,
 }
 
 impl FootCycleProofError {
     const fn new(kind: FootCycleProofKind) -> Self {
-        Self { kind }
+        Self { kind, member: None }
+    }
+
+    fn for_member(mut self, member: &CollectionLogicalIdV1) -> Self {
+        if matches!(
+            self.kind,
+            FootCycleProofKind::ArtifactPreflight
+                | FootCycleProofKind::ClipMap
+                | FootCycleProofKind::ContactBoundary
+                | FootCycleProofKind::LoopContinuity
+        ) {
+            self.member = Some(member.clone());
+        }
+        self
     }
 
     #[cfg(test)]
-    pub(crate) const fn kind(self) -> FootCycleProofKind {
+    pub(crate) const fn kind(&self) -> FootCycleProofKind {
         self.kind
     }
 }
 
 impl std::fmt::Display for FootCycleProofError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "foot-cycle proof failed ({:?})", self.kind)
+        write!(formatter, "foot-cycle proof failed ({:?})", self.kind)?;
+        if let Some(member) = &self.member {
+            write!(formatter, " for member {}", member.as_str())?;
+        }
+        Ok(())
     }
 }
 
@@ -333,9 +351,12 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
             .get_mut(member.clip_index())
             .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::PreparationBinding))?;
         *slot = member.candidate_clip().clone();
-        validate_document_shape(&document)
-            .map_err(|_| FootCycleProofError::new(FootCycleProofKind::ArtifactPreflight))?;
-        let preflight = runtime.preflight(&document)?;
+        validate_document_shape(&document).map_err(|_| {
+            FootCycleProofError::new(FootCycleProofKind::ArtifactPreflight).for_member(member.id())
+        })?;
+        let preflight = runtime
+            .preflight(&document)
+            .map_err(|error| error.for_member(member.id()))?;
         retained_candidate_bytes =
             add_candidate_bytes(retained_candidate_bytes, preflight.total_bytes())
                 .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::ArtifactBudget))?;
@@ -440,7 +461,8 @@ fn serialize_and_prove_foot_cycle_v1_with_runtime(
             &grid,
             expected_contact,
             &detected,
-        )?;
+        )
+        .map_err(|error| error.for_member(member.id()))?;
         gait_phases.push(facts.gait_phase);
         proved.push(ProvedFootCycleMemberV1 {
             id: member.id().clone(),
@@ -1211,7 +1233,7 @@ fn exceeds_f32_cap(measured: f64, cap: f64) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use animsmith_core::{
         ContactClipReferenceV1, ContactEventV1, ContactEventWindowV1, ContactProducerV1,
@@ -1277,6 +1299,7 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum GridMutation {
+        ContactBoundary,
         ContactTopology,
         LowGaitAmplitude,
         RootTrajectory,
@@ -1344,6 +1367,19 @@ mod tests {
             }
             let mut mutated = document.clone();
             match mutation {
+                GridMutation::ContactBoundary => {
+                    for track in &mut mutated.clips[clip_index].tracks {
+                        if track.bone >= 2
+                            && let TrackValues::Vec3s(values) = &mut track.values
+                        {
+                            let original = values.clone();
+                            let period = original.len() - 1;
+                            for (index, value) in values.iter_mut().enumerate() {
+                                *value = original[(index + 1) % period];
+                            }
+                        }
+                    }
+                }
                 GridMutation::ContactTopology => {
                     for track in &mut mutated.clips[clip_index].tracks {
                         if track.bone >= 2
@@ -1394,6 +1430,82 @@ mod tests {
             }
             ProductionFootCycleProofRuntime.build_grid(&mutated, clip_index)
         }
+    }
+
+    // Actual transaction failures, rendered through the producer by its adapter test.
+    pub(crate) fn member_diagnostic_cases() -> Vec<(FootCycleProofError, String)> {
+        use crate::foot_cycle_source_prep::tests::{
+            DiagnosticCandidateMutation, mutate_diagnostic_candidate, proof_ready_fixture,
+            proof_ready_fixture_with_shared_source,
+        };
+        let mut cases = Vec::new();
+        for shared_source in [false, true] {
+            let fixture = if shared_source {
+                proof_ready_fixture_with_shared_source
+            } else {
+                proof_ready_fixture
+            };
+            // Both layouts must pass the unmodified transaction before injecting a failure.
+            serialize_and_prove_foot_cycle_v1(&fixture()).unwrap();
+            for member_index in 0..2 {
+                for (kind, candidate_mutation, grid_mutation) in [
+                    (FootCycleProofKind::ArtifactPreflight, None, None),
+                    (
+                        FootCycleProofKind::ArtifactPreflight,
+                        Some(DiagnosticCandidateMutation::Shape),
+                        None,
+                    ),
+                    (
+                        FootCycleProofKind::ClipMap,
+                        Some(DiagnosticCandidateMutation::Map),
+                        None,
+                    ),
+                    (
+                        FootCycleProofKind::ContactBoundary,
+                        None,
+                        Some(GridMutation::ContactBoundary),
+                    ),
+                    (
+                        FootCycleProofKind::LoopContinuity,
+                        None,
+                        Some(GridMutation::LoopContinuity),
+                    ),
+                ] {
+                    let mut prepared = fixture();
+                    let member = prepared.members()[member_index].id().as_str().to_owned();
+                    let mut runtime = ObservedRuntime::default();
+                    if let Some(mutation) = candidate_mutation {
+                        mutate_diagnostic_candidate(&mut prepared, member_index, mutation);
+                    } else if let Some(mutation) = grid_mutation {
+                        runtime.grid_mutation = Some((member_index, mutation));
+                    } else {
+                        runtime.fail_preflight_at = Some(member_index);
+                    }
+                    let error =
+                        serialize_and_prove_foot_cycle_v1_with_runtime(&prepared, &mut runtime)
+                            .err()
+                            .expect("injected member failure");
+                    assert_eq!(
+                        error.kind(),
+                        kind,
+                        "member {member_index}, shared source {shared_source}"
+                    );
+                    assert_eq!(
+                        error.member.as_ref().map(CollectionLogicalIdV1::as_str),
+                        Some(member.as_str())
+                    );
+                    if kind == FootCycleProofKind::ArtifactPreflight {
+                        assert_eq!(runtime.writes, 0);
+                        assert_eq!(runtime.readbacks, 0);
+                    }
+                    cases.push((
+                        error,
+                        format!("foot-cycle proof failed ({kind:?}) for member {member}"),
+                    ));
+                }
+            }
+        }
+        cases
     }
 
     #[test]
@@ -2082,6 +2194,10 @@ mod tests {
             .err()
             .expect("second proof mutation must fail the whole batch");
         assert_eq!(error.kind(), FootCycleProofKind::ContactTopology);
+        assert_eq!(
+            error.to_string(),
+            "foot-cycle proof failed (ContactTopology)"
+        );
         assert_eq!(runtime.grids_built, 2);
     }
 
@@ -2149,6 +2265,12 @@ mod tests {
                 .err()
                 .expect("mutated output proof grid must fail the whole transaction");
             assert_eq!(error.kind(), expected);
+            if expected == FootCycleProofKind::RootTrajectory {
+                assert_eq!(
+                    error.to_string(),
+                    "foot-cycle proof failed (RootTrajectory)"
+                );
+            }
             assert_eq!(runtime.grids_built, 2);
         }
     }

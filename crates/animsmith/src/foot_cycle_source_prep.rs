@@ -188,9 +188,11 @@ pub(crate) enum FootCycleSourcePrepKind {
 }
 
 /// One closed preparation failure without host-path or parser-detail leakage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FootCycleSourcePrepError {
     kind: FootCycleSourcePrepKind,
+    planner_label: Option<&'static str>,
+    member: Option<CollectionLogicalIdV1>,
 }
 
 impl std::fmt::Display for FootCycleSourcePrepError {
@@ -198,8 +200,12 @@ impl std::fmt::Display for FootCycleSourcePrepError {
         write!(
             formatter,
             "foot-cycle source preparation failed ({})",
-            self.kind.label()
-        )
+            self.planner_label.unwrap_or(self.kind.label())
+        )?;
+        if let Some(member) = &self.member {
+            write!(formatter, " for member {}", member.as_str())?;
+        }
+        Ok(())
     }
 }
 
@@ -233,10 +239,14 @@ impl FootCycleSourcePrepKind {
 
 impl FootCycleSourcePrepError {
     const fn new(kind: FootCycleSourcePrepKind) -> Self {
-        Self { kind }
+        Self {
+            kind,
+            planner_label: None,
+            member: None,
+        }
     }
 
-    pub(crate) const fn kind(self) -> FootCycleSourcePrepKind {
+    pub(crate) const fn kind(&self) -> FootCycleSourcePrepKind {
         self.kind
     }
 
@@ -251,14 +261,59 @@ impl FootCycleSourcePrepError {
 }
 
 fn classify_plan_error(error: FootCycleParameterizationError) -> FootCycleSourcePrepError {
-    match error {
-        FootCycleParameterizationError::NonCanonicalFragment => {
-            FootCycleSourcePrepError::new(FootCycleSourcePrepKind::ContactInvalid)
-        }
-        FootCycleParameterizationError::FragmentClipMismatch => {
-            FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanBindingMismatch)
-        }
-        _ => FootCycleSourcePrepError::new(FootCycleSourcePrepKind::PlanRefused),
+    use FootCycleParameterizationError as E;
+    // Presentation does not change the two existing operator-error routes.
+    let kind = match &error {
+        E::NonCanonicalFragment => FootCycleSourcePrepKind::ContactInvalid,
+        E::FragmentClipMismatch => FootCycleSourcePrepKind::PlanBindingMismatch,
+        _ => FootCycleSourcePrepKind::PlanRefused,
+    };
+    let label = match &error {
+        E::ManifestTooLarge => "manifest-too-large",
+        E::ParameterizationTooLarge => "parameterization-too-large",
+        E::TooFewMembers { .. } => "too-few-members",
+        E::TooManyMembers { .. } => "too-many-members",
+        E::InvalidSlopeBounds => "invalid-slope-bounds",
+        E::InvalidProofPolicy => "invalid-proof-policy",
+        E::DuplicateMember { .. } => "duplicate-member",
+        E::DuplicateFragmentPath => "duplicate-fragment-path",
+        E::OutputPathCollision => "output-path-collision",
+        E::MissingReferenceMember => "missing-reference-member",
+        E::ManifestMismatch => "manifest-mismatch",
+        E::RuntimeSetMismatch => "runtime-set-mismatch",
+        E::WrongRuntimeSetKind => "wrong-runtime-set-kind",
+        E::MemberOrderMismatch => "member-order-mismatch",
+        E::EvidenceCountMismatch => "evidence-count-mismatch",
+        E::TooManyContactEvents { .. } => "too-many-contact-events",
+        E::TooManyContactFragmentBytes { .. } => "too-many-contact-fragment-bytes",
+        E::EvidenceMemberMismatch => "evidence-member-mismatch",
+        E::NonCanonicalFragment => "non-canonical-fragment",
+        E::FragmentClipMismatch => "fragment-clip-mismatch",
+        E::UnsupportedContactExtension => "unsupported-contact-extension",
+        E::InvalidDetectorProvenance => "invalid-detector-provenance",
+        E::DetectorPolicyMismatch => "detector-policy-mismatch",
+        E::RootMotionBindingMismatch { .. } => "root-motion-binding-mismatch",
+        E::RootMotionEvidenceUnavailable { .. } => "root-motion-evidence-unavailable",
+        E::RootMotionOutOfRange { .. } => "root-motion-out-of-range",
+        E::InvalidContactTopology => "invalid-contact-topology",
+        E::TopologyMismatch => "topology-mismatch",
+        E::NonMonotoneMapping => "non-monotone-mapping",
+        E::SegmentSlopeOutOfRange => "segment-slope-out-of-range",
+        E::TooManyControlPoints { .. } => "too-many-control-points",
+        // The public core enum is non-exhaustive; new variants still fail closed.
+        _ => "unknown-planner-rule",
+    };
+    let member = match error {
+        E::DuplicateMember { member }
+        | E::RootMotionBindingMismatch { member }
+        | E::RootMotionEvidenceUnavailable { member }
+        | E::RootMotionOutOfRange { member } => CollectionLogicalIdV1::new(member).ok(),
+        _ => None,
+    };
+    FootCycleSourcePrepError {
+        kind,
+        planner_label: Some(label),
+        member,
     }
 }
 
@@ -1772,6 +1827,76 @@ contact_fragment = "contacts/b.json"
         }
     }
 
+    // Consumed by the producer test so every variant traverses the real routing adapter.
+    pub(crate) fn planner_diagnostic_cases() -> Vec<(FootCycleSourcePrepError, String, bool)> {
+        use FootCycleParameterizationError as E;
+        let member = "com.example/b";
+        [
+            (E::ManifestTooLarge, "foot-cycle source preparation failed (manifest-too-large)", false),
+            (E::ParameterizationTooLarge, "foot-cycle source preparation failed (parameterization-too-large)", false),
+            (E::TooFewMembers { found: 1 }, "foot-cycle source preparation failed (too-few-members)", false),
+            (E::TooManyMembers { found: 3, max: 2 }, "foot-cycle source preparation failed (too-many-members)", false),
+            (E::InvalidSlopeBounds, "foot-cycle source preparation failed (invalid-slope-bounds)", false),
+            (E::InvalidProofPolicy, "foot-cycle source preparation failed (invalid-proof-policy)", false),
+            (E::DuplicateMember { member: member.to_owned() }, "foot-cycle source preparation failed (duplicate-member) for member com.example/b", false),
+            (E::DuplicateFragmentPath, "foot-cycle source preparation failed (duplicate-fragment-path)", false),
+            (E::OutputPathCollision, "foot-cycle source preparation failed (output-path-collision)", false),
+            (E::MissingReferenceMember, "foot-cycle source preparation failed (missing-reference-member)", false),
+            (E::ManifestMismatch, "foot-cycle source preparation failed (manifest-mismatch)", false),
+            (E::RuntimeSetMismatch, "foot-cycle source preparation failed (runtime-set-mismatch)", false),
+            (E::WrongRuntimeSetKind, "foot-cycle source preparation failed (wrong-runtime-set-kind)", false),
+            (E::MemberOrderMismatch, "foot-cycle source preparation failed (member-order-mismatch)", false),
+            (E::EvidenceCountMismatch, "foot-cycle source preparation failed (evidence-count-mismatch)", false),
+            (E::TooManyContactEvents { found: 3, max: 2 }, "foot-cycle source preparation failed (too-many-contact-events)", false),
+            (E::TooManyContactFragmentBytes { found: 3, max: 2 }, "foot-cycle source preparation failed (too-many-contact-fragment-bytes)", false),
+            (E::EvidenceMemberMismatch, "foot-cycle source preparation failed (evidence-member-mismatch)", false),
+            (E::NonCanonicalFragment, "foot-cycle source preparation failed (non-canonical-fragment)", true),
+            (E::FragmentClipMismatch, "foot-cycle source preparation failed (fragment-clip-mismatch)", true),
+            (E::UnsupportedContactExtension, "foot-cycle source preparation failed (unsupported-contact-extension)", false),
+            (E::InvalidDetectorProvenance, "foot-cycle source preparation failed (invalid-detector-provenance)", false),
+            (E::DetectorPolicyMismatch, "foot-cycle source preparation failed (detector-policy-mismatch)", false),
+            (E::RootMotionBindingMismatch { member: member.to_owned() }, "foot-cycle source preparation failed (root-motion-binding-mismatch) for member com.example/b", false),
+            (E::RootMotionEvidenceUnavailable { member: member.to_owned() }, "foot-cycle source preparation failed (root-motion-evidence-unavailable) for member com.example/b", false),
+            (E::RootMotionOutOfRange { member: member.to_owned() }, "foot-cycle source preparation failed (root-motion-out-of-range) for member com.example/b", false),
+            (E::InvalidContactTopology, "foot-cycle source preparation failed (invalid-contact-topology)", false),
+            (E::TopologyMismatch, "foot-cycle source preparation failed (topology-mismatch)", false),
+            (E::NonMonotoneMapping, "foot-cycle source preparation failed (non-monotone-mapping)", false),
+            (E::SegmentSlopeOutOfRange, "foot-cycle source preparation failed (segment-slope-out-of-range)", false),
+            (E::TooManyControlPoints { found: 3, max: 2 }, "foot-cycle source preparation failed (too-many-control-points)", false),
+        ].into_iter().map(|(error, expected, operator)| (classify_plan_error(error), expected.to_owned(), operator)).collect()
+    }
+
+    #[test]
+    fn planner_diagnostics_do_not_render_invalid_member_payloads() {
+        use FootCycleParameterizationError as E;
+        for member in [
+            "/home/private/asset.glb",
+            "C:\\private\\asset.glb",
+            "com.example/b\nsecret",
+            "com.example/".repeat(100).as_str(),
+        ] {
+            for error in [
+                E::DuplicateMember {
+                    member: member.to_owned(),
+                },
+                E::RootMotionBindingMismatch {
+                    member: member.to_owned(),
+                },
+                E::RootMotionEvidenceUnavailable {
+                    member: member.to_owned(),
+                },
+                E::RootMotionOutOfRange {
+                    member: member.to_owned(),
+                },
+            ] {
+                let error = classify_plan_error(error);
+                assert!(error.member.is_none());
+                assert!(!error.to_string().contains(member));
+                assert!(!error.to_string().contains("for member"));
+            }
+        }
+    }
+
     pub(crate) fn prepared_fixture_for_proof_tests() -> PreparedFootCycleCollectionV1 {
         Fixture::create(FixtureOptions::default())
             .prepare()
@@ -1780,6 +1905,45 @@ contact_fragment = "contacts/b.json"
 
     pub(crate) fn proof_ready_fixture() -> PreparedFootCycleCollectionV1 {
         make_proof_ready(prepared_fixture_for_proof_tests())
+    }
+
+    pub(crate) fn proof_ready_fixture_with_shared_source() -> PreparedFootCycleCollectionV1 {
+        let fixture = Fixture::create(FixtureOptions::default());
+        let config = fixture.root.join("config.toml");
+        let text = fs::read_to_string(&config).unwrap();
+        fs::write(
+            &config,
+            format!("{text}\n[clips.\"Take 002\"]\nloop = true\n"),
+        )
+        .unwrap();
+        let mut prepared = fixture.prepare_proof_ready();
+        let mut second_clip = prepared.sources[1].document.clips[0].clone();
+        second_clip.name = "Take 002".to_owned();
+        prepared.members[1].candidate_clip.name = second_clip.name.clone();
+        prepared.sources[0].document.clips.push(second_clip);
+        prepared.members[1].source_index = 0;
+        prepared.members[1].clip_index = 1;
+        prepared.sources.truncate(1);
+        prepared
+    }
+
+    pub(crate) enum DiagnosticCandidateMutation {
+        Shape,
+        Map,
+    }
+
+    pub(crate) fn mutate_diagnostic_candidate(
+        prepared: &mut PreparedFootCycleCollectionV1,
+        member_index: usize,
+        mutation: DiagnosticCandidateMutation,
+    ) {
+        let clip = &mut prepared.members[member_index].candidate_clip;
+        match mutation {
+            DiagnosticCandidateMutation::Shape => clip.tracks[0].bone = usize::MAX,
+            DiagnosticCandidateMutation::Map => {
+                clip.tracks[0].times[1] = clip.tracks[0].times[1].next_up()
+            }
+        }
     }
 
     fn make_proof_ready(
