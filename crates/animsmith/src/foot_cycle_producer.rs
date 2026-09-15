@@ -1079,6 +1079,11 @@ mod tests {
     #[test]
     fn every_planner_variant_keeps_its_route_and_names_its_rule_and_member() {
         let cases = crate::foot_cycle_source_prep::tests::planner_diagnostic_cases();
+        assert_eq!(
+            cases.len(),
+            31,
+            "cover every currently defined planner variant"
+        );
         let mut labels = std::collections::BTreeSet::new();
         for (error, expected, operator) in cases {
             assert!(
@@ -1103,7 +1108,13 @@ mod tests {
 
     #[test]
     fn proof_refusals_name_the_judged_member_including_clips_sharing_a_source() {
-        for (error, expected) in crate::foot_cycle_proof::tests::member_diagnostic_cases() {
+        let cases = crate::foot_cycle_proof::tests::member_diagnostic_cases();
+        assert_eq!(
+            cases.len(),
+            20,
+            "cover both layouts, members, and five failures"
+        );
+        for (error, expected) in cases {
             let ProducerFailure::Refusal(rejection) = classify_proof(error) else {
                 panic!("member proof failure must remain a refusal");
             };
