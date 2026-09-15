@@ -1,3 +1,20 @@
+## Bash rejects CRLF before any local gate can run in an autocrlf checkout.
+*.sh text eol=lf
+# Python and Node accept CRLF as input, but executable scripts need an LF
+# shebang and keeping every gate script consistent avoids invocation drift.
+*.py text eol=lf
+*.js text eol=lf
+# The schema gate line-parses Rust identities and byte-compares JSON revisions.
+*.rs text eol=lf
+*.json text eol=lf
+# Shell gates parse manifests and the justfile line by line with sed and awk.
+Cargo.toml text eol=lf
+justfile text eol=lf
+# Policy/docs checks and workflow checks make line-oriented assertions too.
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
 crates/animsmith/testdata/collection-spike/*.md text eol=lf
 crates/animsmith/testdata/collection-spike/*.toml text eol=lf
 crates/animsmith/testdata/collection-spike/source/*.gltf text eol=lf

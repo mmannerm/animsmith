@@ -46,6 +46,49 @@ require_literal() {
   grep -Fq -- "$literal" "$path" || fail "$path must include $description"
 }
 
+# Shell scripts are checkout-time inputs: bash reads the CR in CRLF as part of
+# commands such as `set -o pipefail`. The gates also parse Cargo manifests,
+# Markdown policy/docs, workflow YAML, and the justfile line by line. Query
+# Git's resolved attributes instead of matching .gitattributes text so later
+# overrides cannot silently weaken the rule and newly tracked inputs are
+# covered.
+require_lf_gate_inputs() {
+  local attributes path attribute value eol_path eol_attribute eol_value count
+
+  attributes="$(mktemp "${TMPDIR:-/tmp}/animsmith-lf-attributes.XXXXXX")"
+
+  if ! git ls-files -z -- '*.sh' '*.py' '*.js' '*.rs' '*.json' \
+    '*.md' '*.yml' '*.yaml' \
+    ':(glob)**/Cargo.toml' justfile \
+    | git check-attr -z --stdin text eol > "$attributes"; then
+    fail "could not enumerate or resolve tracked gate-input attributes"
+  fi
+  test -s "$attributes" || fail "tracked gate-input attribute enumeration was empty"
+
+  count=0
+  while IFS= read -r -d '' path <&3; do
+    IFS= read -r -d '' attribute <&3 \
+      || fail "git check-attr returned an incomplete record for $path"
+    IFS= read -r -d '' value <&3 \
+      || fail "git check-attr returned no value for $path"
+    IFS= read -r -d '' eol_path <&3 \
+      || fail "git check-attr returned no eol record for $path"
+    IFS= read -r -d '' eol_attribute <&3 \
+      || fail "git check-attr returned an incomplete eol record for $path"
+    IFS= read -r -d '' eol_value <&3 \
+      || fail "git check-attr returned no eol value for $path"
+    test "$attribute" = "text" || fail "git check-attr returned unexpected attribute $attribute for $path"
+    test "$value" = "set" || fail "$path must resolve to text in .gitattributes (found $value)"
+    test "$eol_path" = "$path" || fail "git check-attr returned mismatched paths $path and $eol_path"
+    test "$eol_attribute" = "eol" || fail "git check-attr returned unexpected attribute $eol_attribute for $path"
+    test "$eol_value" = "lf" || fail "$path must resolve to eol: lf in .gitattributes (found $eol_value)"
+    count=$((count + 1))
+  done 3< "$attributes"
+  test "$count" -gt 0 || fail "git check-attr returned no gate-input attributes"
+
+  rm -f "$attributes"
+}
+
 # Validate the workflow structurally after YAML decoding; this handles quoted
 # keys, aliases, merges, and duplicate mappings that text scans cannot model.
 require_animation_pack_workflow() {
@@ -213,6 +256,8 @@ require_workflow_cron() {
 # Document-index completeness gate. This script keeps the assertions
 # that are not Markdown-link-shaped: required literals, ordering,
 # issue-form, and workflow contracts.
+
+require_lf_gate_inputs
 
 require_order README.md "cargo install animsmith" "CONTRIBUTING.md"
 require_order README.md "animsmith lint clip.glb" "CONTRIBUTING.md"
