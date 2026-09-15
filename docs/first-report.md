@@ -82,7 +82,7 @@ the file is safe to attach to a vendor ticket.
 
 ```console
 $ animsmith --config examples/walk.animsmith.toml report examples/assets/walk-dirty.glb -o evidence.html --evidence-only
-wrote evidence.html (1 clip(s), 3 finding(s), 0.0 MB)   # exits 0
+wrote evidence.html (1 clip(s), 3 finding(s), 0.1 MB)   # exits 0
 ```
 
 ## Where next
