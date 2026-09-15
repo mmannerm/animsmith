@@ -318,6 +318,8 @@ fn evidence_only_publishes_both_report_forms_without_their_sampled_motion() {
             None => {
                 assert_eq!(data["findings"], full_data["findings"], "{form}");
                 assert!(data["clips"][0].get("positions").is_none(), "{form}");
+                assert!(data["clips"][0].get("locals").is_none(), "{form}");
+                assert!(data.get("blend").is_none(), "{form}");
             }
             Some(sides) => {
                 for side in sides {
@@ -333,8 +335,13 @@ fn evidence_only_publishes_both_report_forms_without_their_sampled_motion() {
                 }
             }
         }
+        let notice = if prefix.is_none() {
+            "Pose playback and illustrative blending are omitted in this evidence-only report. No sampled positions or local transforms are embedded."
+        } else {
+            "Pose playback omitted: evidence-only report"
+        };
         assert!(
-            html.contains("Pose playback omitted: evidence-only report"),
+            html.contains(notice),
             "{form}: the document says where its pose view went"
         );
         assert!(
