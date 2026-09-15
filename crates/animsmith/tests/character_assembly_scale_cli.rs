@@ -11,7 +11,7 @@ use animsmith_core::scale::{
 };
 use animsmith_core::sha256_hex;
 use animsmith_testkit::{
-    rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, unaffected_bind_scale_rig_glb,
+    glb_identity, rest_bind_scale_rig_glb, rest_bind_scale_rig_gltf, unaffected_bind_scale_rig_glb,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -990,6 +990,107 @@ fn write_cubic_asset(path: &Path, offset: f32) {
     write_cubic_asset_from(path, &rest_bind_scale_rig_glb(), offset);
 }
 
+fn mutate_first_translation_keyframe(bytes: &mut [u8]) {
+    let json_len =
+        u32::from_le_bytes(bytes[12..16].try_into().expect("JSON chunk length")) as usize;
+    assert_eq!(&bytes[16..20], b"JSON", "first GLB chunk is JSON");
+    let json: Value = serde_json::from_slice(&bytes[20..20 + json_len]).expect("GLB JSON");
+    let animation = &json["animations"][0];
+    let channel = animation["channels"]
+        .as_array()
+        .expect("animation channels")
+        .iter()
+        .find(|channel| channel["target"]["path"] == "translation")
+        .expect("translation channel");
+    let sampler_index = channel["sampler"].as_u64().expect("sampler index") as usize;
+    let sampler = &animation["samplers"][sampler_index];
+    let accessor_index = sampler["output"].as_u64().expect("output accessor index") as usize;
+    let accessor = &json["accessors"][accessor_index];
+    assert_eq!(accessor["componentType"], 5126, "translation uses f32");
+    assert_eq!(accessor["type"], "VEC3", "translation uses VEC3");
+    let view_index = accessor["bufferView"].as_u64().expect("buffer view index") as usize;
+    let view = &json["bufferViews"][view_index];
+    let view_offset = view["byteOffset"].as_u64().unwrap_or(0) as usize;
+    let accessor_offset = accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+    // Cubic spline outputs store in-tangent, value, out-tangent for each key.
+    // Other interpolation modes begin with the first key's value.
+    let value_index = usize::from(sampler["interpolation"] == "CUBICSPLINE");
+    let json_end = 20 + json_len;
+    let bin_length = u32::from_le_bytes(
+        bytes[json_end..json_end + 4]
+            .try_into()
+            .expect("BIN chunk length"),
+    ) as usize;
+    assert_eq!(
+        &bytes[json_end + 4..json_end + 8],
+        b"BIN\0",
+        "second GLB chunk is BIN"
+    );
+    let bin_start = json_end + 8;
+    let component = bin_start + view_offset + accessor_offset + value_index * 3 * size_of::<f32>();
+    assert!(component + size_of::<f32>() <= bin_start + bin_length);
+    let value = f32::from_le_bytes(
+        bytes[component..component + 4]
+            .try_into()
+            .expect("translation component"),
+    );
+    bytes[component..component + 4].copy_from_slice(&(value + 0.25).to_le_bytes());
+}
+
+fn assert_release_stable_payload_identity(
+    path: &Path,
+    expected_json_sha256: &str,
+    expected_bin_sha256: &str,
+) {
+    let bytes = std::fs::read(path).expect("reads pinned GLB");
+    let identity = glb_identity::payload_identity(&bytes).expect("reads pinned GLB identity");
+    assert_eq!(
+        (identity.json_sha256.as_str(), identity.bin_sha256.as_str()),
+        (expected_json_sha256, expected_bin_sha256),
+        "{} changed outside its release stamp",
+        path.display()
+    );
+
+    let short = glb_identity::restamped(&bytes, "animsmith 1").expect("writes short stamp");
+    let long = glb_identity::restamped(&bytes, "animsmith 123.456.789-preview")
+        .expect("writes long stamp");
+    assert_ne!(
+        short.len(),
+        long.len(),
+        "the two stamps must exercise different GLB framing lengths"
+    );
+    for restamped in [&short, &long] {
+        let restamped_identity =
+            glb_identity::payload_identity(restamped).expect("reads restamped GLB identity");
+        assert_eq!(
+            (
+                restamped_identity.json_sha256.as_str(),
+                restamped_identity.bin_sha256.as_str(),
+            ),
+            (expected_json_sha256, expected_bin_sha256),
+            "{} payload pin moved with asset.generator",
+            path.display()
+        );
+    }
+
+    let mut mutated_bytes = bytes.clone();
+    mutate_first_translation_keyframe(&mut mutated_bytes);
+    let mutated_identity =
+        glb_identity::payload_identity(&mutated_bytes).expect("reads mutated GLB identity");
+    assert_eq!(
+        mutated_identity.json_sha256,
+        expected_json_sha256,
+        "{} keyframe mutation must leave the pinned JSON unchanged",
+        path.display()
+    );
+    assert_ne!(
+        mutated_identity.bin_sha256,
+        expected_bin_sha256,
+        "{} stored payload pin must reject a changed animation keyframe",
+        path.display()
+    );
+}
+
 fn write_scale_sensitive_clip_asset(path: &Path, translation_end_y: f32) {
     let mut document =
         animsmith_gltf::load_bytes(Path::new("source.glb"), &rest_bind_scale_rig_glb()).unwrap();
@@ -1244,30 +1345,33 @@ fn v4_rebases_before_remap_then_proves_and_publishes_the_exact_final_artifact() 
     assert_eq!(scale["expected_factor"], 0.01);
     let inputs = scale["inputs"].as_array().unwrap();
     assert_eq!(inputs.len(), 3);
-    for (input, (role, declared, expected_sha256)) in inputs.iter().zip([
+    for (input, (role, declared, expected_json_sha256, expected_bin_sha256)) in inputs.iter().zip([
         (
             "base",
             "base.glb",
-            "18234c3fe594fee87189431e694d8489991c9afc7dbfaca23081edf7fba1349a",
+            "f1a81c3ad2ef1e8c17882e47a8cb2998ef8907affaee3d64ff984fcd06e4d7c3",
+            "afedcebc6524b9e220323933f921ceeb67de56c161efc9028c40d44209ce1153",
         ),
         (
             "clip:walk",
             "clip.glb",
-            "9482839267ec7013579b9e868cffaf23f2f8611863913e15031ecb17573029dd",
+            "f1a81c3ad2ef1e8c17882e47a8cb2998ef8907affaee3d64ff984fcd06e4d7c3",
+            "3e8f300e0124140cf09586be8900304b25a13260a641de026b70c14d6eda2a75",
         ),
         (
             "clip:run",
             "clip-two.glb",
-            "366adfecd29c38a7af16876a72052b1ae2ac0fe0f0b673809deb1b45f1ee487a",
+            "f1a81c3ad2ef1e8c17882e47a8cb2998ef8907affaee3d64ff984fcd06e4d7c3",
+            "98e769ec8c790eb4543a980e6b22b0438cd4d3d226e0caa72d1d58a19ea5bc1f",
         ),
     ]) {
-        let bytes = std::fs::read(dir.path().join("inputs").join(declared)).unwrap();
+        let path = dir.path().join("inputs").join(declared);
+        let bytes = std::fs::read(&path).unwrap();
         assert_eq!(input["role"], role);
         assert_eq!(input["declared_path"], declared);
         assert_eq!(input["bytes"], bytes.len());
-        assert_eq!(bytes.len(), 2516);
         assert_eq!(input["sha256"], sha256_hex(&bytes));
-        assert_eq!(input["sha256"], expected_sha256);
+        assert_release_stable_payload_identity(&path, expected_json_sha256, expected_bin_sha256);
         assert_eq!(
             input["basis_schema"],
             "urn:animsmith:character-assembly-scale-basis:1"
@@ -1301,14 +1405,37 @@ fn v4_rebases_before_remap_then_proves_and_publishes_the_exact_final_artifact() 
         "exact input digest is fingerprint material"
     );
     assert_eq!(evidence["artifact"]["sha256"], sha256_hex(&artifact));
-    assert_eq!(
-        evidence["artifact"]["sha256"],
-        "60374d0f894fcc3f620ca204c52f6f7a2f0fbc61f1b5fc0b65cb9f48b7ca5755"
+    assert_release_stable_payload_identity(
+        &dir.path().join("character.glb"),
+        "ba54f9f13fa886f75d95af7611bcb227b9ab229d4ce9ac7faae9a584c1cc6205",
+        "68c9a13155bb97821c31423ce38ef20c6368e383708b8da626d9d2b8a7138817",
     );
-    assert_eq!(evidence["artifact"]["bytes"], 3424);
-    assert_eq!(
-        scale["staged_source_sha256"],
-        "90d4b8ff4b22e47acb5890dba9a2da5f24c618cfd4eb5ab837d813e9a4f7fe9c"
+    assert_eq!(evidence["artifact"]["bytes"], artifact.len());
+    // Production discards the staged GLB before this public-boundary test can
+    // read it. These assertions retain the evidence contract's shape and prove
+    // that it names a distinct file, but no longer independently pin that
+    // intermediate's byte determinism. The published artifact above remains
+    // payload-pinned.
+    let staged_source_sha256 = scale["staged_source_sha256"]
+        .as_str()
+        .expect("staged source carries a SHA-256 digest");
+    assert!(
+        staged_source_sha256.len() == 64
+            && staged_source_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "staged source digest must be 64 lowercase hex digits"
+    );
+    assert!(
+        inputs
+            .iter()
+            .all(|input| input["sha256"].as_str() != Some(staged_source_sha256)),
+        "the discarded staged source must differ from every declared input"
+    );
+    assert_ne!(
+        evidence["artifact"]["sha256"].as_str(),
+        Some(staged_source_sha256),
+        "the discarded staged source must differ from the published artifact"
     );
     assert_eq!(scale["read_back_sha256"], evidence["artifact"]["sha256"]);
     assert_eq!(
