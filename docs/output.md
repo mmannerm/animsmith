@@ -9,8 +9,8 @@ prediction facets beside its sampled-motion view.
 
 The single-document report keeps source playback separate from its optional
 illustrative blend. Source panes draw the exact Rust model-space pose-grid
-positions judged by checks. With a pair selected, `illustrative blend` adds a
-third pane computed from the embedded `sampled-local-trs-blend-v1` presentation
+positions judged by checks. The `illustrative blend` control appears only
+after the selected pair passes admission, and adds a third pane computed from the embedded `sampled-local-trs-blend-v1` presentation
 authority. It produces no finding, metric, animation export or engine-runtime
 conformance claim. The separate before/after comparison report keeps its
 existing source-pose and overlay behavior.
@@ -65,9 +65,11 @@ After aggregate admission, malformed track targets, properties, storage,
 cardinalities or duplicate channels omit that clip's complete local stream.
 Non-finite sampled components or quaternion length outside `1 +/- 1e-4` do the
 same. Invalid shared parent topology makes all blends unavailable. Each refusal
-shows a reason; source findings remain available. The browser retains at most
-two decoded local streams and uses reusable storage for one O(bones) blend/FK
-pass per repaint, with no all-pairs table or blended trail.
+shows a reason; source findings remain available. The browser validates and
+decodes only the selected pair when selection changes, before showing blend
+controls, and retains at most two local streams. Weight, phase and repaint do
+not decode streams or scan the clip array. Reusable storage supports one
+O(bones) blend/FK pass per repaint, with no all-pairs table or blended trail.
 
 This cap bounds added local data and its processing, not existing source pose
 allocation, sampling, checks, loader/caller data, full JSON or full HTML memory.

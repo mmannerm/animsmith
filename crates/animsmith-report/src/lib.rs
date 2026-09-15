@@ -1900,7 +1900,7 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
     } else {
         (
             format!(
-                "{}\n<p id=\"pane-labels\"></p><div id=\"blend-controls\"><label><input id=\"blend-enable\" type=\"checkbox\"> illustrative blend</label> <label for=\"blend-weight\">weight</label> <input id=\"blend-weight\" type=\"range\" min=\"0\" max=\"1\" step=\"0.001\" value=\"0.5\"></div><p id=\"blend-caption\" hidden>Engine-agnostic illustrative blend of sampled local transforms (nlerp rotations). Normalized phase, not a time warp. Not Bevy, Unity, Unreal or Godot runtime evidence.</p><p id=\"blend-status\" aria-live=\"polite\"></p>",
+                "{}\n<p id=\"pane-labels\"></p><div id=\"blend-controls\" hidden><label><input id=\"blend-enable\" type=\"checkbox\"> illustrative blend</label> <label for=\"blend-weight\">weight</label> <input id=\"blend-weight\" type=\"range\" min=\"0\" max=\"1\" step=\"0.001\" value=\"0.5\"></div><p id=\"blend-caption\" hidden>Engine-agnostic illustrative blend of sampled local transforms (nlerp rotations). Normalized phase, not a time warp. Not Bevy, Unity, Unreal or Godot runtime evidence.</p><p id=\"blend-status\" aria-live=\"polite\"></p>",
                 pose_surface("gl", false)
             ),
             "",

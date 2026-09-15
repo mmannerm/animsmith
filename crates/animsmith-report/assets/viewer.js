@@ -102,8 +102,8 @@ function decodeLocals(c) {
 function selectBlendLocals() {
   selectedBlendReason = blendAuthorityReason;
   // Evict first, so switching pairs never retains three decoded streams.
-  for (const c of localCache.keys()) if (!blendEnabled || !withClip || (c !== clip && c !== withClip)) localCache.delete(c);
-  if (!blendEnabled || !withClip || selectedBlendReason) return;
+  for (const c of localCache.keys()) if (!withClip || (c !== clip && c !== withClip)) localCache.delete(c);
+  if (!withClip || selectedBlendReason) return;
   for (const c of [clip, withClip]) {
     try { if (!localCache.has(c)) localCache.set(c, decodeLocals(c)); }
     catch (error) { selectedBlendReason = error.message; localCache.clear(); return; }
@@ -229,6 +229,7 @@ if (canvas) {
 // playback advances continuously.
 let clip = data.clips[0] || null;
 let withClip = null;
+let clipIndex = 0, withClipIndex = -1;
 let frame = 0;
 let yaw = 0.7, pitch = 0.35, dist = 0;
 let center = [0, 1, 0];
@@ -253,6 +254,7 @@ function refreshShown() {
     const key = index === 0 ? c.name : "with " + c.name;
     return {
       clip: c,
+      index: index === 0 ? clipIndex : withClipIndex,
       // Every pane is at the same phase, in its own frame count.
       at: animsmithFrameAtPhase(c.frames, phase),
       bones,
@@ -326,10 +328,12 @@ function draw() {
   // cannot keep uploading a previously valid blend buffer.
   const panes = shown.slice();
   if (blendStatus) {
-    blendCaption.hidden = !blendEnabled || !withClip;
-    blendStatus.textContent = blendAuthorityReason || "";
+    blendCaption.hidden = !blendEnabled || !withClip || Boolean(selectedBlendReason);
+    blendStatus.textContent = blendAuthorityReason || (withClip && selectedBlendReason
+      ? "Illustrative blend unavailable for the selected clips: " + selectedBlendReason + ". Source findings remain available."
+      : "");
   }
-  if (blendEnabled && withClip) {
+  if (blendEnabled && withClip && !selectedBlendReason) {
     const positions = blendPose(shown[0].at, shown[1].at);
     if (positions) {
       panes.push({clip: {pos: positions}, at: 0, bones: "pass", joints: "pass", key: "illustrative blend"});
@@ -424,9 +428,10 @@ function refreshPairing() {
   withSelect.hidden = data.clips.length < 2;
   document.getElementById("with-label").hidden = data.clips.length < 2;
   if (blendToggle) {
-    blendToggle.disabled = !withClip;
-    weightInput.disabled = !withClip || !blendEnabled;
-    document.getElementById("blend-controls").hidden = data.clips.length < 2;
+    const admissible = Boolean(withClip) && !selectedBlendReason;
+    blendToggle.disabled = !admissible;
+    weightInput.disabled = !admissible || !blendEnabled;
+    document.getElementById("blend-controls").hidden = !admissible;
   }
 
 }
@@ -452,9 +457,12 @@ function refresh() {
 // Which clips are shown changed, so the selection-driven chrome and the
 // camera follow before the repaint.
 function reselect() {
+  // Resolve array identity only when selection changes, never per repaint.
+  clipIndex = data.clips.indexOf(clip);
+  withClipIndex = data.clips.indexOf(withClip);
   refreshShown();
-  refreshPairing();
   selectBlendLocals();
+  refreshPairing();
   fitCamera();
   refresh();
 }
@@ -496,7 +504,7 @@ const groupMembers = new Map((data.groups || []).map((g) => [g.name, g.members])
 
 function updateCharts() {
   if (!clip) return;
-  const paneOf = new Map(shown.map((pane) => [data.clips.indexOf(pane.clip), pane]));
+  const paneOf = new Map(shown.map((pane) => [pane.index, pane]));
   // A group figure's axis is the stride cycle its members were measured on,
   // which excludes the duplicate wrap sample a longer grid repeats, and it is
   // the selected clip's cycle: pairing a second clip beside it adds a pane,
@@ -560,7 +568,6 @@ withSelect.addEventListener("change", () => selectWith(null, withSelect.value ==
 if (blendToggle) {
   blendToggle.addEventListener("change", () => {
     blendEnabled = blendToggle.checked;
-    selectBlendLocals();
     refreshPairing();
     refresh();
   });

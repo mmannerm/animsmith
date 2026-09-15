@@ -2546,9 +2546,9 @@ for (const fixture of goldenBundle.cases) {
   const findings = JSON.stringify(payload.findings);
   const state = runSingle(parts, html, payload, {hash: `#with=${encodeURIComponent(payload.clips[1].name)}`, styles: tokenStyles(themedTokens)});
   state.nodes.gl.clientWidth = 900;
-  if (state.decoded.count !== 2) throw new Error("locals decoded before enabling blend");
+  if (state.decoded.count !== 4 || state.nodes["blend-controls"].hidden || state.nodes["blend-enable"].disabled) throw new Error("admitted selected pair lacks validated blend controls");
   enableBlend(state);
-  if (state.decoded.count !== 4) throw new Error("selected pair was not decoded exactly once");
+  if (state.decoded.count !== 4) throw new Error("enabling blend redecoded selected locals");
   let camera;
   for (const sample of fixture.samples) {
     state.nodes.scrub.value = String(sample.phase * (payload.clips[0].frames - 1));
@@ -2606,7 +2606,7 @@ for (const mutate of [
   // do not scrub it; the added path must refuse before touching local data.
   const state=runSingle(blendParts,blendHtml,payload,{hash:`#with=${encodeURIComponent(payload.clips[1].name)}`});
   enableBlend(state);
-  if (state.decoded.count!==2 || repaint(state).passes.length!==2) throw new Error("invalid aggregate authority decoded locals or hid source playback");
+  if (state.decoded.count!==2 || repaint(state).passes.length!==2 || !state.nodes["blend-controls"].hidden || !state.nodes["blend-enable"].disabled) throw new Error("invalid aggregate authority decoded locals, offered blending or hid source playback");
 }
 for (const value of [NaN, Infinity, 0, 1e-20, 1.001]) {
   const payload=JSON.parse(JSON.stringify(blendPayload));
@@ -2615,8 +2615,29 @@ for (const value of [NaN, Infinity, 0, 1e-20, 1.001]) {
   payload.clips[1].locals=raw.toString("base64");
   const state=runSingle(blendParts,blendHtml,payload,{hash:`#with=${encodeURIComponent(payload.clips[1].name)}`});
   enableBlend(state);
-  if (repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("unavailable")) throw new Error("invalid local quaternion drew blend");
+  if (repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("unavailable") || !state.nodes["blend-controls"].hidden || !state.nodes["blend-caption"].hidden) throw new Error("invalid local quaternion offered or drew a blend");
 }
+// Controls appear only after the selected pair is admitted. An omitted clip
+// keeps its source pane and reason while controls are hidden; returning to a
+// valid pair restores controls without enabling the illustrative pane itself.
+{
+  const payload=JSON.parse(JSON.stringify(blendPayload));
+  payload.clips.push({...payload.clips[1], name:"omitted locals", blend_omission:"malformed sampled track", locals:undefined});
+  const state=runSingle(blendParts,blendHtml,payload);
+  if(!state.nodes["blend-controls"].hidden || state.decoded.count!==3) throw new Error("alone view offers blending or decodes locals");
+  state.nodes["with-select"].value="2";state.nodes["with-select"].listeners.change();
+  if(!state.nodes["blend-controls"].hidden || !state.nodes["blend-enable"].disabled || repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("malformed sampled track")) throw new Error("omitted selected pair loses source view/reason or offers blending");
+  state.nodes["with-select"].value="1";state.nodes["with-select"].listeners.change();
+  if(state.nodes["blend-controls"].hidden || state.nodes["blend-enable"].disabled || !state.nodes["blend-weight"].disabled || repaint(state).passes.length!==2 || state.nodes["blend-status"].textContent.includes("unavailable")) throw new Error("valid pair did not restore optional controls and clear omission");
+  const decoded=state.decoded.count;
+  enableBlend(state);
+  if(repaint(state).passes.length!==3 || state.decoded.count!==decoded) throw new Error("blend toggle decodes or cannot display admitted pair");
+  state.nodes["with-select"].value="2";state.nodes["with-select"].listeners.change();
+  if(!state.nodes["blend-controls"].hidden || !state.nodes["blend-caption"].hidden || repaint(state).passes.length!==2 || !state.nodes["blend-status"].textContent.includes("malformed sampled track")) throw new Error("invalid selection retains blend controls, caption or geometry");
+  state.nodes["with-select"].value="";state.nodes["with-select"].listeners.change();
+  if(!state.nodes["blend-controls"].hidden || repaint(state).passes.length!==1 || vm.runInContext('localCache.size',state.context)!==0) throw new Error("clearing pair retains controls, geometry or locals");
+}
+
 // Duplicate names are addressable by array identity through controls only.
 const duplicateCase=goldenBundle.cases.find(c=>c.name==="quaternion-hemispheres");
 const duplicateHtml=fs.readFileSync(`${generatedIn}/${duplicateCase.html}`,"utf8");
@@ -2693,11 +2714,27 @@ for(const bones of [1024,1025]) {
 }
 for(const count of [4096,4097]) {
   const payload=resourcePayload(1,[3,3]);
+  for(const clip of payload.clips) clip.positions=Buffer.alloc(36).toString("base64");
   while(payload.clips.length<count) payload.clips.push({...payload.clips[0],name:`resource-${payload.clips.length}`});
   payload.blend.raw_bytes=count*120;payload.blend.base64_bytes=count*160;
   const state=runSingle(blendParts,blendHtml,payload,{hash:"#with=resource-1"});enableBlend(state);
   if(repaint(state).passes.length!==(count===4096?3:2) || state.decoded.count!==count+(count===4096?2:0)) throw new Error("clip bound or selected-only decoding violated");
   if(count===4096) {
+    // Array-identity resolution belongs to selection, not repaint. Make the
+    // full clip array reject iteration/linear lookup while weight, phase,
+    // camera redraw and playback advance the already selected pair.
+    vm.runInContext(`const savedClipMethods = new Map();
+      for (const method of ["indexOf", "find", "findIndex", "map", "filter", "forEach", "reduce", "some", "every", Symbol.iterator]) {
+        savedClipMethods.set(method, data.clips[method]);
+        data.clips[method] = () => { throw new Error("repaint traversed all clips"); };
+      }`,state.context);
+    setWeight(state,0.25);
+    state.nodes.scrub.value="1";state.nodes.scrub.listeners.input();
+    repaint(state);
+    state.nodes.gl.listeners.wheel({deltaY:12,preventDefault(){}});
+    state.nodes.play.listeners.click();stepFrame(state,0);stepFrame(state,0.1);
+    vm.runInContext('for (const [method,original] of savedClipMethods) data.clips[method]=original',state.context);
+    state.nodes.scrub.value="0";state.nodes.scrub.listeners.input();
     // Choosing a new partner retains the primary decoded stream and evicts
     // the old partner. Playback continues from the same phase.
     state.nodes.play.listeners.click();
