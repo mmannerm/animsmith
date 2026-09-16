@@ -119,8 +119,8 @@ runtime behavior, and project-file writes are outside its boundary.
 
 ```toml
 [dependencies]
-animsmith-core = "0.13"
-animsmith-engine = "0.13"
+animsmith-core = "0.14"
+animsmith-engine = "0.14"
 ```
 
 The compiling example and the full registry API are in the crate-level API

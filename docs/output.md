@@ -832,11 +832,11 @@ A failure still prevents publication of the generation.
 
 ```json
 {
-  "schema_version": 15,
-  "schema": "urn:animsmith:schema:output:15",
+  "schema_version": 19,
+  "schema": "urn:animsmith:schema:output:19",
   "tool": {
     "name": "animsmith",
-    "version": "0.13.2",
+    "version": "0.14.0",
     "source": {
       "revision": "0123456789abcdef0123456789abcdef01234567",
       "dirty": false
@@ -897,7 +897,7 @@ producer-refusal v1 record:
   "schema": "urn:animsmith:schema:producer-refusal:1",
   "tool": {
     "name": "animsmith",
-    "version": "0.13.2",
+    "version": "0.14.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "convert",
@@ -917,7 +917,7 @@ producer-refusal v1 record:
   "schema": "urn:animsmith:schema:conversion-evidence:2",
   "tool": {
     "name": "animsmith",
-    "version": "0.13.2",
+    "version": "0.14.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "convert",
@@ -1922,7 +1922,7 @@ delta count, and structured metric deltas:
   "schema": "urn:animsmith:schema:output:19",
   "tool": {
     "name": "animsmith",
-    "version": "0.13.2",
+    "version": "0.14.0",
     "source": { "revision": null, "dirty": null }
   },
   "command": "diff",
