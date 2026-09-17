@@ -668,7 +668,6 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
         paragraphs = [
             paragraph for paragraph in report_ast["paragraphs"]
             if paragraph["section"] == "Integration recipe"
-            and not paragraph["blockquote"]
         ]
         detail_ids = [
             paragraph["code"][0] if paragraph["code"] else None
@@ -678,20 +677,29 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
         if len(detail_ids) != len(expected_ids) or set(detail_ids) != set(expected_ids):
             errors.append("model-to-view integration detail membership differs from authority")
         slot_positions: dict[str, int] = {}
-        for index, (action, label, _key) in enumerate(RECIPE_SLOTS, start=1):
+        for index, (action, label, key) in enumerate(RECIPE_SLOTS, start=1):
             matching = [
                 position for position, paragraph in enumerate(paragraphs)
                 if paragraph["list_depth"] == 1
+                and not paragraph["blockquote"] and not paragraph["subsection"]
                 and paragraph["list_item"] == index
                 and f"{label}:" in paragraph["strong"]
             ]
             if len(matching) == 1:
                 slot_positions[action] = matching[0]
+                declared = any(record["action"] == action for record in model["integration_steps"])
+                expected_slot = f"{label}: {key}=declared" if declared else (
+                    f"{label}: {key}=not-evaluated; no declared step."
+                )
+                if paragraphs[matching[0]]["text"] != expected_slot:
+                    errors.append(f"model-to-view integration action slot {action} differs from authority")
+        allowed_positions = set(slot_positions.values())
         for record in model["integration_steps"]:
             matching = [
                 (position, paragraph)
                 for position, paragraph in enumerate(paragraphs)
                 if paragraph["list_depth"] == 2
+                and not paragraph["blockquote"] and not paragraph["subsection"]
                 and paragraph["code"]
                 and paragraph["code"][0] == record["id"]
             ]
@@ -701,6 +709,7 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
                 )
                 continue
             position, paragraph = matching[0]
+            allowed_positions.add(position)
             expected_code = [
                 _code_text(record["id"]), _code_text(record["action"]),
                 _code_text(record["coordinates_or_thresholds"]),
@@ -714,9 +723,12 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
                 f"movement owner={_code_text(record['movement_owner'])}; "
                 f"phase owner={_code_text(record['phase_owner'])}; "
             )
+            expected_evidence = "; ".join(
+                f"{ref}: {evidence[ref]['summary']}" for ref in record["evidence_refs"]
+            ) or "No linked evidence."
             if (
                 paragraph["code"] != expected_code
-                or not paragraph["text"].startswith(expected_prefix)
+                or paragraph["text"] != expected_prefix + expected_evidence + "."
             ):
                 errors.append(
                     f"model-to-view integration step {record['id']} differs from authority"
@@ -746,6 +758,16 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
                 errors.append(
                     f"model-to-view integration step {record['id']} has misattached evidence"
                 )
+        unexpected_blocks = any(
+            node["section"] == "Integration recipe"
+            for family in ("tables", "code_blocks", "rules")
+            for node in report_ast[family]
+        ) or any(
+            node["section"] == "Integration recipe" and node["level"] != 2
+            for node in report_ast["headings"]
+        )
+        if allowed_positions != set(range(len(paragraphs))) or unexpected_blocks:
+            errors.append("model-to-view integration recipe contains unexpected content")
     assert_projection_links(report_ast, report_validator.RUNTIME_SET_HEADER, model["runtime_sets"], 1, ("evidence_refs",), "primary runtime-set")
     assert_projection_links(report_ast, report_validator.ISSUE_HEADER, model["issues"], 6, ("evidence_refs",), "issue")
     assert_projection_links(report_ast, report_validator.ENGINE_HEADER, [next(record for record in model["engine_evidence"] if record["runtime"] == runtime) for runtime in report_validator.ENGINE_LABELS], 2, ("evidence_refs",), "primary engine")

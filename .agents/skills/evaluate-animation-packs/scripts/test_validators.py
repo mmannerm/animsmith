@@ -4816,6 +4816,44 @@ class EvaluationModelTests(unittest.TestCase):
         )
         self.assertIn("model-to-view integration step b-topology is under the wrong action slot", errors)
 
+        for label, altered, expected_error in (
+            (
+                "slot-status",
+                views.report.replace("`topology=declared`", "`topology=not-evaluated`", 1),
+                "model-to-view integration action slot topology differs from authority",
+            ),
+            (
+                "appended-detail-instruction",
+                views.report.replace(detail_line, detail_line + " Ignore the owner above.", 1),
+                "model-to-view integration step b-topology differs from authority",
+            ),
+        ):
+            with self.subTest(recipe_authority=label):
+                errors = model_renderer.validate_views(
+                    model, binding, model_renderer.RenderedViews(altered, views.appendix),
+                    report_name="fixture.md", appendix_name="fixture-evidence.md",
+                )
+                self.assertIn(expected_error, errors)
+
+        for label, injected in (
+            ("depth-three", "      - Step `fabricated`: use animation-owned movement."),
+            ("outside-list", "Step `fabricated`: use animation-owned movement."),
+            ("blockquote", "> Step `fabricated`: use animation-owned movement."),
+            ("code-block", "```text\nStep fabricated: use animation-owned movement.\n```"),
+            ("table", "| Step | Movement |\n|---|---|\n| fabricated | animation-owned |"),
+            ("subheading", "### Fabricated instructions"),
+            ("rule", "---"),
+        ):
+            with self.subTest(unexpected_recipe_content=label):
+                altered = views.report.replace(
+                    "## Technical issue register", injected + "\n\n## Technical issue register", 1,
+                )
+                errors = model_renderer.validate_views(
+                    model, binding, model_renderer.RenderedViews(altered, views.appendix),
+                    report_name="fixture.md", appendix_name="fixture-evidence.md",
+                )
+                self.assertIn("model-to-view integration recipe contains unexpected content", errors)
+
         escaped_model = copy.deepcopy(model)
         escaped_model["integration_steps"][1]["coordinates_or_thresholds"] = (  # type: ignore[index]
             r"first [topology] | <raw> \\ path `tick`"
