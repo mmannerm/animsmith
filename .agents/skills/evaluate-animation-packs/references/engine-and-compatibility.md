@@ -152,6 +152,14 @@ phase/sync policy, and say whether animation or the gameplay controller owns
 translation and yaw. Keep in-place and root-motion variants in separate graphs
 unless the runtime policy explicitly explains how they interoperate.
 
+For a kinematic-controller recipe, assign horizontal translation, yaw, and
+collision explicitly. The usual testable proposal uses in-place or pose-only
+animation while the controller owns all three, maps controller velocity to the
+named 1D/2D set, and adjusts playback/phase under a stated policy. Treat that
+as project configuration until representative gameplay proves starts, stops,
+pivots, slopes, contacts, and collision response. Never imply that selecting
+this policy repaired root-motion source files.
+
 ## Upper and lower body masking
 
 Test masks with representative locomotion plus upper-body actions such as aim,
@@ -171,6 +179,13 @@ Check:
 `constant-track` or track inventory can reveal unnecessary keyed regions, but
 only an engine layer test establishes useful masking. Track pruning is not a
 substitute for deciding which body motion belongs in a clip.
+
+Specify the full-body transition first: source state, destination state, exact
+members, crossfade or authored bridge, interruption policy, and contact gate.
+Then specify any proposed layer separately with its base and action members,
+mask boundary, pelvis/root owner, additive/override mode, prop/IK requirements,
+and target-engine visual gate. Until that layer passes, the report's usable
+recipe remains the full-body handoff.
 
 ## Additive animation, IK, and attachments
 
@@ -250,6 +265,14 @@ Assign one result per important pairing:
 Include evidence and caveats beside the result. A category is not a grade;
 `engine-config` can be an excellent purchase outcome when the setup is stable
 and documented.
+
+For a cross-pack combination, name the namespaced members and the exact role of
+each pack in the state graph. Define one retarget path, scale/axis policy,
+movement owner, phase/transition policy, and whether the boundary is full-body
+or layered. Report package coexistence, shared-skeleton/retarget evidence,
+runtime transition or blend evidence, contact/IK acceptance, and artistic
+style acceptance separately. A technically implementable state graph may
+remain visually or artistically unevaluated.
 
 ## Game-type caveats
 

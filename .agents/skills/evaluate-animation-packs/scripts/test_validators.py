@@ -3199,7 +3199,7 @@ class ReportValidatorTests(unittest.TestCase):
             "protofactor-two-handed-melee",
             "protofactor-ultimate-animation-collection",
         }
-        expected_evaluators = {stem: "0.10.0" for stem in expected}
+        expected_evaluators = {stem: "0.14.0" for stem in expected}
         self.assertTrue(reports, "expected at least one published pack report")
         self.assertEqual({report.stem for report in reports}, expected)
         self.assertEqual(
@@ -3238,17 +3238,17 @@ class ReportValidatorTests(unittest.TestCase):
         repository = Path(__file__).resolve().parents[4]
         appendices = sorted((repository / "docs" / "reports").glob("*-evidence.md"))
         artifact_url = (
-            "https://github.com/mmannerm/animsmith/releases/download/v0.10.0/"
-            "animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz"
+            "https://github.com/mmannerm/animsmith/releases/download/v0.14.0/"
+            "animsmith-v0.14.0-x86_64-unknown-linux-gnu.tar.gz"
         )
         archive_hash = (
-            "8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662"
+            "4ecf79436f9123c779edb004050da3010b44a2b392e3031facb227d7734fc33e"
         )
-        member = "animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith"
+        member = "animsmith-v0.14.0-x86_64-unknown-linux-gnu/animsmith"
         binary_hash = (
-            "2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387"
+            "c2b9649bc74f8a7e5b5d7361a6feaa93941b2327cd7eee82235024bd4f61e366"
         )
-        peeled_commit = "db91d8dda3326f97f581d4d62104d928caec383f"
+        peeled_commit = "e8321ad40be5ef6f162b31f085819c039175c3c9"
 
         def preflight_errors(text: str, links: set[str]) -> list[str]:
             checks = {
@@ -3268,7 +3268,7 @@ class ReportValidatorTests(unittest.TestCase):
                     text,
                 )
                 is not None,
-                "source tag": re.search(r"(?is)tag(?: is)? v0\.10\.0", text)
+                "source tag": re.search(r"(?is)tag(?: is)? v0\.14\.0", text)
                 is not None,
                 "peeled commit": re.search(
                     rf"(?is)peeled (?:source )?commit {peeled_commit}", text
@@ -3306,7 +3306,7 @@ class ReportValidatorTests(unittest.TestCase):
                     is not None
                 ),
                 "preflight locator and digest": re.search(
-                    r"(?is)(?:external:[^\s`)]*|preflight-status-v1)"
+                    r"(?is)(?:external:[^\s`)]*|preflight.json)"
                     r"[^.\n]{0,240}(?:SHA-256 )?[0-9a-f]{64}",
                     text,
                 )
@@ -3335,9 +3335,9 @@ class ReportValidatorTests(unittest.TestCase):
                     preflight_errors(reproduction, reproduction_links), []
                 )
                 if appendix.name.startswith("mixamo-"):
-                    self.assertIn("preflight-status-v1", reproduction)
+                    self.assertIn("preflight.json", reproduction)
                     self.assertIn(
-                        "739930cd9c04189be3ffe1d3f7381800898d8d4b35c75c9a519e57f6cfad1fad",
+                        "7034b5043de54e7b30064230db18605d1f96d0ea1477f7b8c56ce817cc73521a",
                         reproduction,
                     )
                 if not mutation_checked:
@@ -3375,9 +3375,15 @@ class ReportValidatorTests(unittest.TestCase):
         self.assertEqual(len(protofactor_rows), 9)
         for row in protofactor_rows:
             status = row[3]["text"]
-            self.assertIn("current AnimSmith 0.10.0", status)
-            self.assertIn("no current", status)
-            self.assertNotRegex(status, r"Unity \d")
+            self.assertIn("current AnimSmith 0.14.0", status)
+            if row[0]["text"] in {
+                "Protofactor Campfire", "Protofactor Climbing", "Protofactor Injured",
+            }:
+                self.assertIn("no current engine", status)
+            else:
+                self.assertIn("source Unity", status)
+                self.assertIn("acceptance", status)
+            self.assertIn("unpromoted", status)
 
     def test_published_history_boundary_rejects_a_body_regression(self) -> None:
         repository = Path(__file__).resolve().parents[4]
@@ -3395,113 +3401,67 @@ class ReportValidatorTests(unittest.TestCase):
         )
 
     def test_mixamo_collection_inventory_reconciles_constituent_appendices(self) -> None:
-        repository = Path(__file__).resolve().parents[4]
-        reports = repository / "docs" / "reports"
+        reports = Path(__file__).resolve().parents[4] / "docs" / "reports"
         collection = report_validator.parse_markdown(
-            (reports / "mixamo-locomotion-collection-evidence.md").read_text(
-                encoding="utf-8"
-            )
+            (reports / "mixamo-locomotion-collection-evidence.md").read_text(encoding="utf-8")
         )
         tables = [
-            table
-            for table in collection["tables"]
+            table for table in collection["tables"]
             if table["section"] == "Pack inventory and content evidence"
             and [cell["text"] for cell in table["header"]]
-            == ["Constituent", "FBX files", "Manifest-declared motions"]
+            == ["Constituent", "FBXs", "Legacy metadata", "Baseline", "Declared XZ", "New hypothesis"]
         ]
         self.assertEqual(len(tables), 1)
-        rows = {
-            row[0]["text"]: (int(row[1]["text"]), int(row[2]["text"]))
-            for row in tables[0]["rows"]
-        }
-        total = rows.pop("Total")
-        constituents = {
-            "Basic": "mixamo-basic-locomotion-evidence.md",
-            "Female Basic": "mixamo-female-basic-locomotion-evidence.md",
-            "Female": "mixamo-female-locomotion-evidence.md",
-            "Locomotion": "mixamo-locomotion-evidence.md",
-            "Longbow": "mixamo-longbow-locomotion-evidence.md",
-            "Magic": "mixamo-magic-locomotion-evidence.md",
-            "Male": "mixamo-male-locomotion-evidence.md",
-            "Pistol/Handgun": "mixamo-pistol-handgun-locomotion-evidence.md",
-            "Rifle 8-Way": "mixamo-rifle-8-way-locomotion-evidence.md",
-        }
-        self.assertEqual(set(rows), set(constituents))
-        current_report_links = {
-            link["destination"]
-            for paragraph in collection["paragraphs"]
-            if paragraph["section"] == "Evaluation scope and provenance"
-            and paragraph["text"].startswith("Included current reports:")
-            for link in paragraph["links"]
-        }
-        self.assertEqual(
-            current_report_links,
-            {
-                filename.removesuffix("-evidence.md") + ".md"
-                for filename in constituents.values()
-            },
-        )
-        for name, filename in constituents.items():
-            document = report_validator.parse_markdown(
-                (reports / filename).read_text(encoding="utf-8")
-            )
+        self.assertEqual(len(tables[0]["rows"]), 9)
+        linked = set()
+        totals = [0, 0]
+        for row in tables[0]["rows"]:
+            self.assertEqual(len(row[0]["links"]), 1)
+            target = row[0]["links"][0]["destination"]
+            self.assertNotIn(target, linked)
+            linked.add(target)
+            appendix = reports / target.replace(".md", "-evidence.md")
+            document = report_validator.parse_markdown(appendix.read_text(encoding="utf-8"))
             field_tables = [
-                table
-                for table in document["tables"]
+                table for table in document["tables"]
                 if table["section"] == "Evaluation scope and provenance"
                 and [cell["text"] for cell in table["header"]] == ["Field", "Value"]
             ]
-            self.assertEqual(len(field_tables), 1, filename)
-            fields = {
-                row[0]["text"]: row[1]["text"] for row in field_tables[0]["rows"]
-            }
+            self.assertEqual(len(field_tables), 1)
+            fields = {r[0]["text"]: r[1]["text"] for r in field_tables[0]["rows"]}
             delivered = re.fullmatch(
-                r"(\d+) extracted FBX files from paired archive variants",
+                r"(\d+) extracted FBX files: (\d+) in-place-directory and (\d+) root-motion-directory files",
                 fields["Delivered scope"],
             )
-            self.assertIsNotNone(delivered, filename)
+            self.assertIsNotNone(delivered)
+            count, ip, rm = map(int, delivered.groups())
+            self.assertEqual(count, ip + rm)
+            self.assertEqual(int(row[1]["text"]), count)
+            metadata = re.fullmatch(r"(\d+) unlinked metadata motions", row[2]["text"])
+            self.assertIsNotNone(metadata)
+            legacy_count = int(metadata.group(1))
             prose = "\n".join(
-                paragraph["text"]
-                for paragraph in document["paragraphs"]
+                paragraph["text"] for paragraph in document["paragraphs"]
                 if paragraph["section"] == "Evaluation scope and provenance"
             )
-            motions = re.search(
-                r"; (\d+) remains separate source metadata\.", prose
+            self.assertIn(
+                f"legacy metadata count of {legacy_count} motions is not linked authoritatively to these {count} files",
+                prose,
             )
-            self.assertIsNotNone(motions, filename)
-            expected = (int(delivered.group(1)), int(motions.group(1)))
-            self.assertEqual(rows[name], expected, filename)
-        self.assertEqual(
-            total,
-            tuple(
-                sum(values[index] for values in rows.values())
-                for index in range(2)
-            ),
-        )
-        scope_tables = [
-            table
-            for table in collection["tables"]
-            if table["section"] == "Evaluation scope and provenance"
-            and [cell["text"] for cell in table["header"]] == ["Field", "Value"]
-        ]
-        self.assertEqual(len(scope_tables), 1)
-        scope = {
-            row[0]["text"]: row[1]["text"] for row in scope_tables[0]["rows"]
+            totals[0] += count
+            totals[1] += legacy_count
+        expected_links = {
+            p.name.replace("-evidence.md", ".md")
+            for p in reports.glob("mixamo-*-evidence.md")
+            if p.name != "mixamo-locomotion-collection-evidence.md"
         }
-        self.assertEqual(
-            scope["Delivered scope"],
-            f"{total[0]} extracted FBX files from nine constituent archive pairs; "
-            f"{total[1]} manifest-declared motions retained as separate source metadata",
-        )
+        self.assertEqual(linked, expected_links)
+        self.assertEqual(totals, [249, 231])
         inventory_prose = "\n".join(
-            paragraph["text"]
-            for paragraph in collection["paragraphs"]
+            paragraph["text"] for paragraph in collection["paragraphs"]
             if paragraph["section"] == "Pack inventory and content evidence"
         )
-        self.assertIn(
-            f"reconcile to {total[0]} FBX files and {total[1]} manifest-declared motions",
-            inventory_prose,
-        )
+        self.assertIn("231 metadata motion count is not mapped to the 249 files", inventory_prose)
 
 
 class RegenerationContractTests(unittest.TestCase):
@@ -4746,6 +4706,154 @@ class EvaluationModelTests(unittest.TestCase):
         # Exact authority values may contain hostile punctuation in the ledger,
         # but the pinned parser must keep it in code spans rather than HTML.
         self.assertFalse(report_validator.parse_markdown(escaped.appendix)["has_raw_html"])
+
+    def test_renderer_groups_reordered_sparse_and_repeated_recipe_actions_without_losing_evidence(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["evidence"].append({  # type: ignore[union-attr]
+            "id": "evidence-b", "kind": "observed-engine",
+            "locator": "docs/second-evidence.md", "summary": "Second fixture evidence.",
+        })
+        model["integration_steps"] = [
+            {"id": "a-accept", "order": 1, "action": "acceptance-gate", "movement_owner": "engine-config", "phase_owner": "engine-config", "coordinates_or_thresholds": "engine playback", "evidence_refs": ["evidence-a"]},
+            {"id": "b-topology", "order": 2, "action": "topology", "movement_owner": "engine-config", "phase_owner": "engine-config", "coordinates_or_thresholds": "first topology", "evidence_refs": ["evidence-a"]},
+            {"id": "c-topology", "order": 3, "action": "topology", "movement_owner": "artist-author", "phase_owner": "artist-author", "coordinates_or_thresholds": "second topology", "evidence_refs": ["evidence-b"]},
+            {"id": "d-owner", "order": 4, "action": "ownership", "movement_owner": "engine-config", "phase_owner": "artist-author", "coordinates_or_thresholds": "split ownership", "evidence_refs": ["evidence-b"]},
+        ]
+        self.assertEqual(model_validator.validate_model(model, binding), [])
+        views = model_renderer.render_views(
+            model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md"
+        )
+        self.assertEqual(
+            model_renderer.validate_views(
+                model, binding, views,
+                report_name="fixture.md", appendix_name="fixture-evidence.md",
+            ),
+            [],
+        )
+        recipe = [
+            paragraph for paragraph in report_validator.parse_markdown(views.report)["paragraphs"]
+            if paragraph["section"] == "Integration recipe"
+        ]
+        slots = {paragraph["list_item"]: paragraph for paragraph in recipe if paragraph["list_depth"] == 1}
+        self.assertIn("topology=declared", slots[1]["code"])
+        self.assertIn("sync=not-evaluated", slots[2]["code"])
+        self.assertIn("owner=declared", slots[3]["code"])
+        self.assertIn("composition=not-evaluated", slots[4]["code"])
+        self.assertIn("gate=declared", slots[5]["code"])
+        details = {
+            identifier: next(paragraph for paragraph in recipe if identifier in paragraph["code"])
+            for identifier in ("a-accept", "b-topology", "c-topology", "d-owner")
+        }
+        self.assertEqual(
+            {link["destination"] for link in details["b-topology"]["links"]},
+            {"docs/synthetic-evidence.md"},
+        )
+        self.assertEqual(
+            {link["destination"] for link in details["c-topology"]["links"]},
+            {"docs/second-evidence.md"},
+        )
+
+    def test_renderer_projects_typed_cross_pack_decisions_in_primary_fit(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["collection"] = {
+            "constituents": [
+                {"id": "basic", "model_sha256": "b" * 64, "clip_ids": ["fixture:idle-ip"], "source_file_count": 1, "runtime_set_ids": ["fixture:paired"]},
+                {"id": "sword", "model_sha256": "c" * 64, "clip_ids": ["fixture:walk-rm"], "source_file_count": 0, "runtime_set_ids": []},
+            ],
+            "exclusions": [],
+            "cross_pack_records": [
+                {"id": "basic-sword", "left": "basic", "right": "sword", "result": "artist-required", "evidence_refs": ["evidence-a"]},
+            ],
+        }
+        views = model_renderer.render_views(
+            model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md"
+        )
+        self.assertEqual(
+            model_renderer.validate_views(
+                model, binding, views,
+                report_name="fixture.md", appendix_name="fixture-evidence.md",
+            ),
+            [],
+        )
+        report = report_validator.parse_markdown(views.report)
+        table = next(
+            table for table in report["tables"]
+            if tuple(cell["text"] for cell in table["header"])
+            == model_renderer.CROSS_PACK_DECISION_HEADER
+        )
+        self.assertEqual(
+            [cell["text"] for cell in table["rows"][0][:3]],
+            ["basic", "sword", "artist-required"],
+        )
+        self.assertEqual(
+            {link["destination"] for link in table["rows"][0][3]["links"]},
+            {"docs/synthetic-evidence.md"},
+        )
+        altered = views.report.replace("| artist-required |", "| direct |", 1)
+        errors = model_renderer.validate_views(
+            model, binding, model_renderer.RenderedViews(altered, views.appendix),
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertIn("model-to-view primary cross-pack row 1 differs from authority", errors)
+        fit_start = views.report.index("## Fit and limitations")
+        fit_end = views.report.index("## Changes between AnimSmith versions", fit_start)
+        altered_fit = views.report[fit_start:fit_end].replace(
+            "docs/synthetic-evidence.md", "docs/second-evidence.md"
+        )
+        altered_link = views.report[:fit_start] + altered_fit + views.report[fit_end:]
+        errors = model_renderer.validate_views(
+            model, binding, model_renderer.RenderedViews(altered_link, views.appendix),
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertIn("model-to-view primary cross-pack row 1 has misattached evidence", errors)
+
+    def test_report_validator_accepts_v2_gait_groups_without_broadening_v1(self) -> None:
+        binding = valid_collection_output_v11()
+        binding["runtime_sets"][0]["kind"] = "gait-group"  # type: ignore[index]
+        for member in binding["runtime_sets"][0]["members"]:  # type: ignore[index]
+            member["gait_phase"] = {"availability": "not_applicable"}
+        binding["runtime_sets"][0]["evidence"]["gait_phase"] = {  # type: ignore[index]
+            "lifecycle": "incomplete", "members_measured": 0,
+        }
+        for _iteration in range(16):
+            raw = model_contract_v2.canonical_json(binding)
+            if binding["work"]["serialized_bytes"] == len(raw):  # type: ignore[index]
+                break
+            binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
+        else:
+            self.fail("gait-group collection-output byte count did not converge")
+        model_validator_v2.validate_with_animsmith(self.animsmith, raw)
+        model = valid_evaluation_model_v2(binding, raw)
+        self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+        views = model_renderer.render_views(
+            model, binding, binding_bytes=raw,
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertEqual(
+            report_validator.validate(
+                views.report,
+                evaluation_schema=model_contract_v2.SCHEMA,
+                report_format="2",
+            ),
+            [],
+        )
+        self.assertEqual(
+            report_validator.validate_appendix(
+                views.appendix,
+                evaluation_schema=model_contract_v2.SCHEMA,
+                report_format="2",
+            ),
+            [],
+        )
+        legacy_errors = report_validator.validate(
+            views.report,
+            evaluation_schema=model_contract.SCHEMA,
+            report_format="2",
+        )
+        self.assertTrue(
+            any("malformed variant or set type" in error for error in legacy_errors),
+            legacy_errors,
+        )
 
     def test_format_two_renderer_refuses_ambiguous_historical_order(self) -> None:
         model, binding = valid_evaluation_model(), valid_collection_output_projection()

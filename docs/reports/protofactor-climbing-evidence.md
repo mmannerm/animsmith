@@ -4,9 +4,9 @@
 >
 > Evidence status: **partial** — the official evaluator loaded the delivered FBXs and produced current baseline evidence.
 >
-> Evaluation date: **2026-09-01**
+> Evaluation date: **2026-09-16**
 >
-> Current evaluator: **AnimSmith 0.10.0**
+> Current evaluator: **AnimSmith 0.14.0**
 >
 > Report format: **2**
 
@@ -35,7 +35,7 @@ Evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluation-manif
 | Animation files | 77 FBXs | 77 | baseline completed | mechanical and contract evidence captured |
 | Rigs/export variants | Unknown | 0 | 0 | Not evaluated in this run |
 | AnimSmith baseline | 77 | 77 | current findings recorded | `inspect`, JSON `measure`, JSON `lint`, and Markdown `lint` completed per file |
-| Declared contracts | 75 motion-labelled files | 75 | 34 pass; 41 fail per output format | Mechanical contract results are current; semantic taxonomy, engine, and artistic acceptance were not evaluated |
+| Declared contracts | 75 motion-labelled files | 75 | 34 pass; 41 fail per output format | Mechanical contract results are current; historical taxonomy was not reconstructed; current generic scenarios are separately identified; artistic acceptance remains open |
 | Offline visual reports | 0 | 0 | 0 | Not evaluated in this run |
 | Engine import/playback | 4 runtimes | 0 | 0 | Deferred |
 | Blend/mask/retarget | Unknown | 0 | 0 | Measurements completed, but no target rig or blend/mask acceptance test ran |
@@ -63,7 +63,12 @@ Current claims are `observed-file`, `observed-animsmith`, `documentation-stated`
 
 ### Runtime-set inventory
 
-No runtime sets were identified.
+New evaluator-selected generic scenarios: current source bytes establish the exact members, take names, durations, and measured roots below. Names suggest gameplay roles; topology and semantic intent are hypotheses requiring clip review. These are not reconstructed historical manifests or measured collection-output sets. Every listed member uses `Take 001`; full identities are in the external selected-set ledger.
+
+| Runtime set | Type | Members/variants | Grouping evidence | Validation status |
+|---|---|---|---|---|
+| Wall eight directions | `directional-blend` | `Humanoid@WallClimbUp.fbx`, `Humanoid@WallClimbUpLeft.fbx`, `Humanoid@WallClimbLeft.fbx`, `Humanoid@WallClimbDownLeft.fbx`, `Humanoid@WallClimbDown.fbx`, `Humanoid@WallClimbDownRight.fbx`, `Humanoid@WallClimbRight.fbx`, `Humanoid@WallClimbUpRight.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
+| Ladder up and down | `directional-blend` | `Humanoid@ClimbUpLadder.fbx`, `Humanoid@ClimbDownLadder.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 
 ### Pipeline-stage coverage
 
@@ -85,6 +90,7 @@ No runtime sets were identified.
 | Role or runtime set | File-ready / clip-ready | Set-ready / rig-use | Runtime / acceptance boundary |
 |---|---|---|---|
 | Entire delivered corpus | evaluated-finding | not-evaluated | not-evaluated |
+| Named current generic scenarios above | Exact sources/takes measured; declared lint conditions remain | Candidate topology inferred; no set readiness approval | Target controller, contacts and artistic acceptance not evaluated |
 
 ### Validation-profile status
 
@@ -110,14 +116,25 @@ The scrubbed inventory records 179 regular files totaling 194,505,327 bytes; 77 
 
 | Finding/check | Affected scope | Potential impact | Evidence |
 |---|---|---|---|
-| Baseline mechanical health | 77/77 FBXs | Mechanical, rig, timing, and lint assessment completed | `observed-animsmith`; 308 commands completed |
-| Declared-contract results | 75/75 motion-labelled files | 34 pass and 41 fail per output format; not an engine or artistic acceptance result | `observed-animsmith` |
+| baseline: `constant-track:note` | 77 files; 9011 findings | Policy-dependent; inspect the affected take before assigning artist responsibility | `observed-animsmith`; exact affected files below |
+| contracts: `constant-track:note` | 75 files; 8753 findings | Policy-dependent; inspect the affected take before assigning artist responsibility | `observed-animsmith`; exact affected files below |
+| contracts: `loop-seam-vel:error` | 39 files; 39 findings | Policy-dependent; inspect the affected take before assigning artist responsibility | `observed-animsmith`; exact affected files below |
+| contracts: `loop-seam-rot:error` | 41 files; 41 findings | Policy-dependent; inspect the affected take before assigning artist responsibility | `observed-animsmith`; exact affected files below |
+| contracts: `loop-closure:error` | 22 files; 26 findings | Policy-dependent; inspect the affected take before assigning artist responsibility | `observed-animsmith`; exact affected files below |
+
+Per-file contract results: 34 pass and 41 fail of 75; JSON and Markdown agree. Loop declarations are evaluation hypotheses, not proof that every action should repeat.
+
+**loop-seam-vel:error**: `Humanoid@ClimbDownLadder.fbx`, `Humanoid@ClimbDownLadder_RM.fbx`, `Humanoid@ClimbUp1MeterObstacleUnarmed.FBX`, `Humanoid@ClimbUp1MeterObstacleUnarmed_RM.FBX`, `Humanoid@ClimbUp2MetersObstacleUnarmed.FBX`, `Humanoid@ClimbUp2MetersObstacleUnarmed_RM.FBX`, `Humanoid@ClimbUpHalfMeterObstacleLeftUnarmed.fbx`, `Humanoid@ClimbUpHalfMeterObstacleLeftUnarmed_RM.fbx`, `Humanoid@ClimbUpHalfMeterObstacleRightUnarmed.fbx`, `Humanoid@ClimbUpHalfMeterObstacleRightUnarmed_RM.fbx`, `Humanoid@ClimbUpLadder.fbx`, `Humanoid@ClimbUpLadder_RM.fbx`, `Humanoid@FallingUnarmed.FBX`, `Humanoid@IdleLookAroundWallClimb.fbx`, `Humanoid@IdleWallClimb.fbx`, `Humanoid@WallClimbDown.fbx`, `Humanoid@WallClimbDown_RM.fbx`, `Humanoid@WallClimbDownLeft.fbx`, `Humanoid@WallClimbDownLeft_RM.fbx`, `Humanoid@WallClimbDownRight.fbx`, `Humanoid@WallClimbDownRight_RM.fbx`, `Humanoid@WallClimbLeft.fbx`, `Humanoid@WallClimbLeft_RM.fbx`, `Humanoid@WallClimbRight.fbx`, `Humanoid@WallClimbRight_RM.fbx`, `Humanoid@WallClimbUp.fbx`, `Humanoid@WallClimbUp_RM.fbx`, `Humanoid@WallClimbUpLeft.fbx`, `Humanoid@WallClimbUpLeft_RM.fbx`, `Humanoid@WallClimbUpRight.fbx`, `Humanoid@WallClimbUpRight_RM.fbx`, `Humanoid@WallJumpDown.fbx`, `Humanoid@WallJumpDown_RM.fbx`, `Humanoid@WallJumpLeft.fbx`, `Humanoid@WallJumpLeft_RM.fbx`, `Humanoid@WallJumpRight.fbx`, `Humanoid@WallJumpRight_RM.fbx`, `Humanoid@WallJumpUp.fbx`, `Humanoid@WallJumpUp_RM.fbx`.
+
+**loop-seam-rot:error**: `Humanoid@ClimbDownLadder.fbx`, `Humanoid@ClimbDownLadder_RM.fbx`, `Humanoid@ClimbUp1MeterObstacleUnarmed.FBX`, `Humanoid@ClimbUp1MeterObstacleUnarmed_RM.FBX`, `Humanoid@ClimbUp2MetersObstacleUnarmed.FBX`, `Humanoid@ClimbUp2MetersObstacleUnarmed_RM.FBX`, `Humanoid@ClimbUpHalfMeterObstacleLeftUnarmed.fbx`, `Humanoid@ClimbUpHalfMeterObstacleLeftUnarmed_RM.fbx`, `Humanoid@ClimbUpHalfMeterObstacleRightUnarmed.fbx`, `Humanoid@ClimbUpHalfMeterObstacleRightUnarmed_RM.fbx`, `Humanoid@ClimbUpLadder.fbx`, `Humanoid@ClimbUpLadder_RM.fbx`, `Humanoid@FallingUnarmed.FBX`, `Humanoid@IdleLookAroundWallClimb.fbx`, `Humanoid@IdlePrepareJumpOppositeWallLeft.fbx`, `Humanoid@IdlePrepareJumpOppositeWallRight.fbx`, `Humanoid@IdleWallClimb.fbx`, `Humanoid@WallClimbDown.fbx`, `Humanoid@WallClimbDown_RM.fbx`, `Humanoid@WallClimbDownLeft.fbx`, `Humanoid@WallClimbDownLeft_RM.fbx`, `Humanoid@WallClimbDownRight.fbx`, `Humanoid@WallClimbDownRight_RM.fbx`, `Humanoid@WallClimbLeft.fbx`, `Humanoid@WallClimbLeft_RM.fbx`, `Humanoid@WallClimbRight.fbx`, `Humanoid@WallClimbRight_RM.fbx`, `Humanoid@WallClimbUp.fbx`, `Humanoid@WallClimbUp_RM.fbx`, `Humanoid@WallClimbUpLeft.fbx`, `Humanoid@WallClimbUpLeft_RM.fbx`, `Humanoid@WallClimbUpRight.fbx`, `Humanoid@WallClimbUpRight_RM.fbx`, `Humanoid@WallJumpDown.fbx`, `Humanoid@WallJumpDown_RM.fbx`, `Humanoid@WallJumpLeft.fbx`, `Humanoid@WallJumpLeft_RM.fbx`, `Humanoid@WallJumpRight.fbx`, `Humanoid@WallJumpRight_RM.fbx`, `Humanoid@WallJumpUp.fbx`, `Humanoid@WallJumpUp_RM.fbx`.
+
+**loop-closure:error**: `Humanoid@ClimbDownLadder_RM.fbx`, `Humanoid@ClimbUp1MeterObstacleUnarmed.FBX`, `Humanoid@ClimbUp1MeterObstacleUnarmed_RM.FBX`, `Humanoid@ClimbUp2MetersObstacleUnarmed_RM.FBX`, `Humanoid@ClimbUpHalfMeterObstacleLeftUnarmed.fbx`, `Humanoid@ClimbUpHalfMeterObstacleLeftUnarmed_RM.fbx`, `Humanoid@ClimbUpHalfMeterObstacleRightUnarmed.fbx`, `Humanoid@ClimbUpHalfMeterObstacleRightUnarmed_RM.fbx`, `Humanoid@ClimbUpLadder_RM.fbx`, `Humanoid@WallClimbDown_RM.fbx`, `Humanoid@WallClimbDownLeft_RM.fbx`, `Humanoid@WallClimbDownRight_RM.fbx`, `Humanoid@WallClimbLeft.fbx`, `Humanoid@WallClimbLeft_RM.fbx`, `Humanoid@WallClimbRight_RM.fbx`, `Humanoid@WallClimbUp_RM.fbx`, `Humanoid@WallClimbUpLeft_RM.fbx`, `Humanoid@WallClimbUpRight_RM.fbx`, `Humanoid@WallJumpDown_RM.fbx`, `Humanoid@WallJumpLeft_RM.fbx`, `Humanoid@WallJumpRight_RM.fbx`, `Humanoid@WallJumpUp_RM.fbx`.
 
 ## AnimSmith remediation evidence
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Dense constant tracks | Declared `transform --prune-constant-tracks` on one representative | 1/1 external candidate generated in the combined 17-candidate rerun | Transform, `inspect`, and JSON `measure` exited 0; `diff` exited 1 for the intended change | Retained lint findings; runtime equivalence, engine behavior, and visual acceptance are unproved |
+| `prune-constant-tracks` trial | Explicit original source/config; `transform --prune-constant-tracks` | 1 candidates emitted; 0 pass selected output lint | Every candidate inspected, measured, linted, diffed and checked with `fix --dry-run`; detailed exit records external | Unpromoted; no candidate engine/contact/visual acceptance |
 
 ## Engine procedures and evidence
 
@@ -141,11 +158,29 @@ The scrubbed inventory records 179 regular files totaling 194,505,327 bytes; 77 
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — exhaustive current baseline reran all 77 FBXs with the verified official release, then produced one current pruning candidate in the combined remediation pass. Earlier 0.7.0 evaluator and any engine/offline results are historical only.
+AnimSmith 0.14.0 — reran 77 input baselines, 75 per-file declared contracts and one remediation trial using the official release. Added current exact-member generic scenarios and developer/artist actions. AnimSmith 0.10.0 — superseded historical evidence; none of its generated outputs or engine results is relabelled as a fresh run.
 
 ## Reproduction
 
-Evaluator archive: [official Linux release archive](https://github.com/mmannerm/animsmith/releases/download/v0.10.0/animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz), SHA-256 `8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662`; member `animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith`, tag `v0.10.0`, peeled commit `db91d8dda3326f97f581d4d62104d928caec383f`, binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Working tree: N/A (official archive). The binary had the expected `fbx` and `report` feature surface; version, top-level help, and help for `inspect`, `measure`, `lint`, `transform`, `diff`, and `fix` all succeeded, as did representative FBX admission. Current outputs are output schema v19 / measurements schema v18. Safe evidence is external at `external:protofactor-remediation-0.10.0/`: preflight SHA-256 `dde0aa485d392c360736346041558b72f39798de7fdcc443ad7aaba9fc8b445a`, status SHA-256 `d85a1c53d5d1fcb829e0574051f173f6e1c08a409358385f4400940e11652e1f`, and ledger SHA-256 `fdab771891c1ee7d316bab224f0dc2bb65cd286f84b21c9c91cab171f580f5ec`. All transform, `inspect`, and JSON `measure` invocations exited 0; `diff` exited 1 for intentional output changes. Retained lint findings and all candidate payloads remain external.
+Official evaluator preflight: [release archive](https://github.com/mmannerm/animsmith/releases/download/v0.14.0/animsmith-v0.14.0-x86_64-unknown-linux-gnu.tar.gz), archive SHA-256 `4ecf79436f9123c779edb004050da3010b44a2b392e3031facb227d7734fc33e`; exact member `animsmith-v0.14.0-x86_64-unknown-linux-gnu/animsmith`, binary SHA-256 `c2b9649bc74f8a7e5b5d7361a6feaa93941b2327cd7eee82235024bd4f61e366`; tag `v0.14.0`, peeled commit `e8321ad40be5ef6f162b31f085819c039175c3c9`; working-tree state: N/A (official archive). Compiled features: `fbx, report`. Version and required command help plus representative FBX admission passed before evaluation. Preflight: `external:animsmith-0.14.0-report-refresh/preflight.json`, SHA-256 `7034b5043de54e7b30064230db18605d1f96d0ea1477f7b8c56ce817cc73521a`.
+
+Evaluator: [official 0.14.0 Linux release](https://github.com/mmannerm/animsmith/releases/tag/v0.14.0), tag commit `e8321ad40be5ef6f162b31f085819c039175c3c9`; archive SHA-256 `4ecf79436f9123c779edb004050da3010b44a2b392e3031facb227d7734fc33e`; binary SHA-256 `c2b9649bc74f8a7e5b5d7361a6feaa93941b2327cd7eee82235024bd4f61e366`, features `fbx, report`. Output schema v19; measurements schema v18. Version/help and representative admission passed before corpus work. Sources/configurations were hashed before and after read-only runs.
+
+External evidence prefix: `external:animsmith-0.14.0-report-refresh/evaluations/protofactor-climbing/`. Commands record exact source/config arguments, exits and raw-output paths. Commercial source and generated motion remain external. Reproduction requires the authorized delivery and captured configuration; generic one-liners below do not substitute for those declarations.
+
+- `baseline/command-results.json`, SHA-256 `a0b70aa8d224845797d296567e56d430ec4a9b4f18179f1a4ba23c921338c519`.
+- `contracts/command-results.json`, SHA-256 `c736fb5f2f79b8044d9a2fc51707470eccabeda81a6a9c878fd6b2847d8c2046`.
+- `remediation/command-results.json`, SHA-256 `dca43e1b41a0561de9cd395f266cf5aeab5cb239a20ae8c407d1753f33c3387f`.
+- `selected-runtime-sets.json`, SHA-256 `f2a494df4894caff8640995b88aff8a0a7d435f9d231db0f421ede4df182dccf`.
+- `current-summary.json`, SHA-256 `f047b5c288f4ba004f4635e6319f232b2616f5a0c3ee492ddbef7a527b1155ef`.
+
+```sh
+animsmith inspect --config <captured-config> <authorized-source>
+animsmith measure --config <captured-config> --format json <authorized-source>
+animsmith lint --config <captured-config> --format json <authorized-source>
+```
+
+The exact per-trial transform, slice range, configuration and post-check commands are in the remediation ledger. Current scenario sets are new evaluator choices; historical structured-model migration remains outside this refresh.
 
 ## Sources
 

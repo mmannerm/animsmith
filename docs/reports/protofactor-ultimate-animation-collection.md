@@ -2,13 +2,13 @@
 
 > Technical verdict: **Insufficient technical evidence**
 >
-> Evaluation completeness: **partial** — eight constituent source baselines and declared contracts were rerun with AnimSmith 0.10.0; no current collection binding, semantic classification, runtime-set, cross-pack, engine, or visual acceptance run exists.
+> Evaluation completeness: **partial** — eight constituent source baselines and declared contracts were rerun with AnimSmith 0.14.0; new constituent scenarios guide integration; collection semantic authority and visual/gameplay acceptance remain open.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-09-01**
+> Evaluation date: **2026-09-16**
 >
-> Current evaluator: **AnimSmith 0.10.0**
+> Current evaluator: **AnimSmith 0.14.0**
 >
 > Report format: **2**
 >
@@ -16,76 +16,104 @@
 
 ## Technical decision
 
-The official AnimSmith 0.10.0 release reran [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md). They contain 918 source candidates, including 895 individual motion-labelled inputs. This is current mechanical intake evidence, not collection-level approval.
+The official AnimSmith 0.14.0 release reran [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md). They contain 918 source candidates, including 895 individual motion-labelled inputs. This is current mechanical intake evidence, not collection-level approval.
 
-No current collection binding was rendered, so this rollup has no accepted canonical logical-motion inventory, semantic roles, runtime sets, cross-pack handoffs, or package-wide remediation result. The eight constituents produced 159 external transform candidates, but none was promoted or accepted for an engine. A project must make its own clip-selection, root-authority, contact, controller, and target-character decisions.
+**Can these packs form a kinematic animation controller?** They provide useful candidate ingredients, but the evaluated combination is not an accepted controller. Use Basic Locomotion as the ground state, Injured as separate style states, melee packs as full-body armed states, and Climbing/Campfire as constrained traversal/interaction states. Shared clip naming and successful import cannot establish smooth handoffs, matching contacts, or compatible upper-body layers.
+
+The constituent reports now name exact current scenario members and actions. They do not reconstruct a missing historical collection manifest. All 159 external transform candidates remain unpromoted; passing a transform is not a ready-to-use motion verdict.
 
 ## Capability coverage
 
 ### Complete core
 
-- Current source-inventory, baseline, and declared-contract evidence exists for each of the eight named constituents.
-- The current report establishes the mechanical scope boundary: 918 source candidates and 895 individual motion-labelled inputs.
+- Fresh file/contract evidence covers the eight named packs. Exact selected locomotion, style and interaction scenarios are linked from each constituent; this does not establish whole-game coverage.
 
 ### Partial supporting gameplay
 
-- All eight constituents have bounded external AnimSmith transform candidates; their runtime selection, visual result, and gameplay suitability remain untested.
+- Ground locomotion, injury states, armed actions, campfire interactions and traversal are candidate building blocks. Starts/stops, interruptions, contacts and cross-pack stance changes require project-specific acceptance.
 
 ### Absent
 
-- No current canonical role classification, runtime-set inventory, cross-pack blend/mask/transition evidence, target rig, engine run, or visual acceptance.
+- No accepted full-controller, target-character, visual/contact, additive, first-person or artistic result. Collection-wide canonical semantic classification remains unavailable.
 - Fifteen collection constituents are outside this partial evaluation: 2-Handed Gun, Assault Rifle, Bazooka, Bow & Arrow, Combat Bare Fists, Creature, Crowd, Double Guns, Fencing, Hostage, Minigun, Push & Pull Cube, Shotgun, Wizard, and Zombie.
 
 ## Runtime sets and authored motion
 
-No important runtime sets were identified.
+Representative current constituent scenarios are shown below; every other selected set remains in its linked report. These are independently selectable state ingredients, not a single combined blend tree. No historical runtime-set totals are reconstructed.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Walk eight directions | Candidate 1; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkForwardUnarmed2.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 2; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 3; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 4; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 5; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 6; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 7; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 8; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Candidate 1; [injured](protofactor-injured.md) | `Humanoid@IdleInjuredA.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Candidate 2; [injured](protofactor-injured.md) | `Humanoid@WalkInjuredA.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Candidate 3; [injured](protofactor-injured.md) | `Humanoid@RunInjuredA.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 1; [campfire](protofactor-campfire.md) | `Humanoid@StandToKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 2; [campfire](protofactor-campfire.md) | `Humanoid@IdleKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.167 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 3; [campfire](protofactor-campfire.md) | `Humanoid@KneelToSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 4; [campfire](protofactor-campfire.md) | `Humanoid@IdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=not-evaluated`; preserve constituent boundaries and declare selected clips before creating collection graphs.
-2. **Timing/synchronization:** `sync=not-evaluated`; resolve declared-contract findings and measure only project-selected transition or blend candidates.
-3. **State ownership:** `owner=not-evaluated`; assign one root/displacement authority per selected clip and state.
-4. **Composition constraints:** `composition=full-body`; do not approve masks, additive use, or cross-pack handoffs from this rollup.
-5. **Acceptance gate:** `gate=current-cross-pack-engine-and-visual-review`; rerun selected compatibility, controller, contact, retarget, build, and visual tests.
+1. **Members/topology:** `topology=state-machine`; keep ground locomotion, injury styles, armed stances, traversal and interactions as explicit states. Use direction/speed trees only within a reviewed compatible set.
+2. **Timing/synchronization:** `sync=normalized-phase`; align gait peers by contact phase, then evaluate actual outgoing/incoming poses for state handoffs. Do not equate identical durations with matching support feet.
+3. **State ownership:** `owner=controller`; select in-place ground motions for a kinematic capsule. Declare any RM action as a separate movement mode, including collision and return of authority.
+4. **Composition constraints:** `composition=full-body`; armed/unarmed full-body handoffs are the starting hypothesis. A weapon mask needs explicit spine/root ownership, grip, stance and foot-contact checks before adoption.
+5. **Acceptance gate:** `gate=current-cross-pack-engine-and-visual-review`; run speed/direction sweeps, starts/stops, interruptions, attachment and geometry tests on the intended character and engine build.
 
 ## Technical issue register
 
+Severity is scoped to the intended combined controller. A missing test is an adoption risk, not evidence that the vendor authored bad motion.
+
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| UC-010 | blocker | No current collection binding, role taxonomy, or runtime-set inventory exists, so the corpus cannot safely define collection graphs. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder) applies. | unknown | Select clips and declare collection roles, sets, and ownership in the target project. | A current collection manifest could preserve declared grouping evidence. | `not-evaluated`; 895 motion-labelled inputs remain unclassified at collection level. |
-| UC-011 | major | Current declared-contract findings require clip-by-clip loop and continuity decisions before blend or transition use. Guidance: not applicable. | artist-author | Repair or re-export malformed source where required; otherwise document intended policy. | Declared mechanical diagnostics can support review, not infer intent. | `observed-animsmith`; constituent-specific results are linked above. |
-| UC-012 | major | Cross-pack co-installation and engine behavior have no current validation. Guidance: not applicable. | engine-config | Run only project-relevant compatibility and engine tests using selected clips. | Cross-pack diagnostics could make the comparison reproducible. | `not-evaluated`; no current engine run. |
-| UC-013 | major | Fifteen constituents are excluded, so this partial rollup cannot support a collection-wide coverage, compatibility, or value conclusion. Guidance: not applicable. | unknown | Evaluate additional constituents in bounded waves with a defined game decision. | Tooling cannot establish evidence for excluded content. | `not-evaluated`; explicit scope boundary. |
+| UC-PHASE | major | Locomotion seams and phase disagreement can break blended foot contact. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | artist-author | Review the exact per-pack findings and intended loops. Current slicing/anchoring candidates remain unpromoted; residual major where contracts or contact gates remain. | Measured anchoring can reduce phase spread; it cannot approve contacts/artistic timing. | `observed-animsmith`; constituent source/output records. |
+| UC-CONTROLLER | major | Arbitrary cross-pack blending has no accepted movement, transition or contact contract. Guidance: not applicable. | engine-config | Build the explicit state topology above and test exact handoffs. Residual unknown until project acceptance; no pack defect inferred. | Explicit collection contracts can record selected relationships and diagnostics. | `inferred` integration guidance; controller acceptance `not-evaluated`. |
+| UC-MASK | major | Full-body weapon/interaction motions may conflict with locomotion when masked at the torso. Guidance: not applicable. | engine-config | Start with full-body state changes. Validate any selected upper-body mask, grip and planted feet before promotion; residual unknown. | Mask diagnostics could expose affected channels; authored style/contact judgment remains. | Masked artistic/contact fit `not-evaluated`. |
+| UC-SCOPE | minor | Fifteen constituents are outside this evaluation; whole-collection coverage and value cannot be concluded. Guidance: not applicable. | unknown | Consult the explicit exclusion list and evaluate only needed missing gameplay capabilities. Residual scope limitation. | No tool can infer evidence for missing content. | `not-evaluated`; boundary, not vendor defect. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity | not-evaluated | No current import or playback run. | Co-import, controller, visual, root-motion, contacts, retarget, compression, and build tests. |
+| Unity 6000.5.8f1 | observed-engine | 26/26 bounded source checks: 13 samples, nine cross-pack mixer schedules, four RM samples. Finite poses/fixed owner under explicit policy. | Visual/contact, actual controller, target character, compression, candidate output and build acceptance. |
 | Unreal Engine | not-evaluated | No current import or playback run. | Import, retarget, graph, contact, and build tests. |
 | Godot | not-evaluated | No current conversion, import, or playback run. | Conversion/import, graph, contact, and export tests. |
 | Bevy | not-evaluated | No current conversion, addressability, or runtime run. | Conversion, target mapping, runtime, and performance tests. |
 
 ## Fit and limitations
 
-This report is suitable only as a mechanically scoped intake record for a project prepared to select clips and run its own current compatibility and engine tests. It does not support a blanket game-ready, engine-ready, retarget-ready, or artistic-ready conclusion.
+| Combination | Practical decision | Remaining acceptance |
+|---|---|---|
+| Basic + Injured | Candidate healthy/injured state handoff; keep injury letters separate | Speed/phase calibration, stance continuity and interruptions |
+| Basic + Sword & Shield / 1-Handed / 2-Handed / Dual Swords | Candidate armed/unarmed full-body state change | Weapon grip, stance, turn/stop continuity; masking is a separate decision |
+| Basic + Climbing | Ground-to-traversal state handoff with environment anchor | Entry/top-out, wall distance, contacts and collision ownership |
+| Basic + Campfire | Stop at interaction anchor, then enter explicit posture sequence | Seat/fire placement, props, interrupt and return-to-ground behavior |
+| Protofactor + Mixamo | No approved cross-library handoff | Target rig, rest pose, scale, root convention, phase, style and attachment tests |
 
-It is a poor basis for approving a universal locomotion graph, seamless cross-pack transitions, masks, contact actions, first-person, motion matching, networking, or the fifteen excluded constituents without new scoped evidence.
+Fresh Unity 6000.5.8f1 source tests passed 26/26 bounded checks: 13 individual Humanoid samples, nine named cross-pack mixer schedules and four RM samples. For the nine mixers, five weights (0, 0.25, 0.5, 0.75, 1) produced finite sampled bone transforms with `applyRootMotion=false` and a fixed Animator owner. This supports technical feasibility of the named source combinations, not visually smooth handoffs or a finished kinematic controller.
+
+The proposed state architecture remains `inferred`; this bounded feasibility evidence is not an accepted full-controller verdict. The reports are useful for selecting a prototype and assigning author/project work; they do not establish a universal game-ready controller.
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official release evidence revalidated all eight constituent source baselines, declared contracts, and 159 bounded constituent remediation candidates. The current rollup intentionally records only constituent-derived counts and findings; collection-level taxonomy, runtime sets, and compatibility were not regenerated.
+AnimSmith 0.14.0 — revalidated the eight constituent baselines/contracts and 159 bounded remediation candidates. Added exact current generic scenarios and developer/artist decisions.
 
-AnimSmith 0.7.0 — historical collection output recorded 582 logical motions, 90 runtime-set records, 14 cross-pack candidates, and 159 external candidates. Those superseded collection-derived claims are retained as historical context only and are not current evidence.
-
-AnimSmith 0.4.0 — retained dated Unity 6000.5.8f1 graph probes recorded 22/22 contextual and 33/33 melee required checks with four expected Generic-rig failures; a shared-path comparison recorded 700 byte-identical comparisons across 28 constituent pairs. Neither result was rerun and neither is current engine or compatibility evidence.
+AnimSmith 0.10.0 and earlier — superseded mechanical and remediation evidence. Historical collection logical-motion/set totals were not reconstructed or promoted into this run.
 
 ## Evidence status
 
-Current evidence is the official 0.10.0 constituent rerun: 918 source candidates, 895 individual motion-labelled inputs, 3,672 baseline commands, and 159 external transform candidates across all eight constituents. Current canonical logical-motion and runtime-set totals are both zero because no collection classification or binding was accepted. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) define the exact boundary.
+Current conclusions are constituent-derived and explicitly scoped. Canonical collection taxonomy is unavailable; selected current scenarios are linked without claiming a recovered collection binding. No candidate is promoted. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) distinguish static, engine-execution and acceptance evidence.
 
 ## Sources
 
 - Constituent reports: [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md).
 - Protofactor, [Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/) and [End User License Agreement](https://protofactor.biz/end-user-license-agreement/).
 - AnimSmith, [game-ready clips](../game-ready-clips.md) and [CLI reference](../cli.md).
+- Unity 6 documentation: [Blend Trees](https://docs.unity3d.com/6000.0/Documentation/Manual/class-BlendTree.html), [Root Motion](https://docs.unity3d.com/6000.0/Documentation/Manual/RootMotion.html), and [Animation Layers](https://docs.unity3d.com/6000.0/Documentation/Manual/AnimationLayers.html) — engine concepts only, not evidence of pack quality.

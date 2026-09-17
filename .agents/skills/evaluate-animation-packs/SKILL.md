@@ -214,6 +214,15 @@ Build a coverage matrix before testing:
 - define runtime sets separately from primary roles. Use them only for real
   blend, speed, sync, transition, mask, retarget, paired-interaction, or search
   relationships; a clip may belong to multiple sets;
+- reconcile runtime sets against every current structured grouping witness,
+  including measured gait groups. Do not write that no important runtime sets
+  exist while current evidence contains a relationship that could affect a
+  controller or animation graph. Preserve the exact current structured set ID,
+  members, and order. When delivered intent is unavailable, mark semantic
+  applicability and vendor/project authority `not-evaluated`, and state who
+  must confirm it. Never reconstruct lost historical membership from an older
+  report, prose, filenames, or superseded output; declare and test any new
+  hypothesis as new;
 - run inexpensive batch-safe checks on every AnimSmith-readable file when
   practical;
 - select representative clips for visual and engine tests by declared use,
@@ -424,6 +433,15 @@ After every generated output:
 5. record which original problem changed, which facts remained stable, and
    which new findings or unknowns appeared.
 
+An available command, a successful exit, or a generated candidate does not
+mean the reported problem is solved. Keep the issue's severity tied to the
+as-delivered bytes. State a lower residual severity only for one identified
+output that passed the declared mechanical postcondition and every acceptance
+gate needed by the claimed use. If engine, visual, contact, deformation, or
+artist acceptance remains material and did not run, say so and leave the
+residual result unresolved. An external or unpromoted candidate is evidence of
+a possible workflow, not the pack's current adoption state.
+
 Report effort as concrete steps plus `none`, `low`, `moderate`, `high`, or
 `unknown`; explain assumptions instead of inventing precise labor hours.
 
@@ -486,6 +504,11 @@ contact quality, and style mismatch when relevant to the target game. Do not
 claim that shared bone names, a humanoid label, or successful import proves
 good blending.
 
+For each material blend tree, kinematic-controller path, full-body
+transition/layer, and cross-pack combination, apply the concrete recipe rules
+in the engine reference. Keep evaluator-proposed coordinates, thresholds, and
+graph choices `not-evaluated` until the named runtime test runs.
+
 Use capability profiles rather than creating genre-specific checklists. A game
 context may compose several profiles; record project-specific additions beside
 the standard profile identifiers. Keep unselected profiles visible so absence
@@ -524,6 +547,23 @@ Require artist/author work when the solution needs new motion, pose or timing
 judgment, contact cleanup, deformation-aware retargeting, style matching,
 missing transitions, additive-base creation, or recovery of information that
 the file does not contain.
+
+Do not label a project-policy choice as an artist or vendor defect. Use
+`artist-author` when delivered motion must change to satisfy authoritative
+intent; use `vendor-license` when promised delivery or vendor-controlled source
+must change; use `engine-config` when acceptable source needs a consuming
+controller, importer, state graph, mask, or project convention. If the expected
+behavior itself has no authority, choose `unknown`, record the decision the
+project or vendor must supply, and avoid defect language.
+
+Every material issue must be actionable without access to the evaluator's
+private notes. Name the exact affected files or runtime-set members, a bounded
+reproduction (command/config or engine state and transition), the visible or
+developer impact, one current action, and an observable acceptance condition.
+For artist/vendor work, include the relevant time/frame range, bones, contacts,
+or state boundary when evidence supplies them; ask for a concrete corrected
+result rather than generic cleanup. Group files in one issue only when they
+share the same cause, action, and acceptance test.
 
 ## Write and validate the report
 

@@ -25,6 +25,11 @@ State separately:
 - what still needs engine, artist/vendor, or future-tool work;
 - the largest confidence boundary.
 
+End with one developer decision for the stated use: use unchanged, adopt a
+named configuration or verified output, run a bounded pilot, request the exact
+artist/vendor change, or reject. Name the acceptance evidence that would move
+the decision when it remains conditional.
+
 If any explicit evaluator or project configuration materially increases
 evaluation coverage, state the untouched result and the config-backed result
 separately, including measured, linted, or otherwise validated results as
@@ -106,7 +111,13 @@ units. Use semicolon-separated runtime terms keyed by `loop`, `sync`,
 `database`, or `playback`; use a specific lowercase/hyphenated value such as
 `one-shot`, `gait-phase`, or `unknown`. Fields that do not apply stay explicitly
 `N/A`. If no important runtime sets exist, write exactly: `No important runtime
-sets were identified.` Retain the grouping evidence in the appendix.
+sets were identified.` Retain the grouping evidence in the appendix. This
+sentence is allowed only after reconciling current structured output: do not
+use it when that output contains a gait group or other runtime relationship.
+Use its exact current ID and membership. When semantic authority is missing,
+use `unknown`/`not-evaluated` contracts and state the vendor or project
+decision needed. Do not reconstruct historical memberships from prose,
+filenames, or superseded evidence.
 
 Write `Variant/type` as one `variant=<id>` or `set_type=<id>` token. Moving
 root-motion and paired IP/RM rows require `duration` and `rm_speed`; paired rows
@@ -130,6 +141,13 @@ The inline `key=value` tokens are the comparable contract; keep the explanation
 reader-facing and use `not-evaluated` rather than vague prose when evidence is
 missing.
 
+Cover each material common pattern present in scope: a named blend tree;
+controller ownership of translation, yaw, and collision; full-body transition
+and any separately gated layer; and namespaced cross-pack state/layer
+composition. A recipe may be a bounded project proposal when runtime evidence
+is unavailable, but its `gate` and affected terms must say `not-evaluated` and
+name the exact engine/visual/contact test that would promote it.
+
 ## Technical issue register
 
 Keep one issue register in the primary report; the appendix supplies evidence
@@ -141,7 +159,15 @@ were found at the stated scope.`
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| {{ISSUE_ID}} | {{SEVERITY}} | {{PROBLEM_AND_RUNTIME_IMPACT}}; link `../game-ready-clips.md#{{RELEVANT_SECTION}}` in the completed report | {{ONE_PRIMARY_OWNER}} | {{CURRENT_ACTION}} | {{FUTURE_FEASIBILITY_SAFETY_AND_PROOF}} | {{CONFIDENCE_AND_STATUS}} |
+| {{ISSUE_ID}} | {{AS_DELIVERED_SEVERITY}} | Scope: {{EXACT_FILES_OR_SET_MEMBERS}}; reproduce: {{BOUNDED_COMMAND_CONFIG_OR_ENGINE_STATE}}; impact: {{PLAYER_OR_DEVELOPER_VISIBLE_RESULT}}; link `../game-ready-clips.md#{{RELEVANT_SECTION}}` in the completed report | {{ONE_PRIMARY_OWNER}} | Action: {{CONCRETE_CHANGE_OR_PROJECT_DECISION}}; acceptance: {{OBSERVABLE_PASS_CONDITION}}; residual: {{SEVERITY_AFTER_ACCEPTED_FIX_OR_UNRESOLVED}} | {{FUTURE_FEASIBILITY_SAFETY_AND_PROOF}} | {{CONFIDENCE_AND_STATUS}} |
+
+`Severity` is the as-delivered impact. `Residual` may be lower only for an
+identified adopted output/configuration with passed postconditions and every
+material acceptance gate; a generated, external, or unpromoted candidate stays
+`unresolved`. For artist/vendor work, include available time/frame ranges,
+bones, contacts, or transition boundaries in scope or reproduction. Do not
+call a missing controller/import/mask choice an artist defect; use the owner
+taxonomy and `unknown` when intended behavior lacks authority.
 
 ## Engine status
 

@@ -429,6 +429,9 @@ def validate_model(model: Any, binding: Any, binding_bytes: bytes) -> list[str]:
     for runtime_set in relation_binding["runtime_sets"]:
         if runtime_set["kind"] == "gait-group":
             runtime_set["kind"] = "sync-group"
+            for member in runtime_set["members"]:
+                member.pop("gait_phase", None)
+            runtime_set["evidence"].pop("gait_phase", None)
     relation_model, relation_binding = _v1_relation_ids(
         relation_model, relation_binding
     )

@@ -111,6 +111,15 @@ Preserve the exact delivered file/path and embedded clip identity, including
 case and spelling. A normalized display label or a separate vendor animation
 list is not a substitute; record any disagreement as evidence instead of
 silently correcting the member identifier.
+
+Reconcile this inventory with current structured evaluator output. A measured
+gait group or other runtime relationship must not disappear behind `No runtime
+sets were identified.` Preserve the current structured set ID, members, order,
+kind, and evidence. If vendor/project semantics are unavailable, mark semantic
+applicability and runtime validation unavailable or not evaluated. Do not
+recover historical set membership from filenames, prose reports, or superseded
+output; define any new hypothesis explicitly from current source evidence.
+
 If a source typo triggers repository spelling checks, preserve the identifier
 and write it as a complete single-backtick code span immediately followed by
 the hidden marker `<!-- vendor-id -->`: `<exact identifier>`<!-- vendor-id -->.

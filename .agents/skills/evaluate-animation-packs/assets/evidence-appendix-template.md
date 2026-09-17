@@ -81,7 +81,11 @@ validation boundary without duplicating the decision table or suggesting that
 its measurements were not captured.
 
 If no runtime sets exist, omit the table and write exactly: `No runtime sets
-were identified.`
+were identified.` This is valid only when current structured evidence contains
+no measured gait group or other runtime relationship. Preserve measured groups
+under their exact current structured IDs and memberships. When vendor/project
+semantics are missing, mark those boundaries `not-evaluated`; do not
+reconstruct older memberships from prose or filenames.
 
 ### Pipeline-stage coverage
 
@@ -141,6 +145,13 @@ Include every profile in the captured profile-set version.
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
 | {{ISSUE}} | {{CAPTURED_COMMAND}} | {{RESULT}} | {{POSTCONDITION_EVIDENCE}} | {{GAP}} |
+
+Link each row to the primary issue ID. State the as-delivered severity in the
+issue register and identify the exact generated output or configuration here.
+Record candidate production, postcondition checks, promotion/adoption, engine
+or visual/contact acceptance, and residual severity as separate facts. A
+successful command or mechanically verified but unpromoted candidate has
+residual severity `unresolved`; it does not close the issue.
 
 For any explicit evaluator or project configuration that materially increases
 coverage, retain the untouched result beside the configured result. Record a

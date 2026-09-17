@@ -2,11 +2,11 @@
 
 > Companion report: [Protofactor Ultimate Animation Collection report](protofactor-ultimate-animation-collection.md)
 >
-> Evidence status: **partial** — current official 0.10.0 evidence is constituent-derived; collection binding, runtime, engine, and visual evidence are absent.
+> Evidence status: **partial** — current official 0.14.0 evidence is constituent-derived; new constituent scenarios guide integration; collection binding and visual/gameplay acceptance remain open.
 >
-> Evaluation date: **2026-09-01**
+> Evaluation date: **2026-09-16**
 >
-> Current evaluator: **AnimSmith 0.10.0**
+> Current evaluator: **AnimSmith 0.14.0**
 >
 > Report format: **2**
 
@@ -24,7 +24,7 @@ Evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluation-manif
 | Excluded scope | Fifteen named constituents; no current inventory, classification, compatibility, or readiness conclusion for them |
 | Delivered scope | Authorized local commercial deliveries; 918 source candidates, including 895 individual motion-labelled inputs |
 | Target use | Engine-neutral, mechanically scoped collection intake |
-| Target engines | No current engine run |
+| Target engines | Unity 6000.5.8f1 bounded source probes; other engines not evaluated |
 | Source manifests | External scrubbed constituent inventories; digests and commands are recorded in the eight linked appendices |
 | Evaluation manifest | Current collection binding unavailable; no current collection output was rendered or accepted |
 | Acquisition/license provenance | Commercial source was authorized locally; no transaction, redistribution, or licensing conclusion is made |
@@ -36,10 +36,10 @@ Evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluation-manif
 | Source candidates | 918 | 918 | constituent baseline completed | Current mechanical evidence is constituent-derived |
 | Individual motion-labelled inputs | 895 | 895 | constituent declared-contract results recorded | No collection semantic classification was accepted |
 | Canonical logical motions | unknown | 0 | 0 | No current collection binding or taxonomy output |
-| Runtime sets | unknown | 0 | 0 | No current runtime grouping was selected |
+| Runtime sets | unknown collection total | selected constituent scenarios | Exact members linked above | No canonical collection binding or accepted whole-controller topology |
 | AnimSmith baseline | 918 | 918 | 3,672 commands completed | Per-constituent findings are linked below |
 | AnimSmith transform candidates | 159 | 159 | External outputs from all eight constituents | No promotion, engine, visual, or artistic acceptance |
-| Engine import/playback | 4 runtimes | 0 current | 0 current | No current engine run selected |
+| Engine import/playback | 4 runtimes | 1 current | 26/26 named cross-pack/source checks plus Basic probe | Headless samples/mixers; visual/controller/build acceptance open |
 
 ### Claim legend
 
@@ -64,7 +64,13 @@ Current consequential claims use `observed-file`, `observed-animsmith`, `documen
 
 ### Runtime-set inventory
 
-No runtime sets were identified.
+Current rollup candidates reuse exact current constituent scenarios; they are new evaluator-selected hypotheses, not a regenerated historical collection.
+
+| Runtime set | Type | Members/variants | Grouping evidence | Validation status |
+|---|---|---|---|---|
+| Walk eight directions | `directional-blend` | Exact members in [primary report](protofactor-ultimate-animation-collection.md#runtime-sets-and-authored-motion) | Current constituent byte-bound generic scenario; semantic role inferred | No collection graph or gameplay acceptance |
+| Injury style A speed | `speed-blend` | Exact members in [primary report](protofactor-ultimate-animation-collection.md#runtime-sets-and-authored-motion) | Current constituent byte-bound generic scenario; semantic role inferred | No collection graph or gameplay acceptance |
+| Kneel and sit sequence | `transition-chain` | Exact members in [primary report](protofactor-ultimate-animation-collection.md#runtime-sets-and-authored-motion) | Current constituent byte-bound generic scenario; semantic role inferred | No collection graph or gameplay acceptance |
 
 ### Pipeline-stage coverage
 
@@ -74,11 +80,11 @@ No runtime sets were identified.
 | Preserve raw | `evaluated-clean` | Commercial source was not modified |
 | Inspect | `evaluated-finding` | Current constituent baseline completed for all source candidates |
 | Segment | `not-evaluated` | No collection segmentation trial selected |
-| Root motion | `not-evaluated` | No collection root-motion policy or controller acceptance |
-| Conform | `not-evaluated` | No target rig, retarget trial, or conformance policy |
+| Root motion | `partially-evaluated` | Four named RM samples and fixed-root mixer policies; actual controller/collision acceptance open |
+| Conform | `partially-evaluated` | Bounded constituent slicing/phase candidates measured; no target-rig retarget acceptance |
 | Validate | `evaluated-finding` | Current constituent declared contracts recorded |
 | Optimize | `partially-evaluated` | 159 external transform candidates; no collection promotion or acceptance |
-| Export | `not-evaluated` | No runtime handoff selected |
+| Export | `partially-evaluated` | 159 external candidates written and inspected; no candidate runtime handoff acceptance |
 | Gate/report | `partially-evaluated` | Current constituent-derived boundary recorded |
 
 ### Readiness evidence by clip set
@@ -86,16 +92,17 @@ No runtime sets were identified.
 | Role or runtime set | File-ready / clip-ready | Set-ready / rig-use | Runtime / acceptance boundary |
 |---|---|---|---|
 | Eight-constituent source corpus | evaluated-finding | not-evaluated | not-evaluated |
-| Current collection roles or runtime sets | not-evaluated | not-evaluated | not-evaluated |
+| Canonical collection binding | not-evaluated | not-evaluated | not-evaluated |
+| Named current constituent scenarios | Exact sources/takes measured | Topology inferred | Named source Unity subset tested; visual/gameplay acceptance open |
 
 ### Validation-profile status
 
 | Validation profile | Selection | Result / next evidence |
 |---|---|---|
 | Marketplace intake | `selected` — `evaluator-selected-generic-scenario` | Current source inventory and constituent baseline captured |
-| Blended locomotion | `not-selected` | Select clips and run current cross-pack blend evidence |
-| Root-motion controller | `not-selected` | Declare root ownership and run a controller test |
-| State-machine transitions | `not-selected` | Declare handoffs and run selected transition evidence |
+| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Three named Basic/melee walk mixers sampled; phase/contact quality remains open |
+| Root-motion controller | `selected` — `evaluator-selected-generic-scenario` | Four RM samples and fixed-root mixers; actual movement/collision controller still untested |
+| State-machine transitions | `selected` — `evaluator-selected-generic-scenario` | Nine Playables weight schedules tested; actual AnimatorController transition/interruption policy not tested |
 | Layered upper body/weapons | `not-selected` | Define masks and test selected clips |
 | Traversal/environment | `not-selected` | Define environment/contact decisions |
 | Contact actions/interactions | `not-selected` | Define prop/contact decisions |
@@ -152,35 +159,46 @@ No commercial source or derivative is published by this report.
 
 | Runtime | Procedure/evidence | Result | Boundary |
 |---|---|---|---|
-| Unity | No current procedure selected | not-evaluated | Import, controller, visual, contacts, retarget, and build remain |
+| Unity 6000.5.8f1 | Fresh external source-only Humanoid project; named fixed-root mixer and RM policies | 26/26 finite pose/root checks | Actual controller, visual, contacts, target-character retarget and build remain |
 | Unreal Engine | No current procedure selected | not-evaluated | Import, retarget, graphs, contacts, and build remain |
 | Godot | No current procedure selected | not-evaluated | Conversion/import, graphs, contacts, and export remain |
 | Bevy | No current procedure selected | not-evaluated | Conversion, target mapping, runtime, and performance remain |
 
 ## Rig, masking, and compatibility evidence
 
-The current 0.10.0 constituent rerun did not produce a collection compatibility matrix, rig comparison, mask trial, retarget trial, or cross-pack transition trial. No current conclusion about shared skeletons, masks, props, root authority, contacts, or co-installation follows.
+Fresh Unity 6000.5.8f1 source tests passed 26/26 bounded checks: 13 individual Humanoid samples, nine named cross-pack mixer schedules and four RM samples. For the nine mixers, five weights (0, 0.25, 0.5, 0.75, 1) produced finite sampled bone transforms with `applyRootMotion=false` and a fixed Animator owner. This supports technical feasibility of the named source combinations, not visually smooth handoffs or a finished kinematic controller.
+
+| Source pair family | Exact imported clip members | Procedure/result |
+|---|---|---|
+| Basic idle → each melee idle | `IdleUnarmed` → `IdleCombat1hMelee`, `IdleCombatA2HandMelee`, `IdleCombatDualSwords` | Three fixed-root mixer schedules; finite sampled poses |
+| Sword & Shield idle → each melee idle | `IdleCombatS&S` → `IdleCombat1hMelee`, `IdleCombatA2HandMelee`, `IdleCombatDualSwords` | Three fixed-root mixer schedules; finite sampled poses |
+| Basic walk → each melee walk | `WalkForwardUnarmed2` → `WalkForwardCombat1hMelee`, `WalkForwardCombat2HandMelee`, `WalkForwardDualSwords` | Three fixed-root mixer schedules; finite sampled poses |
+| Explicit RM forward walks | `WalkForwardUnarmed2_RM`; `WalkForwardCombat1hMelee_RM`; `WalkForwardCombat2HandMelee_RM`; `WalkForwardDualSwords_RM` | Animation-owned-root samples produce finite displacement; not desired gameplay-speed thresholds |
+
+No rendered-frame, contact, weapon-grip, deformation, interruption, authored AnimatorController or player-build acceptance ran. All tests use original FBXs on the shared Protof-Actor Humanoid avatar; none accepts the AnimSmith-generated GLB candidates.
+
+External evidence: `external:animsmith-0.14.0-report-refresh/unity-eight-pack-crosspack/`. Probe SHA-256 `28cd00897dfd739e2a7bcfa193adab03de3591a1009802946305127b67d1bfb6`; result `fresh-crosspack-probe.json` SHA-256 `f067bca91f182b65fab408a1c97b297377a8f361b03d59e809e236aba666652c`; log SHA-256 `0429bcb9cc7a7492c6637eb799566463ba915243d0a110b4d76cbe75590c8819`. Fresh project copies only Assets/Packages/ProjectSettings; Unity builds a new import cache. Each result binds named source hashes, root policy, sample/weight schedule and pair/config digest. All 13 source FBX hashes match the fresh AnimSmith baseline identities. Every sampled pose exposes 53 Humanoid bone transforms; an empty bone set fails the probe. Invocation: Unity batch mode, no graphics, `FreshCrossPackProbe.Run`; exit 0.
 
 ## Limitations and unknowns
 
 - The report evaluates exactly eight constituents, not the full collection, and does not assess the fifteen excluded constituents.
-- Canonical roles, logical-motion totals, runtime sets, cross-pack handoffs, and collection-wide remedial outputs are absent in the current run.
-- No current engine import, playback, visual, target-character, retarget, contact, root-motion controller, compression, build, or performance evidence exists.
+- Canonical collection roles/logical-motion totals and collection-wide remedial outputs remain unavailable; named current constituent scenarios are not a recovered historical collection binding.
+- Current Unity source import and finite-pose/root tests are bounded to the named members. No visual, target-character retarget, contact, actual controller, compression, build or performance acceptance exists.
 - Current external candidates do not establish source modification, promotion, derivative delivery, license rights, or artistic acceptance.
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official release revalidated the eight constituent baselines, declared contracts, and 159 bounded remediation candidates; this appendix preserves their aggregate boundary without recreating historical collection taxonomy or runtime records.
+AnimSmith 0.14.0 — revalidated the eight constituent baselines/contracts and 159 bounded remediation candidates. Added exact current generic scenarios and developer/artist decisions.
 
-AnimSmith 0.7.0 — the historical collection manifest, role taxonomy, runtime sets, cross-pack candidates, and collection remediation outputs are superseded. They are not current evidence.
-
-AnimSmith 0.4.0 — retained dated shared-path evidence recorded 700 byte-identical comparisons across 28 constituent pairs, while Unity 6000.5.8f1 probes recorded 22/22 contextual and 33/33 melee graph checks with four expected Generic-rig failures. Neither result was rerun and neither is current compatibility or engine evidence.
+AnimSmith 0.10.0 and earlier — superseded mechanical and remediation evidence. Historical collection logical-motion/set totals were not reconstructed or promoted into this run.
 
 ## Reproduction
 
-The evaluator was the official Linux archive `https://github.com/mmannerm/animsmith/releases/download/v0.10.0/animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz` (SHA-256 `8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662`), member `animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith` (SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`), tag `v0.10.0`, and peeled source commit `db91d8dda3326f97f581d4d62104d928caec383f`; working-tree state is `N/A`. The compiled feature surface was `fbx,report`. Version, top-level help, required `inspect`, `measure`, `lint`, `report`, and transform help, plus representative FBX admission, passed before the batches. The normalized preflight record is `preflight-status-v1`, SHA-256 `739930cd9c04189be3ffe1d3f7381800898d8d4b35c75c9a519e57f6cfad1fad`. Eight external, scrubbed constituent source inventories and command manifests are linked from the paired constituent appendices.
+Official evaluator preflight: [release archive](https://github.com/mmannerm/animsmith/releases/download/v0.14.0/animsmith-v0.14.0-x86_64-unknown-linux-gnu.tar.gz), archive SHA-256 `4ecf79436f9123c779edb004050da3010b44a2b392e3031facb227d7734fc33e`; exact member `animsmith-v0.14.0-x86_64-unknown-linux-gnu/animsmith`, binary SHA-256 `c2b9649bc74f8a7e5b5d7361a6feaa93941b2327cd7eee82235024bd4f61e366`; tag `v0.14.0`, peeled commit `e8321ad40be5ef6f162b31f085819c039175c3c9`; working-tree state: N/A (official archive). Compiled features: `fbx, report`. Version and required command help plus representative FBX admission passed before evaluation. Preflight: `external:animsmith-0.14.0-report-refresh/preflight.json`, SHA-256 `7034b5043de54e7b30064230db18605d1f96d0ea1477f7b8c56ce817cc73521a`.
 
-No fresh collection lint output is cited: no current collection binding was rendered or accepted. Reproduce a future collection claim in a fresh external evidence root, with the official binary, declared source inventory, and only the project-relevant cross-pack, engine, and visual controls.
+The official 0.14.0 evaluator and exact provenance are recorded in all eight linked constituent appendices: source commit `e8321ad40be5ef6f162b31f085819c039175c3c9`, binary SHA-256 `c2b9649bc74f8a7e5b5d7361a6feaa93941b2327cd7eee82235024bd4f61e366`, archive SHA-256 `4ecf79436f9123c779edb004050da3010b44a2b392e3031facb227d7734fc33e`, compiled features `fbx, report`, output schema v19 / measurements v18. Each constituent preserves exact source/config hashes, command arguments, exits and raw outputs externally.
+
+No fresh collection-output binding is cited. The tables aggregate constituent observations and explicit new evaluator scenarios. Do not treat them as completion of historical model migrations. Commercial sources, derivatives and engine projects remain external.
 
 ## Sources
 

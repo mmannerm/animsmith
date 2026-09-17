@@ -2,177 +2,177 @@
 
 > Companion report: [Technical report](mixamo-locomotion-collection.md)
 >
-> Evidence status: **partial** — this aggregation retains current constituent evidence only; licensed source archives, runtime tests, visual inspection, and collection-level compatibility tests remain external or unevaluated.
+> Evidence status: **partial** — exhaustive source mechanics for nine constituents; no current collection semantics, engine, visual, retarget, contact, or artistic acceptance.
 >
-> Evaluation date: **2026-09-01**
+> Evaluation date: **2026-09-16**
 >
-> Current evaluator: **AnimSmith 0.10.0**
+> Current evaluator: **AnimSmith 0.14.0**
 >
 > Report format: **2**
 
-This appendix records scrubbed current evidence only. The canonical [readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
+This appendix contains scrubbed rollup facts. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative. The retained collection manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; it does not provide current semantic membership authority.
 
 ## Evaluation scope and provenance
 
 | Field | Value |
 |---|---|
-| Pack/edition | Mixamo Locomotion Collection; local constituent revisions unknown |
-| Vendor/source | Vendor identity observed in constituent delivered metadata; listing URLs not retained |
-| Delivered scope | 249 extracted FBX files from nine constituent archive pairs; 231 manifest-declared motions retained as separate source metadata |
-| Target use | Engine-neutral marketplace-intake aggregation |
+| Pack/edition | Mixamo Locomotion Collection; nine locally available constituents; revisions unknown |
+| Vendor/source | Vendor identity observed in metadata; current listing URLs not retained |
+| Delivered scope | 249 extracted FBXs: 92 in-place-directory and 157 root-motion-directory files |
+| Target use | Engine-neutral intake plus new evaluator-proposed controller/state hypotheses |
 | Target engines | Not evaluated |
-| Target rigs/packs | Nine named constituent reports; target rig and cross-pack use not evaluated |
-| Source manifest | Constituent source and extracted-inventory SHA-256 identities are scrubbed and retained externally |
-| Evaluation manifest | Nine validated constituent manifests, each `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; no new collection manifest or classification was generated in this rollup |
-| Acquisition/license provenance | No controlling license/readme/terms evidence was delivered; not legal advice |
-
-Included current reports: [Basic](mixamo-basic-locomotion.md), [Female Basic](mixamo-female-basic-locomotion.md), [Female](mixamo-female-locomotion.md), [Locomotion](mixamo-locomotion.md), [Longbow](mixamo-longbow-locomotion.md), [Magic](mixamo-magic-locomotion.md), [Male](mixamo-male-locomotion.md), [Pistol/Handgun](mixamo-pistol-handgun-locomotion.md), and [Rifle 8-Way](mixamo-rifle-8-way-locomotion.md). None are excluded from this nine-constituent rollup.
-
-The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`. The aggregate uses constituent-manifest file totals and separate manifest-declared-motion metadata. It does not infer a file-to-motion mapping, logical-motion classification, runtime set, or collection compatibility result.
+| Target rigs/packs | Nine source pools; no target character or proven pairwise combination |
+| Source manifest | Fresh collection inventory SHA-256 `bc8543a8e1c7cf439030c07a2aead5db183d610633f637c1979dbce71a4dce66`; identical before/after |
+| Evaluation manifest | `mixamo-locomotion-collection.manifest.json`; SHA-256 `9601129c4237e5b331fd7de8c6c705c7bb8dcd702a219d31c250a8ce57b77cf1`; legacy schema `urn:animsmith:skill:animation-pack-evaluation-manifest:1` |
+| Acquisition/license provenance | Extracted files locally authorized; original ZIPs and controlling license evidence unavailable; not legal advice |
 
 ### Evidence coverage
 
 | Surface | Offered/delivered | Evaluated | Findings | Not evaluated and why |
 |---|---:|---:|---:|---|
-| Animation files | 249 | 249 | 0 baseline errors; 50 baseline warnings; 35,405 baseline notes | Constituent file-to-manifest mapping remains incomplete |
-| Rigs/export variants | 9 constituent contexts | 9 lint-profile contexts | Mixamo profile used for constituent lint | Retarget behavior unavailable |
-| AnimSmith baseline | 249 | 249 | 0 errors; 50 warnings; 35,405 notes | — |
-| Declared contracts | 249 | 249 | In-place: 0 errors; 13 warnings. Root-motion: 52 stationary-root errors; 37 warnings | Archive-level declarations only; per-clip intent unavailable |
-| AnimSmith visual reports | 14 | 0 | 0 | Generated externally but not visually inspected |
-| Engine import/playback | 4 runtimes | 0 | 0 | No engines/project supplied |
-| Blend/mask/retarget | 1 collection scope | 0 | 0 | No collection runtime contract supplied |
+| Physical FBX files | 249 | 249 | 0 baseline errors; 50 warnings | Vendor 231-motion mapping unavailable |
+| Rigs/export variants | 249 | 249 | 231 66-bone motion files; 18 68-bone `X Bot.fbx`; Mixamo roles resolved | Pairwise hierarchy/rest/retarget unavailable |
+| AnimSmith baseline | 249 | 249 | 50 warnings; 35405 notes | — |
+| Declared contracts | 249 | 249 | 52 ownership errors; 50 warnings | Per-file project intent unavailable |
+| Constituent hypotheses | 9 | 9 static proposals | Exact measured members | Runtime/visual acceptance unavailable |
+| Cross-pack hypotheses | 1 | 1 static proposal | Full-body handoff only | Pairwise engine/artistic evidence unavailable |
+| Engine import/playback | 4 common runtimes | 0 | 0 | No current engine project ran |
 
 ### Claim legend
 
-Claims use `observed-file`, `observed-animsmith`, and `not-evaluated` as defined by the assessment taxonomy.
+Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `not-evaluated`.
 
 ## Evaluation manifest and taxonomy
 
 ### Canonical clip-role inventory
 
-No collection-level canonical role inventory was refreshed. Each constituent's validated manifest preserves its own opaque `other-unknown` file units; the 231 manifest-declared motions remain separate metadata because source records were not linked to archive members.
-
 | Canonical primary role | Logical motions | Delivered files | Evidence boundary |
 |---|---:|---:|---|
-| `idle-pose` | 0 | 0 | No fresh collection classification |
-| `continuous-locomotion` | 0 | 0 | No fresh collection classification |
-| `locomotion-transition` | 0 | 0 | No fresh collection classification |
-| `airborne` | 0 | 0 | No fresh collection classification |
-| `traversal` | 0 | 0 | No fresh collection classification |
-| `action-interaction` | 0 | 0 | No fresh collection classification |
-| `reaction-death` | 0 | 0 | No fresh collection classification |
-| `emote-cinematic` | 0 | 0 | No fresh collection classification |
-| `other-unknown` | 249 | 249 | One opaque unit per delivered FBX in the constituent manifests; no semantic collection classification asserted |
-| **Total** | **249** | **249** | Derived from nine validated constituent manifests; 231 manifest-declared motions are separate metadata |
+| `idle-pose` | 0 | 0 | Not authoritatively classified |
+| `continuous-locomotion` | 0 | 0 | Filename hypotheses stay outside canonical counts |
+| `locomotion-transition` | 0 | 0 | Not authoritatively classified |
+| `airborne` | 0 | 0 | Not authoritatively classified |
+| `traversal` | 0 | 0 | Not authoritatively classified |
+| `action-interaction` | 0 | 0 | Not authoritatively classified |
+| `reaction-death` | 0 | 0 | Not authoritatively classified |
+| `emote-cinematic` | 0 | 0 | Not authoritatively classified |
+| `other-unknown` | 249 | 249 | One opaque current source unit per delivered FBX |
+| **Total** | **249** | **249** | No vendor mapping inferred |
 
 ### Runtime-set inventory
 
-No runtime sets were identified.
+| Runtime set | Type | Members/variants | Grouping evidence | Validation status |
+|---|---|---|---|---|
+| `hypothesis/full-body-unarmed-to-pistol` | transition-chain | `mixamo-basic-locomotion::Basic_Locomotion_Pack_-_in-place/walking.fbx`; `mixamo-pistol-handgun-locomotion::Pistol-Handgun_Locomotion_Pack_-_in-place/pistol run.fbx` | New evaluator-selected namespaced full-body state proposal; no historical set recovered | `not-evaluated` pairwise/runtime/artistic acceptance |
 
 ### Pipeline-stage coverage
 
 | Stage | Coverage state | Evidence / remaining gate |
 |---|---|---|
-| Acquire | `partially-evaluated` | Constituent archive identities recorded externally; license terms unavailable |
-| Preserve raw | `evaluated-clean` | Constituent archives were not modified; extraction was external |
-| Inspect | `evaluated-clean` | AnimSmith 0.10.0 inspected every extracted FBX in each constituent baseline |
-| Segment | `not-evaluated` | Constituent manifest-to-member clip linkage was not established |
-| Root motion | `partially-evaluated` | Archive-variant declarations ran; per-clip ownership remains open |
-| Conform | `not-evaluated` | No target contract authorized transforms |
-| Validate | `partially-evaluated` | Constituent mechanical baseline and declarations ran; engine validation deferred |
-| Optimize | `not-evaluated` | No optimization was authorized |
-| Export | `not-evaluated` | No engine-facing export was evaluated |
-| Gate/report | `partially-evaluated` | This report aggregates scrubbed current constituent evidence without new collection testing |
+| Acquire | `partially-evaluated` | Extracted sources present; original ZIP/license unavailable |
+| Preserve raw | `evaluated-clean` | 249-file inventory matched before/after |
+| Inspect | `evaluated-clean` | All sources loaded and resolved Mixamo roles |
+| Segment | `not-evaluated` | Vendor 231-to-249 mapping unavailable |
+| Root motion | `partially-evaluated` | Archive declarations ran; per-file XZ/yaw policy unavailable |
+| Conform | `not-evaluated` | No outputs produced |
+| Validate | `partially-evaluated` | Mechanical/current contracts complete; runtime/artistic gates open |
+| Optimize | `not-evaluated` | Constant-track notes not promoted |
+| Export | `not-evaluated` | No engine-facing export ran |
+| Gate/report | `partially-evaluated` | Source-only reports complete; adoption gates remain |
 
 ### Readiness evidence by clip set
 
 | Role or runtime set | File-ready / clip-ready | Set-ready / rig-use | Runtime / acceptance boundary |
 |---|---|---|---|
-| Aggregate unclassified corpus | All 249 current baseline files loaded and have 0 mechanical errors; warnings and notes remain distinct hygiene evidence | Per-clip intent, loops, variants, and ownership remain incomplete | Engine, retarget, contact, visual, gameplay, and cross-pack acceptance not evaluated |
+| Nine opaque corpora | 0 baseline errors; 50 warnings | Roles resolve; per-file semantics and retarget use unavailable | No current engine/visual/gameplay acceptance |
+| Nine constituent hypotheses | Exact members measured | New controller proposals only | Blend, phase, transition, contact, deformation tests required |
+| `hypothesis/full-body-unarmed-to-pistol` | Two exact in-place members measured | Pairwise skeleton/rest/scale unproven | Full-body transition plus technical/artistic acceptance required |
 
 ### Validation-profile status
 
 | Validation profile | Selection | Result / next evidence |
 |---|---|---|
-| Marketplace intake | `selected` — `observed-pack-capability` | Constituent external inventories and baselines completed; license evidence remains unavailable |
-| Blended locomotion | `selected` — `observed-pack-capability` | No collection runtime sets or engine blend tests were refreshed |
-| Root-motion controller | `selected` — `observed-pack-capability` | Archive-level declarations differ; choose per-clip policy in the target project |
-| State-machine transitions | `not-selected` | No target state-machine contract supplied |
-| Layered upper body/weapons | `not-selected` | No mask or weapon contract supplied |
-| Traversal/environment | `not-selected` | No target traversal contract supplied |
-| Contact actions/interactions | `not-selected` | No target contact contract supplied |
-| Retargeted/customizable characters | `not-selected` | No target rig or retargeter supplied |
-| Motion matching/search | `not-selected` | No search runtime contract supplied |
-| Networked movement | `not-selected` | No networked movement contract supplied |
-| Runtime performance | `not-selected` | No target hardware/runtime contract supplied |
+| Marketplace intake | `selected` — `observed-pack-capability` | Exhaustive source mechanics complete |
+| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Nine static hypotheses; runtime acceptance open |
+| Root-motion controller | `selected` — `observed-pack-capability` | 52 ownership conflicts need per-file policy |
+| State-machine transitions | `selected` — `evaluator-selected-generic-scenario` | Full-body cross-pack handoff proposed; not tested |
+| Layered upper body/weapons | `selected` — `evaluator-selected-generic-scenario` | Full-body baseline only; layering remains unavailable |
+| Traversal/environment | `not-selected` | No target environment contract |
+| Contact actions/interactions | `not-selected` | No target contact contract |
+| Retargeted/customizable characters | `not-selected` | No target character/retargeter supplied |
+| Motion matching/search | `not-selected` | No database contract supplied |
+| Networked movement | `not-selected` | No replication/rollback contract supplied |
+| Runtime performance | `not-selected` | No target runtime/hardware supplied |
 
 ## Pack inventory and content evidence
 
-| Constituent | FBX files | Manifest-declared motions |
-|---|---:|---:|
-| Basic | 12 | 10 |
-| Female Basic | 20 | 18 |
-| Female | 18 | 16 |
-| Locomotion | 20 | 18 |
-| Longbow | 22 | 20 |
-| Magic | 27 | 25 |
-| Male | 18 | 16 |
-| Pistol/Handgun | 29 | 27 |
-| Rifle 8-Way | 83 | 81 |
-| **Total** | **249** | **231** |
+| Constituent | FBXs | Legacy metadata | Baseline | Declared XZ | New hypothesis |
+|---|---:|---|---|---|---|
+| [Mixamo Basic Locomotion](mixamo-basic-locomotion.md) | 12 | 10 unlinked metadata motions | 4 warnings / 1712 notes | 4 ownership errors | `hypothesis/kinematic-walk-3way` (`not-evaluated`) |
+| [Mixamo Female Basic Locomotion](mixamo-female-basic-locomotion.md) | 20 | 18 unlinked metadata motions | 5 warnings / 2843 notes | 6 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
+| [Mixamo Female Locomotion](mixamo-female-locomotion.md) | 18 | 16 unlinked metadata motions | 4 warnings / 2559 notes | 4 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
+| [Mixamo Locomotion](mixamo-locomotion.md) | 20 | 18 unlinked metadata motions | 5 warnings / 2852 notes | 6 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
+| [Mixamo Longbow Locomotion](mixamo-longbow-locomotion.md) | 22 | 20 unlinked metadata motions | 3 warnings / 3126 notes | 3 ownership errors | `hypothesis/kinematic-run-4way` (`not-evaluated`) |
+| [Mixamo Magic Locomotion](mixamo-magic-locomotion.md) | 27 | 25 unlinked metadata motions | 6 warnings / 3837 notes | 4 ownership errors | `hypothesis/kinematic-run-4way` (`not-evaluated`) |
+| [Mixamo Male Locomotion](mixamo-male-locomotion.md) | 18 | 16 unlinked metadata motions | 5 warnings / 2564 notes | 4 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
+| [Mixamo Pistol-Handgun Locomotion](mixamo-pistol-handgun-locomotion.md) | 29 | 27 unlinked metadata motions | 7 warnings / 4122 notes | 5 ownership errors | `hypothesis/kinematic-run-axis` (`not-evaluated`) |
+| [Mixamo Rifle 8-Way Locomotion](mixamo-rifle-8-way-locomotion.md) | 83 | 81 unlinked metadata motions | 11 warnings / 11790 notes | 16 ownership errors | `hypothesis/kinematic-run-8way` (`not-evaluated`) |
 
-The nine current constituent inventories reconcile to 249 FBX files and 231 manifest-declared motions. The archive member count exceeds each constituent's manifest motion count by two: one non-motion/reference asset per archive variant. Delivered metadata declares 30 fps FBX export preferences, not an engine import result.
+The 231 metadata motion count is not mapped to the 249 files. Exact current paths remain opaque canonical units. New hypotheses use only named current files and do not claim vendor intent or recovered historical membership.
 
 ## Mechanical baseline
 
 | Finding/check | Affected scope | Potential impact | Evidence |
 |---|---|---|---|
-| No mechanical errors | 249 files | File-ready mechanical health only | observed-animsmith, AnimSmith 0.10.0; nine fresh empty baselines |
-| `duration-sanity` warnings | 50 findings | No-track assets/clips and channel-end mismatches require semantic classification or review | observed-animsmith, AnimSmith 0.10.0 |
-| `constant-track` notes | 35,405 notes across the corpus | Hygiene evidence, not authorization to rewrite | observed-animsmith, AnimSmith 0.10.0 |
+| No baseline errors | 249/249 files | File-readable prerequisite only | Current ledger |
+| `duration-sanity` | 50 findings | Empty reference takes or endpoint clamp-hold | Exact paths in constituent appendices |
+| `constant-track` | 35405 notes | Optimization hint; no visual defect or safe rewrite inferred | Current ledger |
+| Skeleton counts | 231 files at 66 bones; 18 `X Bot.fbx` at 68 | Reference files need classification; common counts do not prove compatibility | Current inspect output |
 
 ## AnimSmith remediation evidence
 
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
-| Archive-level movement ownership ambiguity | Current in-place and root-motion XZ controls | In-place: 0 errors, 13 warnings. Root-motion: 52 stationary-root errors, 37 warnings | Nine current constituent external runs; control findings are not a source repair | Per-clip ownership, controller integration, and all transforms remain outside this rollup |
-| FBX remediation | Current FBX `fix --dry-run` representatives | Safe refusal: `fix` accepts only glTF/GLB | Captured exit 2 and stderr in the constituent evidence | No conversion or transform was authorized |
+| MIX-OWN-001 | Archive-level XZ declarations | 52 stationary-root errors | Current per-file lint/measure; no output produced | Per-file intent/controller acceptance unavailable; residual unresolved |
+| MIX-XPACK-001 | No transform or retarget run | No candidate produced | Exact source identities only | Pairwise technical/artistic acceptance unavailable; residual unresolved |
 
 ## Engine procedures and evidence
 
 | Runtime | Version | Procedure | Observed result | Remaining gate |
 |---|---|---|---|---|
-| Unity | unspecified | Not run at collection scope | not-evaluated | Exact import/controller test |
-| Unreal Engine | unspecified | Not run at collection scope | not-evaluated | Exact import/retarget test |
-| Godot | unspecified | Not run at collection scope | not-evaluated | Exact import/AnimationTree test |
-| Bevy | unspecified | Not run at collection scope | not-evaluated | Exact loader/graph test |
+| Unity | unspecified | Not run | `not-evaluated` | Exact pairwise full-body state graph |
+| Unreal Engine | unspecified | Not run | `not-evaluated` | Exact retarget/state graph |
+| Godot | unspecified | Not run | `not-evaluated` | Exact Skeleton3D/AnimationTree graph |
+| Bevy | unspecified | Not run | `not-evaluated` | Exact target identity/animation graph |
 
 ## Rig, masking, and compatibility evidence
 
 | Pack/rig/set pair | Skeleton/retarget | Scale/axes | Root policy | Timing/blend | Overall evidence |
 |---|---|---|---|---|---|
-| Nine constituent corpora / target project | Mixamo profile resolved for constituent lint only | Not evaluated | Archive labels do not establish per-clip ownership | Not evaluated | unknown |
-| Constituent-to-constituent pair | No overlapping-path or skeleton/reference-rig comparison refreshed | Not evaluated | Not evaluated | Not evaluated | unknown |
+| Basic / Pistol proposed handoff | 66-bone counts and Mixamo roles on selected files; hierarchy/rest/deformation not compared | Not evaluated | Controller ownership proposed | Full-body transition not tested | `not-evaluated` technical/contact/artistic acceptance |
+| All other constituent pairs | Common role labels/counts are insufficient | Not evaluated | Per-file ownership unavailable | No pairwise test | `unknown` |
 
 ## Limitations and unknowns
 
-1. This is an aggregation, not a new collection evaluation: no file-to-motion mapping, semantic role classification, runtime set, remediation, engine import, blend, retarget, masking, visual/contact, performance, or cross-pack test was performed.
-2. License terms, target engine, target controller, target rig, and artistic/gameplay acceptance remain unavailable.
+1. Vendor mapping, loop/phase intent, target character, engines, retargeting, contacts, deformation, performance, networking, and artistic style remain unavailable.
+2. Cross-pack hypotheses are new evaluator scenarios; no historical membership or compatibility conclusion was reconstructed.
+3. Original ZIP payloads and controlling license evidence were unavailable; hashing covers extracted sources.
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — The nine constituent reports were refreshed and revalidated with the official evaluator, fresh preflight, current empty baselines, and current archive-variant controls. Current evidence uses output schema v19 and measurements schema v18.
+AnimSmith 0.14.0 — Fresh source-only matrix admitted 249/249 files, revalidated mechanical/declared counts, and added bounded new controller/state hypotheses without claiming runtime acceptance.
 
-AnimSmith 0.7.0 — Prior collection assertions, output schema v17, measurements schema v16, and retained evidence digests are historical only and superseded by the current constituent evidence.
+AnimSmith 0.10.0 — Retained historical totals do not supply collection semantics. AnimSmith 0.7.0 evidence remains superseded.
 
 ## Reproduction
 
-working-tree state is N/A (official release artifact).
+Official evaluator preflight: [release archive](https://github.com/mmannerm/animsmith/releases/download/v0.14.0/animsmith-v0.14.0-x86_64-unknown-linux-gnu.tar.gz), archive SHA-256 `4ecf79436f9123c779edb004050da3010b44a2b392e3031facb227d7734fc33e`; exact member `animsmith-v0.14.0-x86_64-unknown-linux-gnu/animsmith`, binary SHA-256 `c2b9649bc74f8a7e5b5d7361a6feaa93941b2327cd7eee82235024bd4f61e366`; tag `v0.14.0`, peeled commit `e8321ad40be5ef6f162b31f085819c039175c3c9`; working-tree state: N/A (official archive). Compiled features: `fbx, report`. Version and required command help plus representative FBX admission passed before evaluation. Preflight: `external:animsmith-0.14.0-report-refresh/preflight.json`, SHA-256 `7034b5043de54e7b30064230db18605d1f96d0ea1477f7b8c56ce817cc73521a`.
 
-Reproduction used the official release artifact: URL `https://github.com/mmannerm/animsmith/releases/download/v0.10.0/animsmith-v0.10.0-x86_64-unknown-linux-gnu.tar.gz`; archive SHA-256 `8de4f97949fbc61fc3aec1d5f22272735ffe06937a0fea5c998cb3e0f639c662`; member `animsmith-v0.10.0-x86_64-unknown-linux-gnu/animsmith`; binary SHA-256 `2052ce64eda53d5037b305561dd0287209719d743b0a4051552e197fbfe4a387`. Official tag is `v0.10.0`, peeled commit `db91d8dda3326f97f581d4d62104d928caec383f`; working-tree state `N/A`; compiled features `fbx,report`; output schema v19 and measurements schema v18.
+Official binary SHA-256 `c2b9649bc74f8a7e5b5d7361a6feaa93941b2327cd7eee82235024bd4f61e366`, version `0.14.0`, source revision `e8321ad40be5ef6f162b31f085819c039175c3c9`, dirty `false`, features `fbx,report`. Version/help/required-command preflight exited 0. The four-worker read-only matrix ran 996 commands with no timeouts: inspect, measure, empty-baseline lint, and variant-declaration lint per FBX. The 52 nonzero exits are the declared-contract errors reported above; every loader/inspect/measure/baseline invocation exited 0.
 
-Required evaluator checks succeeded for `--version`, top-level `--help`, `inspect --help`, `measure --help`, `lint --help`, and `report --help`, and representative FBX admission succeeded. Safe normalized preflight status is `preflight-status-v1`, SHA-256 `739930cd9c04189be3ffe1d3f7381800898d8d4b35c75c9a519e57f6cfad1fad`; available help digests are version `35bb24c48d2e2fcf9ae5753338f09722ee50f9c002d00df7d0d30afa5d2ac4a0`, top-level `905f42d113783490bc8f3dea6bcda6bfc648a7e2f29b71fec99c41e6701099c8`, inspect `c45acaabc9e357af7c2c6265a18dccbb67b6cf1cb7dc45263652e0f5fa922c0b`, measure `cca0b44510c65ee671ac13b591712b6c67f6b1a4f2efdb0aca4ba26293e3d169`, lint `e216ccd638df639853687025f4eaab35e03c32d306b0dbcd0cb2c5c19ff53def`, and report `8298b2c9358bc796362eae5aeae22d86c9a06843c0dec7eb0f06cee82b27ad03`. Before exhaustive constituent execution, `inspect`, `measure`, `lint`, and `report` each exited 0 on representative FBX admission. Each constituent then used external explicit empty-baseline and archive-variant configs; baseline commands exited 0, root-motion controls exited 1 for findings, and FBX `fix --dry-run` exited 2 because `fix` accepts only glTF/GLB. Configs, inventories, command outputs, exit codes, and remaining digests are retained outside the repository.
+Source inventory SHA-256 `bc8543a8e1c7cf439030c07a2aead5db183d610633f637c1979dbce71a4dce66` covers 249 files / 119,754,377 bytes and matched before/after. Ledger SHA-256 `62b0a7b7a1bb47c817f6b005a988077a44dc8d942bb26343a5f7278a15582272`; summary `4dd01ee9f1398fa200355c82206c8fd24d80d0dea1f8965aee8b03ba400cfc7c`; report data `a8d8e1bd3707b58e24f7d08f4ea7038c0f316254fa289e4f6439284dbcbc388f`. Full outputs, exact private paths, and licensed sources remain external.
 
 ## Sources
 
-- The nine linked constituent reports and external AnimSmith 0.10.0 evidence; no licensed payloads are published.
+- Nine linked current constituent pairs plus fresh external source inventory, command ledger, summary, and outputs.
+- [AnimSmith game-ready clip guidance](../game-ready-clips.md).

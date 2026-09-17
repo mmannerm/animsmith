@@ -24,9 +24,19 @@ import validate_evaluation_model_v2 as model_validator_v2
 import validate_report as report_validator
 
 
-RENDERER_VERSION = "2"
-RENDERER_VERSION_V2 = "3"
+RENDERER_VERSION = "3"
+RENDERER_VERSION_V2 = "4"
 READINESS_LADDER = "../game-ready-clips.md#the-readiness-ladder"
+RECIPE_SLOTS = (
+    ("topology", "Members/topology", "topology"),
+    ("timing", "Timing/synchronization", "sync"),
+    ("ownership", "State ownership", "owner"),
+    ("composition", "Composition constraints", "composition"),
+    ("acceptance-gate", "Acceptance gate", "gate"),
+)
+CROSS_PACK_DECISION_HEADER = (
+    "Left constituent", "Right constituent", "Decision", "Evidence",
+)
 
 
 @dataclass(frozen=True)
@@ -222,6 +232,51 @@ def _runtime_rows(model: dict[str, Any]) -> list[str]:
             f"state={_text(runtime_set['coverage'])} |"
         )
     return rows
+
+
+def _recipe_projection(model: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Render fixed action slots while retaining every accepted step record.
+
+    Integration-step arrays are ID ordered and may omit or repeat actions under
+    the frozen V1/V2 contract.  The fixed report recipe is action ordered, so a
+    positional zip can silently put a valid step under the wrong label.  Keep
+    one stable slot summary per action, then render each source record in its
+    own evidence-bearing paragraph.
+    """
+    by_action: dict[str, list[dict[str, Any]]] = {
+        action: [] for action, _label, _key in RECIPE_SLOTS
+    }
+    for step in model["integration_steps"]:
+        by_action[step["action"]].append(step)
+    summaries = []
+    for index, (action, label, key) in enumerate(RECIPE_SLOTS, start=1):
+        count = len(by_action[action])
+        if count:
+            summaries.append(
+                f"{index}. **{label}:** `{key}=declared`; "
+                f"{count} declared {_text('step' if count == 1 else 'steps')}; details below."
+            )
+        else:
+            summaries.append(
+                f"{index}. **{label}:** `{key}=not-evaluated`; no declared step."
+            )
+    details = [
+        f"Step {_code(step['id'])}: action={_text(step['action'])}; "
+        f"{_text(step['coordinates_or_thresholds'])}; "
+        f"movement owner={_text(step['movement_owner'])}; "
+        f"phase owner={_text(step['phase_owner'])}; "
+        f"{_evidence(model, step['evidence_refs'])}."
+        for step in model["integration_steps"]
+    ]
+    return summaries, details
+
+
+def _cross_pack_decision_rows(model: dict[str, Any]) -> list[str]:
+    return [
+        f"| {_code(record['left'])} | {_code(record['right'])} | "
+        f"{_text(record['result'])} | {_evidence(model, record['evidence_refs'])} |"
+        for record in model["collection"]["cross_pack_records"]
+    ]
 
 
 def _engine_rows(model: dict[str, Any]) -> list[str]:
@@ -430,14 +485,17 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
     capabilities = {"pass": [], "finding": [], "not-evaluated": [], "not-applicable": []}
     for capability in model["capabilities"]:
         capabilities[capability["state"]].append(f"{_code(capability['id'])}: {_evidence(model, capability['evidence_refs'])}")
-    recipe = [
-        f"{step['order']}. **{label}:** `{key}={_text(step['action'])}`; {_text(step['coordinates_or_thresholds'])}; movement owner={_text(step['movement_owner'])}; phase owner={_text(step['phase_owner'])}; step={_code(step['id'])}; {_evidence(model, step['evidence_refs'])}."
-        for step, label, key in zip(model["integration_steps"], report_validator.RECIPE_LABELS, ("topology", "sync", "owner", "composition", "gate"))
-    ]
-    while len(recipe) < 5:
-        index = len(recipe)
-        label, key = report_validator.RECIPE_LABELS[index], ("topology", "sync", "owner", "composition", "gate")[index]
-        recipe.append(f"{index + 1}. **{label}:** `{key}=not-evaluated`; no V1 step was recorded.")
+    recipe, recipe_details = _recipe_projection(model)
+    primary_cross_pack_rows = _cross_pack_decision_rows(model)
+    primary_cross_pack = (
+        "\n".join([
+            "### Cross-pack decisions",
+            "| " + " | ".join(CROSS_PACK_DECISION_HEADER) + " |",
+            "|---|---|---|---|",
+            *primary_cross_pack_rows,
+        ])
+        if primary_cross_pack_rows else ""
+    )
     report = "\n".join([
         f"# Animation pack evaluation: {_text(presentation['title'])}", "",
         f"> Technical verdict: **{_text(presentation['verdict'])}**", ">",
@@ -455,11 +513,11 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "### Not applicable", "\n".join("- " + value for value in capabilities["not-applicable"]) or "- None recorded.", "",
         "## Runtime sets and authored motion",
         "\n".join(["| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |", "|---|---|---|---|---|---|"] + runtime_rows) if runtime_rows else "No important runtime sets were identified.", "",
-        "## Integration recipe", "\n".join(recipe), "",
+        "## Integration recipe", "\n".join(recipe), "", "\n\n".join(recipe_details), "",
         "## Technical issue register",
         "\n".join(["| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |", "|---|---|---|---|---|---|---|"] + issue_rows) if issue_rows else "No material technical issues were found at the stated scope.", "",
         "## Engine status", "| Runtime | Evidence level | Technical result | Remaining gate |", "|---|---|---|---|", *(_engine_rows(model)), "",
-        "## Fit and limitations", _narrative(model, "fit-and-limitations", "See the typed limitations in the appendix."), "",
+        "## Fit and limitations", _narrative(model, "fit-and-limitations", "See the typed limitations in the appendix."), "", primary_cross_pack, "",
         "## Changes between AnimSmith versions", *_changes(model, binding), "",
         "## Evidence status", f"Model schema: {_code(model['schema'])}; schema version: {_code(model['schema_version'])}; digest: {_code(digest)}; renderer: {_code(_renderer_version(model))}. {_link('Canonical readiness ladder', READINESS_LADDER)}.", "",
         "## Sources", *source_rows, "",
@@ -596,6 +654,19 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
     assert_projection_links(report_ast, report_validator.RUNTIME_SET_HEADER, model["runtime_sets"], 1, ("evidence_refs",), "primary runtime-set")
     assert_projection_links(report_ast, report_validator.ISSUE_HEADER, model["issues"], 6, ("evidence_refs",), "issue")
     assert_projection_links(report_ast, report_validator.ENGINE_HEADER, [next(record for record in model["engine_evidence"] if record["runtime"] == runtime) for runtime in report_validator.ENGINE_LABELS], 2, ("evidence_refs",), "primary engine")
+    primary_cross_pack = model["collection"]["cross_pack_records"]
+    matching = [
+        table for table in report_ast["tables"]
+        if tuple(item["text"] for item in table["header"]) == CROSS_PACK_DECISION_HEADER
+    ]
+    if primary_cross_pack:
+        assert_projection_links(report_ast, CROSS_PACK_DECISION_HEADER, primary_cross_pack, 3, ("evidence_refs",), "primary cross-pack")
+        if len(matching) == 1 and len(matching[0]["rows"]) == len(primary_cross_pack):
+            for index, (row, record) in enumerate(zip(matching[0]["rows"], primary_cross_pack), start=1):
+                if [cell["text"] for cell in row[:3]] != [record["left"], record["right"], record["result"]]:
+                    errors.append(f"model-to-view primary cross-pack row {index} differs from authority")
+    elif matching:
+        errors.append("model-to-view primary cross-pack table contradicts empty authority")
     assert_projection_links(appendix_ast, report_validator.APPENDIX_RUNTIME_HEADER, model["runtime_sets"], 3, ("evidence_refs",), "runtime-set")
     assert_projection_links(appendix_ast, report_validator.PIPELINE_HEADER, model["pipeline_stages"], 2, ("evidence_refs",), "pipeline")
     assert_projection_links(appendix_ast, ("Role or runtime set", "File-ready / clip-ready", "Set-ready / rig-use", "Runtime / acceptance boundary"), model["readiness"], 3, ("evidence_refs",), "readiness")

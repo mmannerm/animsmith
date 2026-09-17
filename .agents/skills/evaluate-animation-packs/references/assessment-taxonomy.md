@@ -120,6 +120,16 @@ do not blur ownership.
 An available workaround does not prove the pack is fixed. Record whether it is
 repeatable, lossless, project-specific, or artist-reviewed.
 
+Separate source responsibility from consuming-project choice. A clip is not an
+artist/vendor defect merely because a project has not chosen movement
+ownership, blend coordinates, mask boundaries, importer settings, or a
+controller policy. Use `engine-config` for those choices when the delivered
+motion is otherwise acceptable. Use `artist-author` only when satisfying an
+authoritative motion intent requires changing poses, timing, trajectories,
+contacts, deformation, or authored transitions. Use `vendor-license` for
+promised-delivery, source-export, or rights changes. When intent is missing,
+use `unknown` and name the authority needed to decide.
+
 ## Future AnimSmith test
 
 Classify an issue as `animsmith-future-candidate` only when all answers are
@@ -173,3 +183,17 @@ estimate or the report states a scoped estimate and its assumptions.
 
 Severity describes impact for the stated game, not how easy a finding is to
 detect or how severe the originating tool labels it.
+
+The issue register's severity is always the **as-delivered severity**: the
+impact before evaluator configuration, generated candidates, engine
+workarounds, or artist changes. Do not lower it because a command exists or an
+output was produced.
+
+A **residual severity** may be stated separately only for an identified adopted
+output or configuration whose declared postcondition passed and whose material
+acceptance gates ran. Name the output/configuration, passed gates, and remaining
+scope. If a candidate is external, unpromoted, refused, mechanically checked
+only, or still lacks material engine, visual, contact, deformation, or artist
+acceptance, report the residual result as `unresolved` or `unknown`; do not call
+the as-delivered issue fixed. Configuration may close a project adoption
+condition without repairing the source bytes, which must remain explicit.

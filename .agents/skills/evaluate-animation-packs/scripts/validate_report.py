@@ -66,6 +66,8 @@ PROFILE_LABELS = tuple(label for _identifier, label in PROFILE_ROWS)
 ENGINE_LABELS = ("Unity", "Unreal Engine", "Godot", "Bevy")
 MAX_PRIMARY_WORDS = 2000
 REPORT_FORMAT_VERSION = "2"
+EVALUATION_MODEL_V2_SCHEMA = "urn:animsmith:skill:animation-pack-evaluation:2"
+V2_SET_TYPES = SET_TYPES | {"gait-group"}
 REPORT_TITLE_PREFIX = "Animation pack evaluation: "
 APPENDIX_TITLE_PREFIX = "Animation pack evidence appendix: "
 RUNTIME_SET_HEADER = (
@@ -646,7 +648,9 @@ def _placeholder_errors(document: dict[str, Any]) -> list[str]:
     return [f"unresolved template placeholders: {preview}{suffix}"]
 
 
-def _validate_runtime_sets(document: dict[str, Any]) -> list[str]:
+def _validate_runtime_sets(
+    document: dict[str, Any], *, set_types: set[str] = SET_TYPES
+) -> list[str]:
     section = "Runtime sets and authored motion"
     no_sets = "No important runtime sets were identified."
     paragraphs = _top_level_paragraphs(document, section)
@@ -682,7 +686,7 @@ def _validate_runtime_sets(document: dict[str, Any]) -> list[str]:
             malformed_variant = True
         if "variant" in variants and variants["variant"] not in REPORT_VARIANTS:
             malformed_variant = True
-        if "set_type" in variants and variants["set_type"] not in SET_TYPES:
+        if "set_type" in variants and variants["set_type"] not in set_types:
             malformed_variant = True
         if malformed_variant:
             errors.append(f"runtime-set member row {index} has malformed variant or set type")
@@ -771,7 +775,8 @@ def validate(
         headings,
         tuple(("Capability coverage", heading) for heading in capability_headings),
     ))
-    errors.extend(_validate_runtime_sets(document))
+    set_types = V2_SET_TYPES if evaluation_schema == EVALUATION_MODEL_V2_SCHEMA else SET_TYPES
+    errors.extend(_validate_runtime_sets(document, set_types=set_types))
     errors.extend(_validate_recipe(document))
 
     verdict = _metadata(document, "Technical verdict")
@@ -1006,7 +1011,9 @@ def validate_appendix(
     for index, row in enumerate(runtime_rows, start=1):
         if len(row) != len(APPENDIX_RUNTIME_HEADER) or any(not cell["text"] for cell in row):
             errors.append(f"runtime-set appendix row {index} is malformed")
-        elif row[1]["text"] not in SET_TYPES:
+        elif row[1]["text"] not in (
+            V2_SET_TYPES if evaluation_schema == EVALUATION_MODEL_V2_SCHEMA else SET_TYPES
+        ):
             errors.append(f"runtime-set appendix row {index} has unknown type: {row[1]['text']}")
 
     pipeline_table, table_errors = _appendix_table(
@@ -1137,7 +1144,7 @@ def main() -> int:
         report_text = args.report.read_text(encoding="utf-8")
         appendix_text = appendix.read_text(encoding="utf-8")
         if args.evaluation_model_v2:
-            evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:2"
+            evaluation_schema = EVALUATION_MODEL_V2_SCHEMA
         elif args.evaluation_model_v1:
             evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:1"
         else:
