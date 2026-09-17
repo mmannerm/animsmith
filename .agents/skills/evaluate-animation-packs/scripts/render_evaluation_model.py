@@ -24,9 +24,19 @@ import validate_evaluation_model_v2 as model_validator_v2
 import validate_report as report_validator
 
 
-RENDERER_VERSION = "2"
-RENDERER_VERSION_V2 = "3"
+RENDERER_VERSION = "3"
+RENDERER_VERSION_V2 = "4"
 READINESS_LADDER = "../game-ready-clips.md#the-readiness-ladder"
+RECIPE_SLOTS = (
+    ("topology", "Members/topology", "topology"),
+    ("timing", "Timing/synchronization", "sync"),
+    ("ownership", "State ownership", "owner"),
+    ("composition", "Composition constraints", "composition"),
+    ("acceptance-gate", "Acceptance gate", "gate"),
+)
+CROSS_PACK_DECISION_HEADER = (
+    "Left constituent", "Right constituent", "Decision", "Evidence",
+)
 
 
 @dataclass(frozen=True)
@@ -52,6 +62,21 @@ def _renderer_version(model: dict[str, Any]) -> str:
 
 def _code(value: Any) -> str:
     return "`" + _text(value).replace("`", "\\`") + "`"
+
+
+def _code_text(value: Any) -> str:
+    """Normalize line endings as CommonMark code spans expose them."""
+    return re.sub(r"\r\n?|\n", " ", str(value))
+
+
+def _exact_code(value: Any) -> str:
+    """Render one prose scalar as code while preserving its parsed text."""
+    encoded = _code_text(value)
+    fence = "`" * (
+        max((len(run) for run in re.findall(r"`+", encoded)), default=0) + 1
+    )
+    padding = " " if encoded[:1] in {"`", " "} or encoded[-1:] in {"`", " "} else ""
+    return fence + padding + encoded + padding + fence
 
 
 def _literal(value: Any) -> str:
@@ -222,6 +247,48 @@ def _runtime_rows(model: dict[str, Any]) -> list[str]:
             f"state={_text(runtime_set['coverage'])} |"
         )
     return rows
+
+
+def _recipe_projection(model: dict[str, Any]) -> list[str]:
+    """Render every accepted step once under its fixed action slot.
+
+    Integration-step arrays are ID ordered and may omit or repeat actions under
+    the frozen V1/V2 contract.  The fixed report recipe is action ordered, so a
+    positional zip can silently put a valid step under the wrong label.
+    """
+    by_action: dict[str, list[dict[str, Any]]] = {
+        action: [] for action, _label, _key in RECIPE_SLOTS
+    }
+    for step in model["integration_steps"]:
+        by_action[step["action"]].append(step)
+    recipe = []
+    for index, (action, label, key) in enumerate(RECIPE_SLOTS, start=1):
+        steps = by_action[action]
+        if not steps:
+            recipe.append(
+                f"{index}. **{label}:** `{key}=not-evaluated`; no declared step."
+            )
+            continue
+        recipe.append(f"{index}. **{label}:** `{key}=declared`")
+        recipe.append("")
+        recipe.extend(
+            f"   - Step {_exact_code(step['id'])}: action={_exact_code(step['action'])}; "
+            f"thresholds={_exact_code(step['coordinates_or_thresholds'])}; "
+            f"movement owner={_exact_code(step['movement_owner'])}; "
+            f"phase owner={_exact_code(step['phase_owner'])}; "
+            f"{_evidence(model, step['evidence_refs'])}."
+            for step in steps
+        )
+        recipe.append("")
+    return recipe
+
+
+def _cross_pack_decision_rows(model: dict[str, Any]) -> list[str]:
+    return [
+        f"| {_code(record['left'])} | {_code(record['right'])} | "
+        f"{_text(record['result'])} | {_evidence(model, record['evidence_refs'])} |"
+        for record in model["collection"]["cross_pack_records"]
+    ]
 
 
 def _engine_rows(model: dict[str, Any]) -> list[str]:
@@ -430,14 +497,17 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
     capabilities = {"pass": [], "finding": [], "not-evaluated": [], "not-applicable": []}
     for capability in model["capabilities"]:
         capabilities[capability["state"]].append(f"{_code(capability['id'])}: {_evidence(model, capability['evidence_refs'])}")
-    recipe = [
-        f"{step['order']}. **{label}:** `{key}={_text(step['action'])}`; {_text(step['coordinates_or_thresholds'])}; movement owner={_text(step['movement_owner'])}; phase owner={_text(step['phase_owner'])}; step={_code(step['id'])}; {_evidence(model, step['evidence_refs'])}."
-        for step, label, key in zip(model["integration_steps"], report_validator.RECIPE_LABELS, ("topology", "sync", "owner", "composition", "gate"))
-    ]
-    while len(recipe) < 5:
-        index = len(recipe)
-        label, key = report_validator.RECIPE_LABELS[index], ("topology", "sync", "owner", "composition", "gate")[index]
-        recipe.append(f"{index + 1}. **{label}:** `{key}=not-evaluated`; no V1 step was recorded.")
+    recipe = _recipe_projection(model)
+    primary_cross_pack_rows = _cross_pack_decision_rows(model)
+    primary_cross_pack = (
+        "\n".join([
+            "### Cross-pack decisions",
+            "| " + " | ".join(CROSS_PACK_DECISION_HEADER) + " |",
+            "|---|---|---|---|",
+            *primary_cross_pack_rows,
+        ])
+        if primary_cross_pack_rows else ""
+    )
     report = "\n".join([
         f"# Animation pack evaluation: {_text(presentation['title'])}", "",
         f"> Technical verdict: **{_text(presentation['verdict'])}**", ">",
@@ -460,6 +530,7 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "\n".join(["| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |", "|---|---|---|---|---|---|---|"] + issue_rows) if issue_rows else "No material technical issues were found at the stated scope.", "",
         "## Engine status", "| Runtime | Evidence level | Technical result | Remaining gate |", "|---|---|---|---|", *(_engine_rows(model)), "",
         "## Fit and limitations", _narrative(model, "fit-and-limitations", "See the typed limitations in the appendix."), "",
+        *([primary_cross_pack, ""] if primary_cross_pack else []),
         "## Changes between AnimSmith versions", *_changes(model, binding), "",
         "## Evidence status", f"Model schema: {_code(model['schema'])}; schema version: {_code(model['schema_version'])}; digest: {_code(digest)}; renderer: {_code(_renderer_version(model))}. {_link('Canonical readiness ladder', READINESS_LADDER)}.", "",
         "## Sources", *source_rows, "",
@@ -593,9 +664,126 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
             observed = {(link["text"], link["destination"]) for link in matching[0]["links"]}
             if observed != expected:
                 errors.append(f"model-to-view {label} {record['id']} has misattached evidence")
+    def assert_integration_projection() -> None:
+        paragraphs = [
+            paragraph for paragraph in report_ast["paragraphs"]
+            if paragraph["section"] == "Integration recipe"
+        ]
+        detail_ids = [
+            paragraph["code"][0] if paragraph["code"] else None
+            for paragraph in paragraphs if paragraph["list_depth"] == 2
+        ]
+        expected_ids = [record["id"] for record in model["integration_steps"]]
+        if len(detail_ids) != len(expected_ids) or set(detail_ids) != set(expected_ids):
+            errors.append("model-to-view integration detail membership differs from authority")
+        slot_positions: dict[str, int] = {}
+        for index, (action, label, key) in enumerate(RECIPE_SLOTS, start=1):
+            matching = [
+                position for position, paragraph in enumerate(paragraphs)
+                if paragraph["list_depth"] == 1
+                and not paragraph["blockquote"] and not paragraph["subsection"]
+                and paragraph["list_item"] == index
+                and f"{label}:" in paragraph["strong"]
+            ]
+            if len(matching) == 1:
+                slot_positions[action] = matching[0]
+                declared = any(record["action"] == action for record in model["integration_steps"])
+                expected_slot = f"{label}: {key}=declared" if declared else (
+                    f"{label}: {key}=not-evaluated; no declared step."
+                )
+                if paragraphs[matching[0]]["text"] != expected_slot:
+                    errors.append(f"model-to-view integration action slot {action} differs from authority")
+        allowed_positions = set(slot_positions.values())
+        for record in model["integration_steps"]:
+            matching = [
+                (position, paragraph)
+                for position, paragraph in enumerate(paragraphs)
+                if paragraph["list_depth"] == 2
+                and not paragraph["blockquote"] and not paragraph["subsection"]
+                and paragraph["code"]
+                and paragraph["code"][0] == record["id"]
+            ]
+            if len(matching) != 1:
+                errors.append(
+                    f"model-to-view integration step {record['id']} is missing or duplicated"
+                )
+                continue
+            position, paragraph = matching[0]
+            allowed_positions.add(position)
+            expected_code = [
+                _code_text(record["id"]), _code_text(record["action"]),
+                _code_text(record["coordinates_or_thresholds"]),
+                _code_text(record["movement_owner"]),
+                _code_text(record["phase_owner"]),
+                *record["evidence_refs"],
+            ]
+            expected_prefix = (
+                f"Step {_code_text(record['id'])}: action={_code_text(record['action'])}; "
+                f"thresholds={_code_text(record['coordinates_or_thresholds'])}; "
+                f"movement owner={_code_text(record['movement_owner'])}; "
+                f"phase owner={_code_text(record['phase_owner'])}; "
+            )
+            expected_evidence = "; ".join(
+                f"{ref}: {evidence[ref]['summary']}" for ref in record["evidence_refs"]
+            ) or "No linked evidence."
+            if (
+                paragraph["code"] != expected_code
+                or paragraph["text"] != expected_prefix + expected_evidence + "."
+            ):
+                errors.append(
+                    f"model-to-view integration step {record['id']} differs from authority"
+                )
+            slot_position = slot_positions.get(record["action"])
+            later_slots = [
+                value for value in slot_positions.values()
+                if slot_position is not None and value > slot_position
+            ]
+            if (
+                slot_position is None
+                or position <= slot_position
+                or later_slots and position >= min(later_slots)
+            ):
+                errors.append(
+                    f"model-to-view integration step {record['id']} is under the wrong action slot"
+                )
+            expected_links = {
+                (evidence[ref]["summary"], evidence[ref]["locator"])
+                for ref in record["evidence_refs"]
+            }
+            observed_links = {
+                (link["text"], link["destination"])
+                for link in paragraph["links"]
+            }
+            if observed_links != expected_links:
+                errors.append(
+                    f"model-to-view integration step {record['id']} has misattached evidence"
+                )
+        unexpected_blocks = any(
+            node["section"] == "Integration recipe"
+            for family in ("tables", "code_blocks", "rules")
+            for node in report_ast[family]
+        ) or any(
+            node["section"] == "Integration recipe" and node["level"] != 2
+            for node in report_ast["headings"]
+        )
+        if allowed_positions != set(range(len(paragraphs))) or unexpected_blocks:
+            errors.append("model-to-view integration recipe contains unexpected content")
     assert_projection_links(report_ast, report_validator.RUNTIME_SET_HEADER, model["runtime_sets"], 1, ("evidence_refs",), "primary runtime-set")
     assert_projection_links(report_ast, report_validator.ISSUE_HEADER, model["issues"], 6, ("evidence_refs",), "issue")
     assert_projection_links(report_ast, report_validator.ENGINE_HEADER, [next(record for record in model["engine_evidence"] if record["runtime"] == runtime) for runtime in report_validator.ENGINE_LABELS], 2, ("evidence_refs",), "primary engine")
+    primary_cross_pack = model["collection"]["cross_pack_records"]
+    matching = [
+        table for table in report_ast["tables"]
+        if tuple(item["text"] for item in table["header"]) == CROSS_PACK_DECISION_HEADER
+    ]
+    if primary_cross_pack:
+        assert_projection_links(report_ast, CROSS_PACK_DECISION_HEADER, primary_cross_pack, 3, ("evidence_refs",), "primary cross-pack")
+        if len(matching) == 1 and len(matching[0]["rows"]) == len(primary_cross_pack):
+            for index, (row, record) in enumerate(zip(matching[0]["rows"], primary_cross_pack), start=1):
+                if [cell["text"] for cell in row[:3]] != [record["left"], record["right"], record["result"]]:
+                    errors.append(f"model-to-view primary cross-pack row {index} differs from authority")
+    elif matching:
+        errors.append("model-to-view primary cross-pack table contradicts empty authority")
     assert_projection_links(appendix_ast, report_validator.APPENDIX_RUNTIME_HEADER, model["runtime_sets"], 3, ("evidence_refs",), "runtime-set")
     assert_projection_links(appendix_ast, report_validator.PIPELINE_HEADER, model["pipeline_stages"], 2, ("evidence_refs",), "pipeline")
     assert_projection_links(appendix_ast, ("Role or runtime set", "File-ready / clip-ready", "Set-ready / rig-use", "Runtime / acceptance boundary"), model["readiness"], 3, ("evidence_refs",), "readiness")
@@ -606,7 +794,7 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
         assert_projection_links(appendix_ast, ("Pack/rig/set pair", "Skeleton/retarget", "Scale/axes", "Root policy", "Timing/blend", "Overall evidence"), model["collection"]["cross_pack_records"], 5, ("evidence_refs",), "cross-pack")
     assert_projection_links(appendix_ast, ("Clip", "Source", "Take", "Take name", "Role", "Loop", "Duration", "RM speed", "Movement owner", "Assessment"), model["clips"], 9, ("evidence_refs",), "clip")
     assert_paragraph_links(report_ast, model["capabilities"], ("evidence_refs",), "capability")
-    assert_paragraph_links(report_ast, model["integration_steps"], ("evidence_refs",), "integration step")
+    assert_integration_projection()
     assert_paragraph_links(report_ast, model["sources"], ("evidence_refs",), "source")
     assert_paragraph_links(appendix_ast, model["limitations"], ("evidence_refs",), "limitation")
     assert_paragraph_links(appendix_ast, model["sources"], ("evidence_refs",), "source")

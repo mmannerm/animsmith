@@ -69,6 +69,26 @@ including runtime members, narrative fact references, and collection
 constituent clip/set lists. Report-owned evidence and constituent record IDs
 retain the frozen V1 ID grammar; only collection logical-ID positions widen.
 
+## Decision authoring with the frozen fields
+
+Populate every current V11 runtime set under its exact ID, kind, member order,
+assessment, coverage, and evidence. Missing vendor/project intent belongs in
+the assessment, evidence, readiness consequence, and integration gate; it does
+not justify dropping a measured gait group. Any additional evaluator-proposed
+topology belongs in a new generic hypothesis in the integration decision, with
+explicit proposed members and `not-evaluated` runtime acceptance; it is not a
+new V11 set or reconstructed historical authority. Use the five existing
+integration-step actions to state topology, timing, movement/phase ownership,
+composition, and acceptance. Use typed collection pair results for cross-pack
+scope rather than extending a one-pack conclusion.
+
+The [assessment taxonomy](assessment-taxonomy.md) governs issue
+severity and residual status. Store the as-delivered value in `severity`;
+use `impact` for exact scope/reproduction and `current_action` for the action,
+acceptance condition, and residual result. The frozen schema carries those
+last distinctions as bounded text: evidence references must support them,
+and schema validation does not establish their truth.
+
 ## Rendering
 
 The fixed renderer selects V1 or V2 only from the model schema URN:

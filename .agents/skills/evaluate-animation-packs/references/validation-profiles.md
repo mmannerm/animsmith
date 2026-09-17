@@ -62,6 +62,10 @@ Select for directional or speed runtime sets. Check skeleton/retarget path,
 root policy, duration and sampling, endpoint convention, gait/contact phase,
 speed interpretation, center/axis/diagonal interpolation, transitions, and
 actual engine blend behavior. Static timing agreement is only a prerequisite.
+Produce a named 1D/2D recipe with exact members, thresholds or coordinates,
+loop/phase policy, and movement ownership. When those semantics are an
+evaluator proposal rather than vendor/project intent, label them as a new
+generic hypothesis and keep runtime acceptance `not-evaluated`.
 
 ### `root-motion-controller`
 
@@ -69,6 +73,9 @@ Select when authored root translation or yaw may drive gameplay. Check root
 layout, displacement, direction, speed, yaw, ground reference, extraction,
 controller ownership, in-place counterparts, turns, starts/stops, and
 replication or reconciliation when networking is required.
+For a kinematic path, assign translation, yaw, and collision separately and
+state which in-place/pose members, speed mapping, and phase policy the
+controller will use.
 
 ### `state-machine-transitions`
 
@@ -76,6 +83,8 @@ Select for starts, stops, pivots, landings, recoveries, cover transitions, or
 other state boundaries. Check chain completeness, entry/exit pose and velocity,
 contacts, interruption behavior, crossfade duration, sync policy, and missing
 authored transitions.
+Specify the full-body state handoff and acceptance gate before proposing a
+layered alternative.
 
 ### `layered-upper-body-weapons`
 

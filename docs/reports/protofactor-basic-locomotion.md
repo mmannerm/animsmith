@@ -2,13 +2,13 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — current mechanical and declared-contract evidence is exhaustive, but no current engine or visual acceptance ran.
+> Evaluation completeness: **partial** — current mechanical and declared-contract evidence is exhaustive, with a fresh bounded Unity source import/mixer probe; visual and gameplay acceptance remain open.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-09-01**
+> Evaluation date: **2026-09-16**
 >
-> Current evaluator: **AnimSmith 0.10.0**
+> Current evaluator: **AnimSmith 0.14.0**
 >
 > Report format: **2**
 >
@@ -16,17 +16,19 @@
 
 ## Technical decision
 
-The verified AnimSmith 0.10.0 release loads all 179 delivered FBXs. Untouched lint finds 24,186 `constant-track` notes and 36 `time-monotonic` errors across 12 files. Current declared contracts cover 177 individual motions; 58 command invocations pass and 119 fail per format, so loop and continuity results are conditions rather than approval. The declared remediation rerun generated all 39 candidates: 12 slices removed the 36 time-ordering errors, 24 in-place gait anchors reduced the three measured circular spreads from 0.7156245/0.4630161/0.6597812 to 0.0501911/0.0938395/0.0724415, and three constant-track candidates were emitted. These are mechanically verified, unpromoted candidates; no engine, visual, retarget, contact, or gameplay run occurred.
+**For a kinematic character: a useful locomotion foundation, conditional on phase and loop cleanup.** Start with the three in-place direction sets below. Do not put every delivered movement into one blend tree: cover, jumps, throws, and turns need state-specific selection and ownership. Equal duration within each ring helps synchronization but does not prove foot contacts or crossfades.
+
+`observed-animsmith`: the official 0.14.0 evaluator inspected and measured all 179 FBXs; 58/177 declared-contract files pass and 119 fail per output format. Conditions below distinguish source findings, evaluator policy and untested gameplay. No remediation candidate is promoted.
 
 ## Capability coverage
 
 ### Complete core
 
-- Delivered filename families cover locomotion, cover, turns, airborne actions, and transitions; 70 labelled root-motion files have matching in-place partners.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 
-- Mechanical input health is measured. The current slices remove their known time-ordering errors, while remaining contract findings require loop and continuity decisions before locomotion blend adoption.
+- Three complete eight-direction source selections support proposed walk/run/crouch trees. Cover, turn, jump and action families need separate reviewed states; start/stop, contact and controller behavior remain open.
 
 ### Absent
 
@@ -34,44 +36,81 @@ The verified AnimSmith 0.10.0 release loads all 179 delivered FBXs. Untouched li
 
 ## Runtime sets and authored motion
 
-No important runtime sets were identified.
+New evaluator-selected generic scenarios: current source bytes establish the exact members, take names, durations, and measured roots below. Names suggest gameplay roles; topology and semantic intent are hypotheses requiring clip review. These are not reconstructed historical manifests or measured collection-output sets. Every listed member uses `Take 001`; full identities are in the external selected-set ledger.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Walk eight directions | Proposed forward (0,1) | `Humanoid@WalkForwardUnarmed2.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed forward-left (-1,1) | `Humanoid@WalkForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed left (-1,0) | `Humanoid@WalkLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed back-left (-1,-1) | `Humanoid@WalkBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed back (0,-1) | `Humanoid@WalkBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed back-right (1,-1) | `Humanoid@WalkBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed right (1,0) | `Humanoid@WalkRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed forward-right (1,1) | `Humanoid@WalkForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed forward (0,1) | `Humanoid@RunForward2Unarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed forward-left (-1,1) | `Humanoid@RunForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed left (-1,0) | `Humanoid@RunLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed back-left (-1,-1) | `Humanoid@RunBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed back (0,-1) | `Humanoid@RunBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed back-right (1,-1) | `Humanoid@RunBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed right (1,0) | `Humanoid@RunRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed forward-right (1,1) | `Humanoid@RunForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed forward (0,1) | `Humanoid@CrouchForwardUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed forward-left (-1,1) | `Humanoid@CrouchForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed left (-1,0) | `Humanoid@CrouchLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed back-left (-1,-1) | `Humanoid@CrouchBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed back (0,-1) | `Humanoid@CrouchBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed back-right (1,-1) | `Humanoid@CrouchBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed right (1,0) | `Humanoid@CrouchRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed forward-right (1,1) | `Humanoid@CrouchForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=not-evaluated`; declare selected locomotion rings rather than infer them from names.
-2. **Timing/synchronization:** `sync=not-evaluated`; resolve contract failures and measure selected loop members.
-3. **State ownership:** `owner=not-evaluated`; declare IP/RM movement ownership per clip.
-4. **Composition constraints:** `composition=full-body`; do not approve masks or additive use.
-5. **Acceptance gate:** `gate=engine-and-visual-review`; import, blend, retarget, and playtest selected candidates.
+1. **Members/topology:** `topology=directional-blend`; create separate walk, run, and crouch two-parameter trees from the listed members. Use local horizontal velocity for direction; handle standing/crouching and cover as states.
+2. **Timing/synchronization:** `sync=not-evaluated`; establish the project or vendor loop/contact policy before choosing synchronized blending. Current unpromoted gait-anchor candidates reduce measured phase spread; test the declared support-foot correspondence, loop closure, and intermediate weights before adoption.
+3. **State ownership:** `owner=controller`; the selected in-place roots have no measured travel. Let the kinematic controller own translation/collision and choose playback speed from observed stride/contact tests; zero root speed is not a usable speed threshold. Give RM actions an explicit separate movement policy.
+4. **Composition constraints:** `composition=full-body`; preserve authored lower-body/torso coupling initially. Weapon layers need an explicit spine mask, reference-pose convention, and planted-foot test.
+5. **Acceptance gate:** `gate=engine-and-visual-review`; test stops, reversals, diagonal transitions, slopes, and crouch changes on the target character. Source mixer execution does not validate exported candidates.
 
 ## Technical issue register
 
+Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility.
+
+Severity describes impact as delivered for the stated use. Residual status is explicit; untested risks are not confirmed artist defects.
+
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| BL-010 | major | [Time ordering and loop continuity](../game-ready-clips.md#the-readiness-ladder) require declared review before runtime use. | artist-author | Review the 12 external slice candidates and decide loop policy before promotion. | Current declared slicing, gait anchoring, and constant-track pruning are mechanical candidates only; no automatic artistic repair is established. | `observed-animsmith`; slices remove 36 time errors, while original contracts still have 119 failing invocations per format. |
+| BL-TIME | major | Twelve cover/throw files contain 36 negative-time findings; an importer can trim or interpret their pre-roll differently. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | artist-author | Re-export deliberate clip start/range, or review the twelve declared slice candidates. All time findings disappear; ten candidates also pass their declared lint. Sources remain unchanged. Candidate time-ordering residual is mechanically cleared in all twelve; two retain other lint findings. All twelve remain unpromoted pending contact/engine review. | Explicit range slicing exists; it does not recover missing artistic intent. | Baseline affected-file list and slice verification; `observed-animsmith`. |
+| BL-PHASE | note | Evaluator-selected walk/run/crouch rings have phase spreads 0.6598/0.4630/0.7156 cycles. Their contact correspondence and intended synchronization are unconfirmed; the numbers alone do not establish an artist defect. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Obtain project or vendor loop/contact intent, then test a declared phase/contact tolerance over the exact rings. Anchored spreads are 0.0724/0.0938/0.0502 cycles in the same order, but 22 of 24 candidates retain lint findings. Request artist cleanup only if accepted intent and playback establish a source-motion problem. Residual adoption unresolved; no output promoted. | Current declared gait anchoring reduces measured phase disagreement; it cannot choose intended contacts or approve blending. | Exact sets and source/output phases `observed-animsmith`; synchronization/contact acceptance `not-evaluated`. |
+| BL-ROOT | major | Fourteen files fail the declared in-place policy; a controller that also moves the character may double-apply displacement. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | engine-config | Select a documented root policy per state and inspect those measured trajectories. Do not infer in-place from missing RM suffix alone. Accept only after displacement/collision tests; residual unresolved. | Root measurements identify the conflict; the project must choose movement ownership. | Declared contract ledger lists exact files; `observed-animsmith`. |
+| BL-TRACK | minor | Constant tracks inflate storage; note counts alone do not establish runtime cost. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | animsmith-current-declared | Three prune candidates pass baseline lint. Accept only after required tracks, masks and engine playback remain equivalent; residual unverified. | Current pruning is available; no measured frame-time improvement is claimed. | Three representative outputs; `observed-animsmith`. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity unspecified | not-evaluated | No current import or playback run. | Import, controller, visual, and build tests. |
+| Unity 6000.5.8f1 | observed-engine | Source inventory: 177 Humanoid clips; 6/6 sample and 3/3 mixer executions. A separate named cross-pack subset has finite-pose/fixed-root assertions (26 total checks across five packs). | Inventory probe is execution-only; cross-pack probe adds finite poses, not visual/contact quality. Controller, candidate-output and build acceptance remain open. |
 | Unreal Engine unspecified | not-evaluated | No current import or playback run. | Import, retarget, graph, and build tests. |
 | Godot unspecified | not-evaluated | No current conversion, import, or playback run. | Conversion/import, graph, and export tests. |
 | Bevy unspecified | not-evaluated | No current glTF handoff or runtime run. | Conversion, addressability, runtime, and performance tests. |
 
 ## Fit and limitations
 
-Best fit is an engine project willing to declare and validate its locomotion contract. Cross-pack compatibility, visual loop quality, contacts, and artistic fit remain untested.
+Basic + Injured is a plausible state switch between healthy and injured locomotion; preserve each injury style and calibrate speed separately. Basic + melee packs is a plausible full-body armed/unarmed state change, with stance and grip continuity still untested. Basic + Climbing/Campfire needs an explicit exit from ground locomotion, environment alignment, and a return state. Fresh Unity checks support the named Basic-to-melee idle/walk combinations as technically executable with a fixed owner root; see the [collection appendix](protofactor-ultimate-animation-collection-evidence.md#rig-masking-and-compatibility-evidence). They do not approve unrestricted blending or upper-body overlays.
+
+These are proposed integration decisions (`inferred`), with target-controller, contact and artistic acceptance still `not-evaluated`.
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — official release revalidated the 179-FBX baseline and 177 declared contracts, then reran 12 declared slices, 24 in-place gait anchors, and three constant-track trials. Earlier 0.7.0 evaluator and any engine or offline evidence are historical only.
+AnimSmith 0.14.0 — reran 179 input baselines, 177 per-file declared contracts and 39 remediation trials using the official release. Added current exact-member generic scenarios and developer/artist actions. AnimSmith 0.10.0 — superseded historical evidence; none of its generated outputs or engine results is relabelled as a fresh run.
 
 ## Evidence status
 
-Current evidence uses the official 0.10.0 binary and the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder). Commercial sources and derivatives remain external.
+Current evidence uses the official 0.14.0 binary and the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder). Commercial sources and derivatives remain external.
 
 ## Sources
 
 - Protofactor, [Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/) — collection-level product context.
 - AnimSmith, [game-ready clips](../game-ready-clips.md) and [CLI reference](../cli.md) — readiness and command boundaries.
+- Unity 6 documentation: [Blend Trees](https://docs.unity3d.com/6000.0/Documentation/Manual/class-BlendTree.html), [Root Motion](https://docs.unity3d.com/6000.0/Documentation/Manual/RootMotion.html), and [Animation Layers](https://docs.unity3d.com/6000.0/Documentation/Manual/AnimationLayers.html) — engine concepts only, not evidence of pack quality.

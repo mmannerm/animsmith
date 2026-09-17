@@ -214,6 +214,15 @@ Build a coverage matrix before testing:
 - define runtime sets separately from primary roles. Use them only for real
   blend, speed, sync, transition, mask, retarget, paired-interaction, or search
   relationships; a clip may belong to multiple sets;
+- reconcile runtime sets against every current structured grouping witness,
+  including measured gait groups. Do not write that no important runtime sets
+  exist while current evidence contains a relationship that could affect a
+  controller or animation graph. Preserve the exact current structured set ID,
+  members, and order. When delivered intent is unavailable, mark semantic
+  applicability and vendor/project authority `not-evaluated`, and state who
+  must confirm it. Never reconstruct lost historical membership from an older
+  report, prose, filenames, or superseded output; declare and test any new
+  hypothesis as new;
 - run inexpensive batch-safe checks on every AnimSmith-readable file when
   practical;
 - select representative clips for visual and engine tests by declared use,
@@ -397,6 +406,10 @@ evaluation.
 - Use repair for defects the current version describes as safely repairable.
 - Use transforms only when the edit has an explicit source window, frame rate,
   loop declaration, gait contract, or other required intent.
+- Publish available phase measurements for selected blend members, separating measured
+  phase from synchronization/contact acceptance. Name units, exact member scope,
+  availability, and the spread formula; do not compare different spread statistics
+  or infer an artist defect without declared intent and acceptance evidence.
 - Before gait anchoring, inspect whether any resampled channel accumulates root
   translation or yaw. If the captured version cyclically resamples those
   channels, treat root-motion anchoring as unsafe unless a trajectory-preserving
@@ -423,6 +436,11 @@ After every generated output:
 4. import the generated candidate into the target engine when possible;
 5. record which original problem changed, which facts remained stable, and
    which new findings or unknowns appeared.
+
+Apply the [issue-severity policy](references/assessment-taxonomy.md)
+to the source and candidate separately. Record the demonstrated mechanical
+change and the remaining adoption gates; command success alone is not a fixed
+pack verdict.
 
 Report effort as concrete steps plus `none`, `low`, `moderate`, `high`, or
 `unknown`; explain assumptions instead of inventing precise labor hours.
@@ -486,6 +504,11 @@ contact quality, and style mismatch when relevant to the target game. Do not
 claim that shared bone names, a humanoid label, or successful import proves
 good blending.
 
+For each material blend tree, kinematic-controller path, full-body
+transition/layer, and cross-pack combination, apply the concrete recipe rules
+in the engine reference. Keep evaluator-proposed coordinates, thresholds, and
+graph choices `not-evaluated` until the named runtime test runs.
+
 Use capability profiles rather than creating genre-specific checklists. A game
 context may compose several profiles; record project-specific additions beside
 the standard profile identifiers. Keep unselected profiles visible so absence
@@ -524,6 +547,19 @@ Require artist/author work when the solution needs new motion, pose or timing
 judgment, contact cleanup, deformation-aware retargeting, style matching,
 missing transitions, additive-base creation, or recovery of information that
 the file does not contain.
+
+Assign one owner using the canonical
+[remediation ownership taxonomy](references/assessment-taxonomy.md).
+Keep source defects, project-policy choices, and missing intent distinct.
+
+Every material issue must be actionable without access to the evaluator's
+private notes. Name the exact affected files or runtime-set members, a bounded
+reproduction (command/config or engine state and transition), the visible or
+developer impact, one current action, and an observable acceptance condition.
+For artist/vendor work, include the relevant time/frame range, bones, contacts,
+or state boundary when evidence supplies them; ask for a concrete corrected
+result rather than generic cleanup. Group files in one issue only when they
+share the same cause, action, and acceptance test.
 
 ## Write and validate the report
 

@@ -31,6 +31,7 @@ from evaluation_contract_v1 import (
     TECHNICAL_VERDICTS,
     VARIANTS,
 )
+import evaluation_model_v2 as model_contract_v2
 
 
 PRIMARY_HEADINGS = (
@@ -150,6 +151,14 @@ HISTORY_PROSE_RE = re.compile(
     r"not evidence))\b",
     re.IGNORECASE,
 )
+
+
+def _set_types(evaluation_schema: str) -> set[str]:
+    """Retain legacy report vocabulary while adding canonical V2 kinds."""
+    return SET_TYPES | (
+        set(model_contract_v2.SET_TYPES)
+        if evaluation_schema == model_contract_v2.SCHEMA else set()
+    )
 
 
 def _parse_report_markdown(text: str) -> dict[str, Any]:
@@ -646,7 +655,9 @@ def _placeholder_errors(document: dict[str, Any]) -> list[str]:
     return [f"unresolved template placeholders: {preview}{suffix}"]
 
 
-def _validate_runtime_sets(document: dict[str, Any]) -> list[str]:
+def _validate_runtime_sets(
+    document: dict[str, Any], *, set_types: set[str] = SET_TYPES
+) -> list[str]:
     section = "Runtime sets and authored motion"
     no_sets = "No important runtime sets were identified."
     paragraphs = _top_level_paragraphs(document, section)
@@ -682,7 +693,7 @@ def _validate_runtime_sets(document: dict[str, Any]) -> list[str]:
             malformed_variant = True
         if "variant" in variants and variants["variant"] not in REPORT_VARIANTS:
             malformed_variant = True
-        if "set_type" in variants and variants["set_type"] not in SET_TYPES:
+        if "set_type" in variants and variants["set_type"] not in set_types:
             malformed_variant = True
         if malformed_variant:
             errors.append(f"runtime-set member row {index} has malformed variant or set type")
@@ -771,7 +782,8 @@ def validate(
         headings,
         tuple(("Capability coverage", heading) for heading in capability_headings),
     ))
-    errors.extend(_validate_runtime_sets(document))
+    set_types = _set_types(evaluation_schema)
+    errors.extend(_validate_runtime_sets(document, set_types=set_types))
     errors.extend(_validate_recipe(document))
 
     verdict = _metadata(document, "Technical verdict")
@@ -1006,7 +1018,7 @@ def validate_appendix(
     for index, row in enumerate(runtime_rows, start=1):
         if len(row) != len(APPENDIX_RUNTIME_HEADER) or any(not cell["text"] for cell in row):
             errors.append(f"runtime-set appendix row {index} is malformed")
-        elif row[1]["text"] not in SET_TYPES:
+        elif row[1]["text"] not in _set_types(evaluation_schema):
             errors.append(f"runtime-set appendix row {index} has unknown type: {row[1]['text']}")
 
     pipeline_table, table_errors = _appendix_table(
@@ -1137,7 +1149,7 @@ def main() -> int:
         report_text = args.report.read_text(encoding="utf-8")
         appendix_text = appendix.read_text(encoding="utf-8")
         if args.evaluation_model_v2:
-            evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:2"
+            evaluation_schema = model_contract_v2.SCHEMA
         elif args.evaluation_model_v1:
             evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:1"
         else:

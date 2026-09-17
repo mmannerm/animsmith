@@ -248,22 +248,15 @@ def _v1_relation_projection(binding: dict[str, Any]) -> dict[str, Any]:
                     "translation_availability": "unavailable",
                     "speed_mps_availability": "unavailable",
                 },
-                **(
-                    {"gait_phase": {"availability": "unavailable"}}
-                    if runtime_set["kind"] == "gait-group" else {}
-                ),
             }
             for member in runtime_set["members"]
         ]
         evidence = {
             "root_travel": {"lifecycle": "incomplete", "members_measured": 0},
-            **(
-                {"gait_phase": {"lifecycle": "incomplete", "members_measured": 0}}
-                if runtime_set["kind"] == "gait-group" else {}
-            ),
         }
         runtime_sets.append({
-            "id": runtime_set["id"], "kind": runtime_set["kind"],
+            "id": runtime_set["id"],
+            "kind": "sync-group" if runtime_set["kind"] == "gait-group" else runtime_set["kind"],
             "members": members, "lifecycle": "incomplete",
             "decision": "not_evaluated", "gaps": ["source_unavailable"],
             "evidence": evidence,
@@ -426,9 +419,6 @@ def validate_model(model: Any, binding: Any, binding_bytes: bytes) -> list[str]:
         if runtime_set["kind"] == "gait-group":
             runtime_set["kind"] = "sync-group"
     relation_binding = _v1_relation_projection(binding)
-    for runtime_set in relation_binding["runtime_sets"]:
-        if runtime_set["kind"] == "gait-group":
-            runtime_set["kind"] = "sync-group"
     relation_model, relation_binding = _v1_relation_ids(
         relation_model, relation_binding
     )

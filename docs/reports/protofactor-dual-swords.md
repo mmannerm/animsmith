@@ -2,13 +2,13 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — current mechanical and declared-contract evidence completed; engine, visual, contact, and artistic acceptance were not rerun.
+> Evaluation completeness: **partial** — current mechanical, declared-contract, runtime-group, and remediation checks are complete, with bounded Unity source/mixer probes; visual, contact, retargeting, and target game-controller acceptance remain open.
 >
 > Confidence: **medium**
 >
-> Evaluation date: **2026-09-01**
+> Evaluation date: **2026-09-16**
 >
-> Current evaluator: **AnimSmith 0.10.0**
+> Current evaluator: **AnimSmith 0.14.0**
 >
 > Report format: **2**
 >
@@ -16,65 +16,76 @@
 
 ## Technical decision
 
-The current baseline is mechanically readable with AnimSmith 0.10.0, but this pack is not a blanket game-ready asset. 756 baseline commands completed successfully; constant-track notes and strict loop contracts require review. The 25 bounded remediation candidates comprise 24 gait-anchor and 1 prune-constant-tracks transform; all exited 0 with post-output checks recorded in the external evidence projection. They remain external, unpromoted candidates pending engine, contact, and visual review.
+AnimSmith 0.14.0 reads all 189 delivered FBX candidates. The untouched baseline has no errors; it reports 25426 constant-track notes. The retained per-file declarations are stricter: 24/186 motion files pass and 162 fail, chiefly because loop treatment is unresolved. Named one-shots must be re-declared before their seam failures are attributed to the source. Intended continuous gait files still need source or loop-policy correction.
+
+All 25 fresh transform candidates were produced outside the repository and passed inspect/measure. All candidates remain non-clean under their retained configs. None is adopted, so residual severity remains unresolved. Developer decision: run a bounded full-body target-engine pilot only after correcting one-shot loop declarations and obtaining clean contracts for one named gait set; require blend, foot-contact, root-owner, and visual acceptance before production use.
 
 ## Capability coverage
 
 ### Complete core
 
-- Source inventory and serial AnimSmith baseline completed without publishing licensed inputs or derivatives.
-- 189 delivered FBX candidates were inspected, measured, and linted in both output formats.
-- Declared contracts and bounded remediation trials were rerun with the current evaluator.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 
-- 186 declared-contract inputs: 24 clean and 162 non-clean results in each output format.
-- Candidate transforms are mechanical evidence, not engine or artistic acceptance.
+- Directional IP/RM gait families, equipment transitions, and attacks are present; current set membership is a fresh evaluator-defined hypothesis and every named gait set remains contract-non-clean.
+- Airborne content is absent; additive aim, paired interactions, and first-person use are not established.
 
 ### Absent
 
-- Current target-engine import/playback, blending, masking, retargeting, contact, performance, and artistic review.
+- Unity 6000.5.8f1 has bounded source/controller feasibility for `IdleCombatDualSwords`, `WalkForwardDualSwords`, and `WalkForwardDualSwords_RM` and the named Playables transitions; visual/contact, authored-controller, deformation, player-build, retarget, mask/layer, performance, network movement, and artistic evaluation remain absent.
 
 ## Runtime sets and authored motion
 
-No important runtime sets were identified.
+These current hypotheses use exact source identities and fresh 0.14.0 measurements. They do not restore any unavailable historical membership authority.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `crouch-combat-8-way` | eight-way directional gait | `Humanoid@CrouchForwardDualSwords.fbx`; `Humanoid@CrouchForwardDualSwords_RM.fbx`; `Humanoid@CrouchForwardLeftDualSwords.fbx`; `Humanoid@CrouchForwardLeftDualSwords_RM.fbx`; `Humanoid@CrouchLeftDualSwords.fbx`; `Humanoid@CrouchLeftDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsLeftDualSwords.fbx`; `Humanoid@CrouchBackwardsLeftDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsDualSwords.fbx`; `Humanoid@CrouchBackwardsDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsRightDualSwords.fbx`; `Humanoid@CrouchBackwardsRightDualSwords_RM.fbx`; `Humanoid@CrouchRightDualSwords.fbx`; `Humanoid@CrouchRightDualSwords_RM.fbx`; `Humanoid@CrouchForwardRightDualSwords.fbx`; `Humanoid@CrouchForwardRightDualSwords_RM.fbx` | set_type=directional-blend | duration=1.667 s; rm_speed=0.730 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+| `run-combat-8-way` | eight-way directional gait | `Humanoid@RunForwardDualSwords.fbx`; `Humanoid@RunForwardDualSwords_RM.fbx`; `Humanoid@RunForwardLeftDualSwords.fbx`; `Humanoid@RunForwardLeftDualSwords_RM.fbx`; `Humanoid@RunLeftDualSwords.fbx`; `Humanoid@RunLeftDualSwords_RM.fbx`; `Humanoid@RunBackwardsLeftDualSwords.fbx`; `Humanoid@RunBackwardsLeftDualSwords_RM.fbx`; `Humanoid@RunBackwardsDualSwords.fbx`; `Humanoid@RunBackwardsDualSwords_RM.fbx`; `Humanoid@RunBackwardsRightDualSwords.fbx`; `Humanoid@RunBackwardsRightDualSwords_RM.fbx`; `Humanoid@RunRightDualSwords.fbx`; `Humanoid@RunRightDualSwords_RM.fbx`; `Humanoid@RunForwardRightDualSwords.fbx`; `Humanoid@RunForwardRightDualSwords_RM.fbx` | set_type=directional-blend | duration=0.600 s; rm_speed=2.475 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+| `walk-combat-8-way` | eight-way directional gait | `Humanoid@WalkForwardDualSwords.fbx`; `Humanoid@WalkForwardDualSwords_RM.fbx`; `Humanoid@WalkForwardLeftDualSwords.fbx`; `Humanoid@WalkForwardLeftDualSwords_RM.fbx`; `Humanoid@WalkLeftDualSwords.fbx`; `Humanoid@WalkLeftDualSwords_RM.fbx`; `Humanoid@WalkBackwardsLeftDualSwords.fbx`; `Humanoid@WalkBackwardsLeftDualSwords_RM.fbx`; `Humanoid@WalkBackwardsDualSwords.fbx`; `Humanoid@WalkBackwardsDualSwords_RM.fbx`; `Humanoid@WalkBackwardsRightDualSwords.fbx`; `Humanoid@WalkBackwardsRightDualSwords_RM.fbx`; `Humanoid@WalkRightDualSwords.fbx`; `Humanoid@WalkRightDualSwords_RM.fbx`; `Humanoid@WalkForwardRightDualSwords.fbx`; `Humanoid@WalkForwardRightDualSwords_RM.fbx` | set_type=directional-blend | duration=1.333 s; rm_speed=0.692 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+
+Measured RM speed spans are `crouch-combat-8-way` 0.730–0.732 m/s (ratio 0.997); `run-combat-8-way` 2.475–2.500 m/s (ratio 0.990); `walk-combat-8-way` 0.692–0.765 m/s (ratio 0.905). Preserve authored variation unless the project declares a normalization policy; diagonals and cardinals require the full blend test. Measured source in-place phase spreads (cycles, eight measured members each) are `crouch-combat-8-way` 0.6184; `run-combat-8-way` 0.6732; `walk-combat-8-way` 0.7086. Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. Keep `sync=not-evaluated` until the selected synchronization and contact policy is tested. The current catalog also measures `forward-speed-alternatives`, `draw-combat-put-away`, `combo-alternatives`, and `single-attack-alternatives` as evaluator-defined hypotheses; they remain candidate groupings.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=pack-local`; construct project state graphs only from reviewed imported clips.
-2. **Timing/synchronization:** `sync=contract-gated`; use loop and seam findings to gate transitions.
-3. **State ownership:** `owner=project-controller`; assign root-motion ownership per state.
-4. **Composition constraints:** `composition=full-body-review`; validate masks, props, IK, and attachments.
-5. **Acceptance gate:** `gate=engine-visual-contact`; require import, playback, contact, and visual sign-off.
+1. **Members/topology:** `topology=eight-way-cartesian`; use only the exact members in one named gait row and map forward/cardinal/diagonal coordinates explicitly.
+2. **Timing/synchronization:** `sync=not-evaluated`; loop only confirmed continuous states, keep named one-shots at `loop=false`, and require phase/contact review before synchronized blending.
+3. **State ownership:** `owner=project-controller`; choose IP controller translation or RM animation translation per state, with one owner for translation, yaw, and collision.
+4. **Composition constraints:** `composition=full-body-handoff`; keep weapon combat states namespaced to this pack and require separate mask/socket/IK evidence before layering.
+5. **Acceptance gate:** `gate=engine-visual-contact`; require clean intended contracts plus target-engine import, full blend-space playback, foot/weapon contact, and artist review.
 
 ## Technical issue register
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| PF-010 | major | Declared loop and seam contracts do not pass for the full selected corpus; clip-level admission is required. [Guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Keep non-clean clips out of production runtime sets. | Generic validation and conforming assistance may help. | `observed-animsmith`; current contract evidence. |
-| PF-011 | minor | Generated candidates are mechanical signals, not visual acceptance. [Guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Review deltas and playback. | Generic track cleanup is applicable. | `observed-animsmith`; 25/25 transforms exit 0. |
+| PFD-PHASE | note | Scope: the three named in-place directional gait hypotheses above; reproduce their measured minimum-covering-arc spreads from the appendix member phases. Contact correspondence and intended synchronization are unconfirmed, so spread alone is not an artist defect. [Guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Obtain project or vendor loop/contact intent, then sweep the exact blend coordinates against a declared contact tolerance. Use engine phase markers or declared alignment only after intent is established; request artist cleanup only for a confirmed source-motion problem. Residual unresolved. | Current phase measurements inform a declared alignment trial; they do not prove contact or visual acceptance. | `observed-animsmith` phases; synchronization/contact acceptance `not-evaluated`. |
+| PFD-01 | major | Scope: `Humanoid@RunForwardDualSwords.fbx`, `Humanoid@RunForwardDualSwords_RM.fbx`, and all members of `run-combat-8-way`; reproduce: lint each exact file with its retained per-file config; impact: every named gait hypothesis has 0 contract-clean members and cannot be admitted as a production blend set. [Guidance](../game-ready-clips.md#the-readiness-ladder) | artist-author | Action: re-export intended continuous cycles with matching pose and velocity boundaries, or document a non-loop policy; acceptance: all exact members pass the intended loop contract and a full blend-space visual/contact review; residual: unresolved | AnimSmith can validate and compare candidates, but cannot infer intended contact phase or approve visible motion. | `observed-animsmith`; current exact-file evidence, high confidence mechanically |
+| PFD-02 | moderate | Scope: `Humanoid@Attack1DualSwords.fbx` and other attacks, reactions, parries, or emotes currently declared as loops; reproduce: run the retained config and observe loop seam errors; impact: a project declaration can reject valid one-shots or cause unintended replay seams. [Guidance](../game-ready-clips.md#the-readiness-ladder) | engine-config | Action: set `loop=false` for confirmed one-shots and retain looping only for vendor/project-authorized continuous states; acceptance: revised declarations lint clean and state transitions play once; residual: unresolved | A future classifier may suggest intent, but project or vendor authority remains required. | `observed-animsmith`; declaration defect distinguished from source-animation quality |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity | not-evaluated | No current import or playback was run. | Disposable-project import and visual controller tests. |
-| Unreal Engine | not-evaluated | No current import or playback was run. | Import, retarget, and blend tests. |
-| Godot | not-evaluated | No current import or playback was run. | Conversion/import route and runtime tests. |
-| Bevy | not-evaluated | No current import or playback was run. | Conversion, loading, graph, and performance tests. |
+| Unity 6000.5.8f1 | source-controller-feasibility | Fresh import and standalone sampling passed for `IdleCombatDualSwords`, `WalkForwardDualSwords`, and `WalkForwardDualSwords_RM`; `basic-idle-to-dual-idle`, `sword-shield-idle-to-dual-idle`, and `basic-walk-ip-to-dual-walk-ip` produced finite mixer poses with fixed gameplay-owned root; the RM walk produced finite 0.968650 owner translation with animation-owned root. | Inspect rendered motion, contacts, deformation, authored AnimatorController behavior, and a player build; do not generalize beyond named sources. |
+| Unreal Engine unspecified | not-evaluated | No current import or retarget result. | Import, retarget, root-motion, blend, and visual tests. |
+| Godot unspecified | not-evaluated | No current conversion or playback result. | Convert/import and test animation graph, roots, contacts, and visuals. |
+| Bevy unspecified | not-evaluated | No current conversion or playback result. | Convert/load and test graph, root ownership, performance, and visuals. |
 
 ## Fit and limitations
 
-This is current mechanical evidence, not a guarantee of engine readiness, gameplay suitability, or artistic quality. Licensed source, candidate outputs, and local evidence remain private.
+Best fit is a full-body combat prototype whose controller can explicitly select one gait variant and keep pack-local state names. It is a poor fit for immediate production admission, motion matching, layered combat, or retargeted characters without the missing engine and human gates.
+
+The fresh Unity probe establishes finite source playback and the named cross-pack transitions for `IdleCombatDualSwords`, `WalkForwardDualSwords`, and `WalkForwardDualSwords_RM`; it does not establish visual quality, contact, phase, retargeting, or broad pack compatibility. Keep states namespaced and retain explicit root ownership.
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.10.0 — revalidated current inventory, baseline, declared contracts, and bounded remediation using the official FBX-capable release binary. AnimSmith 0.7.0 — retained historical evidence is superseded for current-state conclusions.
+AnimSmith 0.14.0 — revalidated the unchanged retained source inventory, per-file declarations, measured runtime hypotheses, and every previously recommended bounded transform. Current candidates remain unadopted. AnimSmith 0.10.0 — retained command ledgers and classification material supplied replay controls; its conclusions are superseded for current behavior.
 
 ## Evidence status
 
-See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-dual-swords-evidence.md). Mechanical completion is separate from engine and visual acceptance.
+Current evidence covers 189 physical FBXs and 186 logical individual-motion files with official AnimSmith 0.14.0, report format 2, and the retained evaluation-manifest schema. A bounded Unity source/controller probe is current; visual/artistic, contact, retarget, authored-controller, and player-build gates remain open. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and the [evidence appendix](protofactor-dual-swords-evidence.md). Licensed source and generated candidates remain outside Git.
 
 ## Sources
 
-- Protofactor product listing and [End User License Agreement](https://protofactor.biz/end-user-license-agreement/) — vendor context only, not local-revision proof.
+- Protofactor product context and [End User License Agreement](https://protofactor.biz/end-user-license-agreement/) — vendor context only; it does not identify the local constituent revision.
