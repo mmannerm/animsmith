@@ -143,6 +143,8 @@ Per-file contract results: 58 pass and 119 fail of 177; JSON and Markdown agree.
 
 ## AnimSmith remediation evidence
 
+Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. The primary report compares source and unpromoted output spreads for the same walk/run/crouch member sets.
+
 | Source issue | Operation/declarations | Result | Independent verification | Remaining caveat |
 |---|---|---|---|---|
 | `gait-anchor` trial | Explicit original source/config; `transform --gait-anchor` | 24 candidates emitted; 2 pass selected output lint | All 36 original time-ordering errors are absent after the twelve slices. Every candidate inspected, measured, linted, diffed and checked with `fix --dry-run`; detailed exit records external | Unpromoted; no candidate engine/contact/visual acceptance |

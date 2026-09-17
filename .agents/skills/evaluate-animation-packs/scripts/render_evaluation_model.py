@@ -529,7 +529,8 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "## Technical issue register",
         "\n".join(["| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |", "|---|---|---|---|---|---|---|"] + issue_rows) if issue_rows else "No material technical issues were found at the stated scope.", "",
         "## Engine status", "| Runtime | Evidence level | Technical result | Remaining gate |", "|---|---|---|---|", *(_engine_rows(model)), "",
-        "## Fit and limitations", _narrative(model, "fit-and-limitations", "See the typed limitations in the appendix."), "", primary_cross_pack, "",
+        "## Fit and limitations", _narrative(model, "fit-and-limitations", "See the typed limitations in the appendix."), "",
+        *([primary_cross_pack, ""] if primary_cross_pack else []),
         "## Changes between AnimSmith versions", *_changes(model, binding), "",
         "## Evidence status", f"Model schema: {_code(model['schema'])}; schema version: {_code(model['schema_version'])}; digest: {_code(digest)}; renderer: {_code(_renderer_version(model))}. {_link('Canonical readiness ladder', READINESS_LADDER)}.", "",
         "## Sources", *source_rows, "",
@@ -669,6 +670,13 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
             if paragraph["section"] == "Integration recipe"
             and not paragraph["blockquote"]
         ]
+        detail_ids = [
+            paragraph["code"][0] if paragraph["code"] else None
+            for paragraph in paragraphs if paragraph["list_depth"] == 2
+        ]
+        expected_ids = [record["id"] for record in model["integration_steps"]]
+        if len(detail_ids) != len(expected_ids) or set(detail_ids) != set(expected_ids):
+            errors.append("model-to-view integration detail membership differs from authority")
         slot_positions: dict[str, int] = {}
         for index, (action, label, _key) in enumerate(RECIPE_SLOTS, start=1):
             matching = [

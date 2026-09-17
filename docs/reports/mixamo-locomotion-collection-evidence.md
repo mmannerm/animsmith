@@ -34,7 +34,7 @@ This appendix contains scrubbed rollup facts. The [canonical readiness ladder](.
 | Rigs/export variants | 249 | 249 | 231 66-bone motion files; 18 68-bone `X Bot.fbx`; Mixamo roles resolved | Pairwise hierarchy/rest/retarget unavailable |
 | AnimSmith baseline | 249 | 249 | 50 warnings; 35405 notes | — |
 | Declared contracts | 249 | 249 | 52 ownership errors; 50 warnings | Per-file project intent unavailable |
-| Constituent hypotheses | 9 | 9 static proposals | Exact measured members | Runtime/visual acceptance unavailable |
+| Constituent hypotheses | 9 | 9 static proposals | 29 exact selected members with measured gait phase | Synchronization, contact, runtime, and visual acceptance unavailable |
 | Cross-pack hypotheses | 1 | 1 static proposal | Full-body handoff only | Pairwise engine/artistic evidence unavailable |
 | Engine import/playback | 4 common runtimes | 0 | 0 | No current engine project ran |
 
@@ -85,7 +85,7 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | Role or runtime set | File-ready / clip-ready | Set-ready / rig-use | Runtime / acceptance boundary |
 |---|---|---|---|
 | Nine opaque corpora | 0 baseline errors; 50 warnings | Roles resolve; per-file semantics and retarget use unavailable | No current engine/visual/gameplay acceptance |
-| Nine constituent hypotheses | Exact members measured | New controller proposals only | Blend, phase, transition, contact, deformation tests required |
+| Nine constituent hypotheses | Exact members and gait phases measured | New controller proposals only | Synchronization, blend, phase/contact acceptance, transition, and deformation tests required |
 | `hypothesis/full-body-unarmed-to-pistol` | Two exact in-place members measured | Pairwise skeleton/rest/scale unproven | Full-body transition plus technical/artistic acceptance required |
 
 ### Validation-profile status
@@ -93,7 +93,7 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | Validation profile | Selection | Result / next evidence |
 |---|---|---|
 | Marketplace intake | `selected` — `observed-pack-capability` | Exhaustive source mechanics complete |
-| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Nine static hypotheses; runtime acceptance open |
+| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Nine static hypotheses and 29 gait-phase measurements; synchronization/contact/runtime acceptance open |
 | Root-motion controller | `selected` — `observed-pack-capability` | 52 ownership conflicts need per-file policy |
 | State-machine transitions | `selected` — `evaluator-selected-generic-scenario` | Full-body cross-pack handoff proposed; not tested |
 | Layered upper body/weapons | `selected` — `evaluator-selected-generic-scenario` | Full-body baseline only; layering remains unavailable |
@@ -108,17 +108,17 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 
 | Constituent | FBXs | Legacy metadata | Baseline | Declared XZ | New hypothesis |
 |---|---:|---|---|---|---|
-| [Mixamo Basic Locomotion](mixamo-basic-locomotion.md) | 12 | 10 unlinked metadata motions | 4 warnings / 1712 notes | 4 ownership errors | `hypothesis/kinematic-walk-3way` (`not-evaluated`) |
-| [Mixamo Female Basic Locomotion](mixamo-female-basic-locomotion.md) | 20 | 18 unlinked metadata motions | 5 warnings / 2843 notes | 6 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
-| [Mixamo Female Locomotion](mixamo-female-locomotion.md) | 18 | 16 unlinked metadata motions | 4 warnings / 2559 notes | 4 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
-| [Mixamo Locomotion](mixamo-locomotion.md) | 20 | 18 unlinked metadata motions | 5 warnings / 2852 notes | 6 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
-| [Mixamo Longbow Locomotion](mixamo-longbow-locomotion.md) | 22 | 20 unlinked metadata motions | 3 warnings / 3126 notes | 3 ownership errors | `hypothesis/kinematic-run-4way` (`not-evaluated`) |
-| [Mixamo Magic Locomotion](mixamo-magic-locomotion.md) | 27 | 25 unlinked metadata motions | 6 warnings / 3837 notes | 4 ownership errors | `hypothesis/kinematic-run-4way` (`not-evaluated`) |
-| [Mixamo Male Locomotion](mixamo-male-locomotion.md) | 18 | 16 unlinked metadata motions | 5 warnings / 2564 notes | 4 ownership errors | `hypothesis/kinematic-speed` (`not-evaluated`) |
-| [Mixamo Pistol-Handgun Locomotion](mixamo-pistol-handgun-locomotion.md) | 29 | 27 unlinked metadata motions | 7 warnings / 4122 notes | 5 ownership errors | `hypothesis/kinematic-run-axis` (`not-evaluated`) |
-| [Mixamo Rifle 8-Way Locomotion](mixamo-rifle-8-way-locomotion.md) | 83 | 81 unlinked metadata motions | 11 warnings / 11790 notes | 16 ownership errors | `hypothesis/kinematic-run-8way` (`not-evaluated`) |
+| [Mixamo Basic Locomotion](mixamo-basic-locomotion.md) | 12 | 10 unlinked metadata motions | 4 warnings / 1712 notes | 4 ownership errors | `hypothesis/kinematic-walk-3way`; phase spread `0.0318` cycles; sync `not-evaluated` |
+| [Mixamo Female Basic Locomotion](mixamo-female-basic-locomotion.md) | 20 | 18 unlinked metadata motions | 5 warnings / 2843 notes | 6 ownership errors | `hypothesis/kinematic-speed`; phase spread `0.0624` cycles; sync `not-evaluated` |
+| [Mixamo Female Locomotion](mixamo-female-locomotion.md) | 18 | 16 unlinked metadata motions | 4 warnings / 2559 notes | 4 ownership errors | `hypothesis/kinematic-speed`; phase spread `0.0624` cycles; sync `not-evaluated` |
+| [Mixamo Locomotion](mixamo-locomotion.md) | 20 | 18 unlinked metadata motions | 5 warnings / 2852 notes | 6 ownership errors | `hypothesis/kinematic-speed`; phase spread `0.0312` cycles; sync `not-evaluated` |
+| [Mixamo Longbow Locomotion](mixamo-longbow-locomotion.md) | 22 | 20 unlinked metadata motions | 3 warnings / 3126 notes | 3 ownership errors | `hypothesis/kinematic-run-4way`; phase spread `0.1557` cycles; sync `not-evaluated` |
+| [Mixamo Magic Locomotion](mixamo-magic-locomotion.md) | 27 | 25 unlinked metadata motions | 6 warnings / 3837 notes | 4 ownership errors | `hypothesis/kinematic-run-4way`; phase spread `0.1926` cycles; sync `not-evaluated` |
+| [Mixamo Male Locomotion](mixamo-male-locomotion.md) | 18 | 16 unlinked metadata motions | 5 warnings / 2564 notes | 4 ownership errors | `hypothesis/kinematic-speed`; phase spread `0.0801` cycles; sync `not-evaluated` |
+| [Mixamo Pistol-Handgun Locomotion](mixamo-pistol-handgun-locomotion.md) | 29 | 27 unlinked metadata motions | 7 warnings / 4122 notes | 5 ownership errors | `hypothesis/kinematic-run-axis`; phase spread `0.2477` cycles; sync `not-evaluated` |
+| [Mixamo Rifle 8-Way Locomotion](mixamo-rifle-8-way-locomotion.md) | 83 | 81 unlinked metadata motions | 11 warnings / 11790 notes | 16 ownership errors | `hypothesis/kinematic-run-8way`; phase spread `0.1731` cycles; sync `not-evaluated` |
 
-The 231 metadata motion count is not mapped to the 249 files. Exact current paths remain opaque canonical units. New hypotheses use only named current files and do not claim vendor intent or recovered historical membership.
+The 231 metadata motion count is not mapped to the 249 files. Exact current paths remain opaque canonical units. New hypotheses use only named current files and do not claim vendor intent or recovered historical membership. All nine spreads use normalized circular range, defined as `1 - largest cyclic gap` across member phases on the unit cycle; a spread alone establishes neither support-foot compatibility nor a source defect.
 
 ## Mechanical baseline
 

@@ -118,6 +118,37 @@ The primary [runtime-set table](protofactor-dual-swords.md#runtime-sets-and-auth
 
 The current inventory contains 189 FBXs: 188 animation-bearing files, 186 individual-motion files, and 1 combined take. 186 individual-motion files share the 56-bone `2b6fe49d5ae6` skeleton. Counts describe physical current inputs, not runtime acceptance.
 
+### Current in-place gait phase evidence
+
+Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. These are `observed-animsmith` source measurements for the exact hypotheses above; synchronization/contact acceptance remains open.
+
+| Current hypothesis | Exact source member (`Take 001`) | Measured phase (cycles) |
+|---|---|---|
+| `crouch-combat-8-way` | `Humanoid@CrouchForwardDualSwords.fbx` | 0.266199 |
+| `crouch-combat-8-way` | `Humanoid@CrouchForwardLeftDualSwords.fbx` | 0.244612 |
+| `crouch-combat-8-way` | `Humanoid@CrouchLeftDualSwords.fbx` | 0.325734 |
+| `crouch-combat-8-way` | `Humanoid@CrouchBackwardsLeftDualSwords.fbx` | 0.783295 |
+| `crouch-combat-8-way` | `Humanoid@CrouchBackwardsDualSwords.fbx` | 0.820047 |
+| `crouch-combat-8-way` | `Humanoid@CrouchBackwardsRightDualSwords.fbx` | 0.816853 |
+| `crouch-combat-8-way` | `Humanoid@CrouchRightDualSwords.fbx` | 0.707328 |
+| `crouch-combat-8-way` | `Humanoid@CrouchForwardRightDualSwords.fbx` | 0.186673 |
+| `run-combat-8-way` | `Humanoid@RunForwardDualSwords.fbx` | 0.194700 |
+| `run-combat-8-way` | `Humanoid@RunForwardLeftDualSwords.fbx` | 0.265383 |
+| `run-combat-8-way` | `Humanoid@RunLeftDualSwords.fbx` | 0.298649 |
+| `run-combat-8-way` | `Humanoid@RunBackwardsLeftDualSwords.fbx` | 0.803162 |
+| `run-combat-8-way` | `Humanoid@RunBackwardsDualSwords.fbx` | 0.831072 |
+| `run-combat-8-way` | `Humanoid@RunBackwardsRightDualSwords.fbx` | 0.723860 |
+| `run-combat-8-way` | `Humanoid@RunRightDualSwords.fbx` | 0.625469 |
+| `run-combat-8-way` | `Humanoid@RunForwardRightDualSwords.fbx` | 0.112560 |
+| `walk-combat-8-way` | `Humanoid@WalkForwardDualSwords.fbx` | 0.163464 |
+| `walk-combat-8-way` | `Humanoid@WalkForwardLeftDualSwords.fbx` | 0.142984 |
+| `walk-combat-8-way` | `Humanoid@WalkLeftDualSwords.fbx` | 0.324181 |
+| `walk-combat-8-way` | `Humanoid@WalkBackwardsLeftDualSwords.fbx` | 0.884376 |
+| `walk-combat-8-way` | `Humanoid@WalkBackwardsDualSwords.fbx` | 0.886856 |
+| `walk-combat-8-way` | `Humanoid@WalkBackwardsRightDualSwords.fbx` | 0.882356 |
+| `walk-combat-8-way` | `Humanoid@WalkRightDualSwords.fbx` | 0.615565 |
+| `walk-combat-8-way` | `Humanoid@WalkForwardRightDualSwords.fbx` | 0.134164 |
+
 ## Mechanical baseline
 
 | Finding/check | Affected scope | Potential impact | Evidence |

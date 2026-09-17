@@ -117,6 +117,37 @@ The primary [runtime-set table](protofactor-one-handed-melee.md#runtime-sets-and
 
 The current inventory contains 113 FBXs: 112 animation-bearing files, 110 individual-motion files, and 1 combined take. 109 individual-motion/pack files share the 56-bone `2b6fe49d5ae6` skeleton; `Humanoid@Blocked1hMelee.fbx` is a separate 73-bone variant. Counts describe physical current inputs, not runtime acceptance.
 
+### Current in-place gait phase evidence
+
+Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. These are `observed-animsmith` source measurements for the exact hypotheses above; synchronization/contact acceptance remains open.
+
+| Current hypothesis | Exact source member (`Take 001`) | Measured phase (cycles) |
+|---|---|---|
+| `crouch-combat-8-way` | `Humanoid@CrouchForward1hMelee.fbx` | 0.093914 |
+| `crouch-combat-8-way` | `Humanoid@CrouchForwardLeft1hMelee.fbx` | 0.095760 |
+| `crouch-combat-8-way` | `Humanoid@CrouchLeft1hMelee.fbx` | 0.374620 |
+| `crouch-combat-8-way` | `Humanoid@CrouchBackwardsLeft1hMelee.fbx` | 0.378580 |
+| `crouch-combat-8-way` | `Humanoid@CrouchBackwards1hMelee.fbx` | 0.861504 |
+| `crouch-combat-8-way` | `Humanoid@CrouchBackwardsRight1hMelee.fbx` | 0.916710 |
+| `crouch-combat-8-way` | `Humanoid@CrouchRight1hMelee.fbx` | 0.919138 |
+| `crouch-combat-8-way` | `Humanoid@CrouchForwardRight1hMelee.fbx` | 0.575092 |
+| `run-8-way` | `Humanoid@RunForward1hMelee.fbx` | 0.192225 |
+| `run-8-way` | `Humanoid@RunForwardLeft1hMelee.fbx` | 0.226898 |
+| `run-8-way` | `Humanoid@RunLeft1hMelee.fbx` | 0.299076 |
+| `run-8-way` | `Humanoid@RunBackwardsLeft1hMelee.fbx` | 0.358187 |
+| `run-8-way` | `Humanoid@RunBackwards1hMelee.fbx` | 0.926401 |
+| `run-8-way` | `Humanoid@RunBackwardsRight1hMelee.fbx` | 0.799076 |
+| `run-8-way` | `Humanoid@RunRight1hMelee.fbx` | 0.552283 |
+| `run-8-way` | `Humanoid@RunForwardRight1hMelee.fbx` | 0.675372 |
+| `walk-combat-8-way` | `Humanoid@WalkForwardCombat1hMelee.fbx` | 0.128668 |
+| `walk-combat-8-way` | `Humanoid@WalkForwardLeftCombat1hMelee.fbx` | 0.126990 |
+| `walk-combat-8-way` | `Humanoid@WalkLeftCombat1hMelee.fbx` | 0.276900 |
+| `walk-combat-8-way` | `Humanoid@WalkBackwardsLeftCombat1hMelee.fbx` | 0.837304 |
+| `walk-combat-8-way` | `Humanoid@WalkBackwardsCombat1hMelee.fbx` | 0.796839 |
+| `walk-combat-8-way` | `Humanoid@WalkBackwardsRightCombat1hMelee.fbx` | 0.878098 |
+| `walk-combat-8-way` | `Humanoid@WalkRightCombat1hMelee.fbx` | 0.723103 |
+| `walk-combat-8-way` | `Humanoid@WalkForwardRightCombat1hMelee.fbx` | 0.178871 |
+
 ## Mechanical baseline
 
 | Finding/check | Affected scope | Potential impact | Evidence |

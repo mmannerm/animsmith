@@ -29,6 +29,7 @@ Developer decision: use the collection only as nine separately admitted source p
 ### Partial supporting gameplay
 
 - Each constituent now has an exact, newly declared kinematic scenario; the rollup adds one conservative full-body cross-pack handoff hypothesis.
+- Across those nine constituent scenarios, AnimSmith measured gait phase for all 29 selected members. The constituent reports retain every member value and each set's normalized circular-range spread; synchronization and contact acceptance remain `not-evaluated`.
 - Archive-level variant declarations ran, but 52 files need per-file movement ownership and none has collection-level runtime acceptance.
 
 ### Absent
@@ -44,10 +45,12 @@ Developer decision: use the collection only as nine separately admitted source p
 
 This is a new evaluator hypothesis. It establishes neither semantic equivalence nor pairwise technical/artistic compatibility.
 
+The constituent gait-phase spreads range from `0.0312` to `0.2477` cycles, using normalized circular range (`1 - largest cyclic gap` across member phases on the unit cycle). Those measurements can guide target-engine tests but do not establish a shared phase policy, compatible support-foot events, or a defect in any source pack.
+
 ## Integration recipe
 
 1. **Members/topology:** `topology=full-body-state-handoff`; use only the namespaced unarmed and pistol members above in separate states.
-2. **Timing/synchronization:** `transition=unsynced-crossfade-hypothesis`; keep source timing, choose crossfade only in the target engine, and do not infer loop or gait phase.
+2. **Timing/synchronization:** `transition=unsynced-crossfade-hypothesis`; keep source timing, choose crossfade only in the target engine, and do not infer loop intent or cross-pack gait alignment from the measured constituent phases.
 3. **State ownership:** `owner=controller-xz-yaw-collision`; one kinematic controller owns movement and collision across the state boundary.
 4. **Composition constraints:** `composition=no-cross-pack-layering`; start full-body; no upper-body mask, additive, shared IK, socket, or retarget profile is established.
 5. **Acceptance gate:** `gate=pairwise-engine-artistic`; compare hierarchy/rest/scale, then test transition interruption, feet, weapon hands, target deformation, and style from the gameplay camera.

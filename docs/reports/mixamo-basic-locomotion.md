@@ -43,12 +43,12 @@ Developer decision: admit this pack only to an isolated basic unarmed locomotion
 | `hypothesis/kinematic-walk-3way` | left=(-1,0) | `Basic_Locomotion_Pack_-_in-place/left strafe walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
 | `hypothesis/kinematic-walk-3way` | right=(1,0) | `Basic_Locomotion_Pack_-_in-place/right strafe walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
 
-This set is a current evaluator hypothesis based on exact filenames plus measurements. Its semantics, loopability, normalized phase, and gameplay use remain `not-evaluated`.
+This set is a current evaluator hypothesis based on exact filenames plus measurements. AnimSmith measured phase (cycles) as forward `0.4841`, left `0.4905`, and right `0.4587`; their normalized circular-range spread is `0.0318` cycles (`1 - largest cyclic gap` across member phases on the unit cycle). This is mechanical evidence, not a synchronization verdict: loop intent, foot-contact correspondence, phase acceptance, and gameplay use remain `not-evaluated`; `sync=not-evaluated`.
 
 ## Integration recipe
 
 1. **Members/topology:** `topology=directional-blend`; use only the exact `hypothesis/kinematic-walk-3way` members and coordinates above; do not infer missing directions or IP/RM pairs.
-2. **Timing/synchronization:** `sync=normalized-phase-hypothesis`; keep each measured duration, leave loop flags unknown, and test normalized phase plus foot contacts before enabling continuous blends.
+2. **Timing/synchronization:** `sync=not-evaluated`; keep each measured duration and phase as evidence, leave loop flags unknown, and test normalized phase plus foot contacts before enabling continuous blends.
 3. **State ownership:** `owner=controller-xz-yaw-collision`; animation supplies pose while the kinematic controller applies translation, yaw, and collision once.
 4. **Composition constraints:** `composition=full-body-only`; use full-body states and transitions; no mask, additive, IK, socket, or layered result is established.
 5. **Acceptance gate:** `gate=engine-visual-contact`; test exact members at center/axes, rapid input changes, starts/stops, foot contacts, transition interruption, and target-character deformation in the chosen engine.

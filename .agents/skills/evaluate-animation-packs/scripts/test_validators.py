@@ -4798,6 +4798,24 @@ class EvaluationModelTests(unittest.TestCase):
                     errors,
                 )
 
+        fabricated = detail_line.replace("Step `b-topology`", "Step `fabricated`")
+        altered = views.report.replace(detail_line, detail_line + "\n" + fabricated, 1)
+        errors = model_renderer.validate_views(
+            model, binding, model_renderer.RenderedViews(altered, views.appendix),
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertIn("model-to-view integration detail membership differs from authority", errors)
+
+        timing_slot = "2. **Timing/synchronization:** `sync=not-evaluated`; no declared step."
+        altered = views.report.replace(detail_line + "\n", "", 1).replace(
+            timing_slot, timing_slot + "\n\n" + detail_line + "\n", 1,
+        )
+        errors = model_renderer.validate_views(
+            model, binding, model_renderer.RenderedViews(altered, views.appendix),
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertIn("model-to-view integration step b-topology is under the wrong action slot", errors)
+
         escaped_model = copy.deepcopy(model)
         escaped_model["integration_steps"][1]["coordinates_or_thresholds"] = (  # type: ignore[index]
             r"first [topology] | <raw> \\ path `tick`"
@@ -4918,6 +4936,27 @@ class EvaluationModelTests(unittest.TestCase):
         )
         self.assertIn("model-to-view primary cross-pack row 1 has misattached evidence", errors)
 
+    def test_renderer_rejects_primary_cross_pack_table_without_authority(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        self.assertEqual(model["collection"]["cross_pack_records"], [])
+        views = model_renderer.render_views(
+            model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        invented_table = (
+            "| Left constituent | Right constituent | Decision | Evidence |\n"
+            "|---|---|---|---|\n"
+            "| invented-left | invented-right | direct | `evidence-a`: "
+            "[Synthetic evidence.](docs/synthetic-evidence.md) |\n"
+        )
+        altered = views.report.replace(
+            "## Fit and limitations\n", "## Fit and limitations\n\n" + invented_table, 1,
+        )
+        errors = model_renderer.validate_views(
+            model, binding, model_renderer.RenderedViews(altered, views.appendix),
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertIn("model-to-view primary cross-pack table contradicts empty authority", errors)
+
     def test_report_validator_accepts_v2_gait_groups_without_broadening_v1(self) -> None:
         binding = valid_collection_output_v11()
         binding["runtime_sets"][0]["kind"] = "gait-group"  # type: ignore[index]
@@ -4942,78 +4981,79 @@ class EvaluationModelTests(unittest.TestCase):
             "phase_spread": 0.125,
             "spread_basis": "max_circular_deviation_from_mean",
         }
-        for _iteration in range(16):
-            raw = model_contract_v2.canonical_json(binding)
-            if binding["work"]["serialized_bytes"] == len(raw):  # type: ignore[index]
-                break
-            binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
-        else:
-            self.fail("gait-group collection-output byte count did not converge")
-        model_validator_v2.validate_with_animsmith(self.animsmith, raw)
-        model = valid_evaluation_model_v2(binding, raw)
-        self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
-        self.assertEqual(
-            binding["runtime_sets"][0]["members"][1]["gait_phase"]["phase"],  # type: ignore[index]
-            0.25,
-        )
-        self.assertEqual(
-            binding["runtime_sets"][0]["evidence"]["gait_phase"]["phase_spread"],  # type: ignore[index]
-            0.125,
-        )
-        views = model_renderer.render_views(
-            model, binding, binding_bytes=raw,
-            report_name="fixture.md", appendix_name="fixture-evidence.md",
-        )
-        self.assertEqual(
-            model_renderer.validate_views(
-                model, binding, views, binding_bytes=raw,
-                report_name="fixture.md", appendix_name="fixture-evidence.md",
-            ),
-            [],
-        )
-        self.assertEqual(
-            report_validator.validate(
-                views.report,
-                evaluation_schema=model_contract_v2.SCHEMA,
-                report_format="2",
-            ),
-            [],
-        )
-        self.assertEqual(
-            report_validator.validate_appendix(
-                views.appendix,
-                evaluation_schema=model_contract_v2.SCHEMA,
-                report_format="2",
-            ),
-            [],
-        )
-        legacy_errors = report_validator.validate(
-            views.report,
-            evaluation_schema=model_contract.SCHEMA,
-            report_format="2",
-        )
-        self.assertTrue(
-            any("malformed variant or set type" in error for error in legacy_errors),
-            legacy_errors,
-        )
-        legacy_kind_report = views.report.replace("gait-group", "other")
-        legacy_kind_appendix = views.appendix.replace("gait-group", "other")
-        self.assertEqual(
-            report_validator.validate(
-                legacy_kind_report,
-                evaluation_schema=model_contract_v2.SCHEMA,
-                report_format="2",
-            ),
-            [],
-        )
-        self.assertEqual(
-            report_validator.validate_appendix(
-                legacy_kind_appendix,
-                evaluation_schema=model_contract_v2.SCHEMA,
-                report_format="2",
-            ),
-            [],
-        )
+        unavailable = valid_collection_output_v11()
+        unavailable["runtime_sets"][0]["kind"] = "gait-group"  # type: ignore[index]
+        for member in unavailable["runtime_sets"][0]["members"]:  # type: ignore[index]
+            member["gait_phase"] = {"availability": "not_applicable"}
+        unavailable["runtime_sets"][0]["evidence"]["gait_phase"] = {  # type: ignore[index]
+            "lifecycle": "incomplete", "members_measured": 0,
+        }
+        for label, binding in (("measured", binding), ("not-applicable", unavailable)):
+            with self.subTest(gait_evidence=label):
+                for _iteration in range(16):
+                    raw = model_contract_v2.canonical_json(binding)
+                    if binding["work"]["serialized_bytes"] == len(raw):  # type: ignore[index]
+                        break
+                    binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
+                else:
+                    self.fail("gait-group collection-output byte count did not converge")
+                model_validator_v2.validate_with_animsmith(self.animsmith, raw)
+                model = valid_evaluation_model_v2(binding, raw)
+                self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+                views = model_renderer.render_views(
+                    model, binding, binding_bytes=raw,
+                    report_name="fixture.md", appendix_name="fixture-evidence.md",
+                )
+                self.assertEqual(
+                    model_renderer.validate_views(
+                        model, binding, views, binding_bytes=raw,
+                        report_name="fixture.md", appendix_name="fixture-evidence.md",
+                    ),
+                    [],
+                )
+                self.assertEqual(
+                    report_validator.validate(
+                        views.report,
+                        evaluation_schema=model_contract_v2.SCHEMA,
+                        report_format="2",
+                    ),
+                    [],
+                )
+                self.assertEqual(
+                    report_validator.validate_appendix(
+                        views.appendix,
+                        evaluation_schema=model_contract_v2.SCHEMA,
+                        report_format="2",
+                    ),
+                    [],
+                )
+                legacy_errors = report_validator.validate(
+                    views.report,
+                    evaluation_schema=model_contract.SCHEMA,
+                    report_format="2",
+                )
+                self.assertTrue(
+                    any("malformed variant or set type" in error for error in legacy_errors),
+                    legacy_errors,
+                )
+                legacy_kind_report = views.report.replace("gait-group", "other")
+                legacy_kind_appendix = views.appendix.replace("gait-group", "other")
+                self.assertEqual(
+                    report_validator.validate(
+                        legacy_kind_report,
+                        evaluation_schema=model_contract_v2.SCHEMA,
+                        report_format="2",
+                    ),
+                    [],
+                )
+                self.assertEqual(
+                    report_validator.validate_appendix(
+                        legacy_kind_appendix,
+                        evaluation_schema=model_contract_v2.SCHEMA,
+                        report_format="2",
+                    ),
+                    [],
+                )
 
     def test_format_two_renderer_refuses_ambiguous_historical_order(self) -> None:
         model, binding = valid_evaluation_model(), valid_collection_output_projection()

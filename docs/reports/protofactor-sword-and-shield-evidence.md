@@ -127,6 +127,37 @@ The primary [runtime-set table](protofactor-sword-and-shield.md#runtime-sets-and
 
 The current inventory contains 136 FBXs: 134 animation-bearing files, 132 individual-motion files, and 1 combined take. 131 individual-motion files share the 56-bone `2b6fe49d5ae6` skeleton; `Humanoid@CrouchForwardRightS&S_RM.fbx` exposes only a 2-bone `646f12b4559c` skeleton. Counts describe physical current inputs, not runtime acceptance.
 
+### Current in-place gait phase evidence
+
+Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. These are `observed-animsmith` source measurements for the exact hypotheses above; synchronization/contact acceptance remains open.
+
+| Current hypothesis | Exact source member (`Take 001`) | Measured phase (cycles) |
+|---|---|---|
+| `walk-combat-8-way-in-place` | `Humanoid@WalkForwardS&S.fbx` | 0.149832 |
+| `walk-combat-8-way-in-place` | `Humanoid@WalkForwardLeftS&S.fbx` | 0.111639 |
+| `walk-combat-8-way-in-place` | `Humanoid@WalkLeftS&S.fbx` | 0.378087 |
+| `walk-combat-8-way-in-place` | `Humanoid@WalkBackwardsLeftS&S.fbx` | 0.800623 |
+| `walk-combat-8-way-in-place` | `Humanoid@WalkBackwardsS&S.fbx` | 0.839751 |
+| `walk-combat-8-way-in-place` | `Humanoid@WalkBackwardsRightS&S.fbx` | 0.881416 |
+| `walk-combat-8-way-in-place` | `Humanoid@WalkRightS&S.fbx` | 0.677664 |
+| `walk-combat-8-way-in-place` | `Humanoid@WalkForwardRightS&S.fbx` | 0.654982 |
+| `run-combat-8-way-in-place` | `Humanoid@RunForwardS&S.fbx` | 0.165717 |
+| `run-combat-8-way-in-place` | `Humanoid@RunForwardLeftS&S.fbx` | 0.201005 |
+| `run-combat-8-way-in-place` | `Humanoid@RunLeftS&S.fbx` | 0.276155 |
+| `run-combat-8-way-in-place` | `Humanoid@RunBackwardsLeftS&S.fbx` | 0.781110 |
+| `run-combat-8-way-in-place` | `Humanoid@RunBackwardsS&S.fbx` | 0.864140 |
+| `run-combat-8-way-in-place` | `Humanoid@RunBackwardsRightS&S.fbx` | 0.786420 |
+| `run-combat-8-way-in-place` | `Humanoid@RunRightS&S.fbx` | 0.615651 |
+| `run-combat-8-way-in-place` | `Humanoid@RunForwardRightS&S.fbx` | 0.138593 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchForwardS&S.fbx` | 0.087834 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchForwardLeftS&S.fbx` | 0.083958 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchLeftS&S.fbx` | 0.375552 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchBackwardsLeftS&S.fbx` | 0.878684 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchBackwardsS&S.fbx` | 0.891297 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchBackwardsRightS&S.fbx` | 0.885628 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchRightS&S.fbx` | 0.576121 |
+| `crouch-combat-8-way-in-place` | `Humanoid@CrouchForwardRightS&S.fbx` | 0.124471 |
+
 ## Mechanical baseline
 
 | Finding/check | Affected scope | Potential impact | Evidence |

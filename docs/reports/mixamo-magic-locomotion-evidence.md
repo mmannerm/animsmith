@@ -36,7 +36,7 @@ The legacy metadata count of 25 motions is not linked authoritatively to these 2
 | Rigs/export variants | 2 skeleton counts | 27 | two 68-bone `X Bot.fbx`; 25 66-bone files; Mixamo roles resolved | Retarget/deformation unavailable |
 | AnimSmith baseline | 27 | 27 | 6 warnings; 3837 notes | — |
 | Declared contracts | 27 | 27 | 4 ownership errors; 6 warnings | Per-file project intent unavailable |
-| Evaluator scenario | 1 | 1 static proposal | 4 measured members | Loop, phase, engine, and visual acceptance unavailable |
+| Evaluator scenario | 1 | 1 static proposal | 4 members with measured gait phase | Loop, synchronization, contact, engine, and visual acceptance unavailable |
 | Engine import/playback | 4 common runtimes | 0 | 0 | No current engine project ran |
 | Blend/mask/retarget | 1 proposed set | 0 runtime tests | 0 | Target graph/character unavailable |
 
@@ -87,14 +87,14 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | Role or runtime set | File-ready / clip-ready | Set-ready / rig-use | Runtime / acceptance boundary |
 |---|---|---|---|
 | Opaque delivered corpus | 0 errors; 6 warnings; all sources readable | Mixamo roles resolved; vendor semantics and retarget use unavailable | No current engine, visual, contact, or gameplay acceptance |
-| `hypothesis/kinematic-run-4way` | Exact members measured; loop intent unknown | New evaluator hypothesis; controller ownership proposed | Target-engine blend, phase, transition, contact, and deformation test required |
+| `hypothesis/kinematic-run-4way` | Exact members and gait phases measured; loop intent unknown | New evaluator hypothesis; controller ownership proposed | Target-engine blend, phase/contact acceptance, transition, and deformation test required |
 
 ### Validation-profile status
 
 | Validation profile | Selection | Result / next evidence |
 |---|---|---|
 | Marketplace intake | `selected` — `observed-pack-capability` | Exhaustive source mechanics complete; acquisition/license boundary remains |
-| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Exact static proposal recorded; runtime blend/phase/contact test required |
+| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Exact static proposal and gait-phase measurements recorded; runtime blend and phase/contact acceptance required |
 | Root-motion controller | `selected` — `observed-pack-capability` | 4 archive-level ownership conflicts require per-file policy |
 | State-machine transitions | `selected` — `evaluator-selected-generic-scenario` | Full-body transition policy proposed; no authored/runtime transition tested |
 | Layered upper body/weapons | `not-selected` | No mask/additive contract or layer evidence |
@@ -109,7 +109,7 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 
 The fresh inventory contains 27 FBX files. Both directory variants include `X Bot.fbx` with a 68-bone skeleton and an empty `Take 001`; the 25 motion-named files use 66 bones. All sources resolved the same nine Mixamo roles. This establishes static structure, not identical hierarchy/rest pose or retarget compatibility. Constant-track findings are optimization hints only.
 
-The current scenario is intended to be useful without claiming old authority: `hypothesis/kinematic-run-4way` names 4 exact in-place-directory files, records current durations/frame counts, assigns movement to a hypothetical kinematic controller, and leaves loops, gait phase, transitions, and runtime acceptance open.
+The current scenario is intended to be useful without claiming old authority: `hypothesis/kinematic-run-4way` names 4 exact in-place-directory files, records current durations/frame counts, assigns movement to a hypothetical kinematic controller, and leaves loop intent, gait-phase acceptance, transitions, and runtime acceptance open. AnimSmith measured phase (cycles) as forward `0.4370`, back `0.6134`, left `0.4670`, and right `0.4208`; the normalized circular-range spread is `0.1926` cycles, defined as `1 - largest cyclic gap` across member phases on the unit cycle. These are `observed-animsmith` measurements; `sync=not-evaluated`, and no defect, contact acceptance, or synchronization acceptance follows from the spread alone.
 
 ## Mechanical baseline
 
@@ -143,13 +143,13 @@ No command availability, configuration, or generated hypothesis is reported as a
 
 | Pack/rig/set pair | Skeleton/retarget | Scale/axes | Root policy | Timing/blend | Overall evidence |
 |---|---|---|---|---|---|
-| `hypothesis/kinematic-run-4way` / target character | Mixamo roles resolve; target deformation not tested | Not evaluated | Controller XZ/yaw/collision proposed | Exact durations measured; phase/blend not tested | `not-evaluated` beyond static source evidence |
+| `hypothesis/kinematic-run-4way` / target character | Mixamo roles resolve; target deformation not tested | Not evaluated | Controller XZ/yaw/collision proposed | Exact durations and gait phases measured; synchronization/blend acceptance not tested | `not-evaluated` beyond static source evidence |
 | This pack / any other Mixamo constituent | Common role labels and 66-bone count observed on motion files | Not evaluated | Per-file ownership unavailable | No pairwise transition/blend test | `unknown`; no cross-pack claim |
 
 ## Limitations and unknowns
 
 1. Vendor mapping from 25 metadata motions to 27 files is unavailable and was not reconstructed from names.
-2. Loop intent, phase, contacts, target character, deformation, engine graph, visual quality, root/yaw policy, and cross-pack behavior remain untested.
+2. Loop intent, gait-phase acceptance, contacts, target character, deformation, engine graph, visual quality, root/yaw policy, and cross-pack behavior remain untested.
 3. Original ZIP payloads and controlling license evidence were unavailable; current hashing covers extracted source only.
 
 ## Changes between AnimSmith versions

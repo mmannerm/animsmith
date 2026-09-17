@@ -406,6 +406,10 @@ evaluation.
 - Use repair for defects the current version describes as safely repairable.
 - Use transforms only when the edit has an explicit source window, frame rate,
   loop declaration, gait contract, or other required intent.
+- Publish available phase measurements for selected blend members, separating measured
+  phase from synchronization/contact acceptance. Name units, exact member scope,
+  availability, and the spread formula; do not compare different spread statistics
+  or infer an artist defect without declared intent and acceptance evidence.
 - Before gait anchoring, inspect whether any resampled channel accumulates root
   translation or yaw. If the captured version cyclically resamples those
   channels, treat root-motion anchoring as unsafe unless a trajectory-preserving
