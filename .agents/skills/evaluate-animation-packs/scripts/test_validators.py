@@ -4814,6 +4814,56 @@ class EvaluationModelTests(unittest.TestCase):
             [],
         )
 
+    def test_renderer_accepts_multiline_thresholds_and_action_name_step_ids(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        model["integration_steps"][0]["coordinates_or_thresholds"] = (  # type: ignore[index]
+            "walk=1\r\nrun=3\nturn=2\ridle=0"
+        )
+        views = model_renderer.render_views(
+            model, binding,
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertEqual(
+            model_renderer.validate_views(
+                model, binding, views,
+                report_name="fixture.md", appendix_name="fixture-evidence.md",
+            ),
+            [],
+        )
+        detail = next(
+            paragraph
+            for paragraph in report_validator.parse_markdown(views.report)["paragraphs"]
+            if paragraph["section"] == "Integration recipe"
+            and paragraph["list_depth"] == 2
+        )
+        self.assertEqual(detail["code"][2], "walk=1 run=3 turn=2 idle=0")
+
+        collision_model = valid_evaluation_model()
+        topology = collision_model["integration_steps"][0]  # type: ignore[index]
+        topology.update(id="topology", order=2)
+        collision_model["integration_steps"].insert(  # type: ignore[index]
+            0, {**topology, "id": "additional", "order": 1},
+        )
+        self.assertEqual(model_validator.validate_model(collision_model, binding), [])
+        collision_views = model_renderer.render_views(
+            collision_model, binding,
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertEqual(
+            model_renderer.validate_views(
+                collision_model, binding, collision_views,
+                report_name="fixture.md", appendix_name="fixture-evidence.md",
+            ),
+            [],
+        )
+        details = [
+            paragraph["code"][0]
+            for paragraph in report_validator.parse_markdown(collision_views.report)["paragraphs"]
+            if paragraph["section"] == "Integration recipe"
+            and paragraph["list_depth"] == 2
+        ]
+        self.assertEqual(details, ["additional", "topology"])
+
     def test_renderer_projects_typed_cross_pack_decisions_in_primary_fit(self) -> None:
         model, binding = valid_evaluation_model(), valid_collection_output_projection()
         model["collection"] = {

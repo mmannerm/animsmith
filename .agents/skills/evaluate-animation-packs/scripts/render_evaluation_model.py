@@ -64,9 +64,14 @@ def _code(value: Any) -> str:
     return "`" + _text(value).replace("`", "\\`") + "`"
 
 
+def _code_text(value: Any) -> str:
+    """Normalize line endings as CommonMark code spans expose them."""
+    return re.sub(r"\r\n?|\n", " ", str(value))
+
+
 def _exact_code(value: Any) -> str:
     """Render one prose scalar as code while preserving its parsed text."""
-    encoded = str(value).replace("\r", " ").replace("\n", " ")
+    encoded = _code_text(value)
     fence = "`" * (
         max((len(run) for run in re.findall(r"`+", encoded)), default=0) + 1
     )
@@ -679,7 +684,8 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
                 (position, paragraph)
                 for position, paragraph in enumerate(paragraphs)
                 if paragraph["list_depth"] == 2
-                and record["id"] in paragraph["code"]
+                and paragraph["code"]
+                and paragraph["code"][0] == record["id"]
             ]
             if len(matching) != 1:
                 errors.append(
@@ -688,16 +694,17 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
                 continue
             position, paragraph = matching[0]
             expected_code = [
-                record["id"], record["action"],
-                record["coordinates_or_thresholds"],
-                record["movement_owner"], record["phase_owner"],
+                _code_text(record["id"]), _code_text(record["action"]),
+                _code_text(record["coordinates_or_thresholds"]),
+                _code_text(record["movement_owner"]),
+                _code_text(record["phase_owner"]),
                 *record["evidence_refs"],
             ]
             expected_prefix = (
-                f"Step {record['id']}: action={record['action']}; "
-                f"thresholds={record['coordinates_or_thresholds']}; "
-                f"movement owner={record['movement_owner']}; "
-                f"phase owner={record['phase_owner']}; "
+                f"Step {_code_text(record['id'])}: action={_code_text(record['action'])}; "
+                f"thresholds={_code_text(record['coordinates_or_thresholds'])}; "
+                f"movement owner={_code_text(record['movement_owner'])}; "
+                f"phase owner={_code_text(record['phase_owner'])}; "
             )
             if (
                 paragraph["code"] != expected_code
