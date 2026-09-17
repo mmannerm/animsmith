@@ -82,7 +82,7 @@ integration-step actions to state topology, timing, movement/phase ownership,
 composition, and acceptance. Use typed collection pair results for cross-pack
 scope rather than extending a one-pack conclusion.
 
-The [assessment taxonomy](assessment-taxonomy.md#issue-severity) governs issue
+The [assessment taxonomy](assessment-taxonomy.md) governs issue
 severity and residual status. Store the as-delivered value in `severity`;
 use `impact` for exact scope/reproduction and `current_action` for the action,
 acceptance condition, and residual result. The frozen schema carries those

@@ -149,7 +149,7 @@ Include every profile in the captured profile-set version.
 Link each row to the primary issue ID and identify the exact generated output
 or configuration. Record candidate production, postcondition checks,
 promotion/adoption, and acceptance as separate facts under the canonical
-[issue-severity policy](../references/assessment-taxonomy.md#issue-severity).
+[issue-severity policy](../references/assessment-taxonomy.md).
 
 For any explicit evaluator or project configuration that materially increases
 coverage, retain the untouched result beside the configured result. Record a

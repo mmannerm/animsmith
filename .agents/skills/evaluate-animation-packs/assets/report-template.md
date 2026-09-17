@@ -161,8 +161,8 @@ were found at the stated scope.`
 |---|---|---|---|---|---|---|
 | {{ISSUE_ID}} | {{AS_DELIVERED_SEVERITY}} | Scope: {{EXACT_FILES_OR_SET_MEMBERS}}; reproduce: {{BOUNDED_COMMAND_CONFIG_OR_ENGINE_STATE}}; impact: {{PLAYER_OR_DEVELOPER_VISIBLE_RESULT}}; link `../game-ready-clips.md#{{RELEVANT_SECTION}}` in the completed report | {{ONE_PRIMARY_OWNER}} | Action: {{CONCRETE_CHANGE_OR_PROJECT_DECISION}}; acceptance: {{OBSERVABLE_PASS_CONDITION}}; residual: {{SEVERITY_AFTER_ACCEPTED_FIX_OR_UNRESOLVED}} | {{FUTURE_FEASIBILITY_SAFETY_AND_PROOF}} | {{CONFIDENCE_AND_STATUS}} |
 
-Apply the canonical [issue-severity](../references/assessment-taxonomy.md#issue-severity)
-and [ownership](../references/assessment-taxonomy.md#remediation-ownership) policies.
+Apply the canonical [issue-severity](../references/assessment-taxonomy.md)
+and [ownership](../references/assessment-taxonomy.md) policies.
 Fill the separate severity/residual fields above, with available time/frame,
 bone, contact, or transition boundaries for artist/vendor work.
 

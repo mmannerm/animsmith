@@ -433,7 +433,7 @@ After every generated output:
 5. record which original problem changed, which facts remained stable, and
    which new findings or unknowns appeared.
 
-Apply the [issue-severity policy](references/assessment-taxonomy.md#issue-severity)
+Apply the [issue-severity policy](references/assessment-taxonomy.md)
 to the source and candidate separately. Record the demonstrated mechanical
 change and the remaining adoption gates; command success alone is not a fixed
 pack verdict.
@@ -545,7 +545,7 @@ missing transitions, additive-base creation, or recovery of information that
 the file does not contain.
 
 Assign one owner using the canonical
-[remediation ownership taxonomy](references/assessment-taxonomy.md#remediation-ownership).
+[remediation ownership taxonomy](references/assessment-taxonomy.md).
 Keep source defects, project-policy choices, and missing intent distinct.
 
 Every material issue must be actionable without access to the evaluator's
