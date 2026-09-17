@@ -146,12 +146,10 @@ Include every profile in the captured profile-set version.
 |---|---|---|---|---|
 | {{ISSUE}} | {{CAPTURED_COMMAND}} | {{RESULT}} | {{POSTCONDITION_EVIDENCE}} | {{GAP}} |
 
-Link each row to the primary issue ID. State the as-delivered severity in the
-issue register and identify the exact generated output or configuration here.
-Record candidate production, postcondition checks, promotion/adoption, engine
-or visual/contact acceptance, and residual severity as separate facts. A
-successful command or mechanically verified but unpromoted candidate has
-residual severity `unresolved`; it does not close the issue.
+Link each row to the primary issue ID and identify the exact generated output
+or configuration. Record candidate production, postcondition checks,
+promotion/adoption, and acceptance as separate facts under the canonical
+[issue-severity policy](../references/assessment-taxonomy.md#issue-severity).
 
 For any explicit evaluator or project configuration that materially increases
 coverage, retain the untouched result beside the configured result. Record a

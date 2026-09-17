@@ -24,7 +24,7 @@ Developer decision: admit this pack only to an isolated basic unarmed locomotion
 
 ### Complete core
 
-- Fresh source hashing, parse/inspect, measurement, Mixamo role resolution, and empty-baseline mechanical lint cover all 12 files.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 

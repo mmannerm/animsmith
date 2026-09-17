@@ -24,11 +24,11 @@
 
 ### Complete core
 
-- Delivered filename families cover locomotion, cover, turns, airborne actions, and transitions; 70 labelled root-motion files have matching in-place partners.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 
-- Mechanical input health is measured. The current slices remove their known time-ordering errors, while remaining contract findings require loop and continuity decisions before locomotion blend adoption.
+- Three complete eight-direction source selections support proposed walk/run/crouch trees. Cover, turn, jump and action families need separate reviewed states; start/stop, contact and controller behavior remain open.
 
 ### Absent
 

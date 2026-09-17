@@ -64,6 +64,16 @@ def _code(value: Any) -> str:
     return "`" + _text(value).replace("`", "\\`") + "`"
 
 
+def _exact_code(value: Any) -> str:
+    """Render one prose scalar as code while preserving its parsed text."""
+    encoded = str(value).replace("\r", " ").replace("\n", " ")
+    fence = "`" * (
+        max((len(run) for run in re.findall(r"`+", encoded)), default=0) + 1
+    )
+    padding = " " if encoded[:1] in {"`", " "} or encoded[-1:] in {"`", " "} else ""
+    return fence + padding + encoded + padding + fence
+
+
 def _literal(value: Any) -> str:
     """Put one exact JSON value in a table cell without changing its meaning.
 
@@ -234,41 +244,38 @@ def _runtime_rows(model: dict[str, Any]) -> list[str]:
     return rows
 
 
-def _recipe_projection(model: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Render fixed action slots while retaining every accepted step record.
+def _recipe_projection(model: dict[str, Any]) -> list[str]:
+    """Render every accepted step once under its fixed action slot.
 
     Integration-step arrays are ID ordered and may omit or repeat actions under
     the frozen V1/V2 contract.  The fixed report recipe is action ordered, so a
-    positional zip can silently put a valid step under the wrong label.  Keep
-    one stable slot summary per action, then render each source record in its
-    own evidence-bearing paragraph.
+    positional zip can silently put a valid step under the wrong label.
     """
     by_action: dict[str, list[dict[str, Any]]] = {
         action: [] for action, _label, _key in RECIPE_SLOTS
     }
     for step in model["integration_steps"]:
         by_action[step["action"]].append(step)
-    summaries = []
+    recipe = []
     for index, (action, label, key) in enumerate(RECIPE_SLOTS, start=1):
-        count = len(by_action[action])
-        if count:
-            summaries.append(
-                f"{index}. **{label}:** `{key}=declared`; "
-                f"{count} declared {_text('step' if count == 1 else 'steps')}; details below."
-            )
-        else:
-            summaries.append(
+        steps = by_action[action]
+        if not steps:
+            recipe.append(
                 f"{index}. **{label}:** `{key}=not-evaluated`; no declared step."
             )
-    details = [
-        f"Step {_code(step['id'])}: action={_text(step['action'])}; "
-        f"{_text(step['coordinates_or_thresholds'])}; "
-        f"movement owner={_text(step['movement_owner'])}; "
-        f"phase owner={_text(step['phase_owner'])}; "
-        f"{_evidence(model, step['evidence_refs'])}."
-        for step in model["integration_steps"]
-    ]
-    return summaries, details
+            continue
+        recipe.append(f"{index}. **{label}:** `{key}=declared`")
+        recipe.append("")
+        recipe.extend(
+            f"   - Step {_exact_code(step['id'])}: action={_exact_code(step['action'])}; "
+            f"thresholds={_exact_code(step['coordinates_or_thresholds'])}; "
+            f"movement owner={_exact_code(step['movement_owner'])}; "
+            f"phase owner={_exact_code(step['phase_owner'])}; "
+            f"{_evidence(model, step['evidence_refs'])}."
+            for step in steps
+        )
+        recipe.append("")
+    return recipe
 
 
 def _cross_pack_decision_rows(model: dict[str, Any]) -> list[str]:
@@ -485,7 +492,7 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
     capabilities = {"pass": [], "finding": [], "not-evaluated": [], "not-applicable": []}
     for capability in model["capabilities"]:
         capabilities[capability["state"]].append(f"{_code(capability['id'])}: {_evidence(model, capability['evidence_refs'])}")
-    recipe, recipe_details = _recipe_projection(model)
+    recipe = _recipe_projection(model)
     primary_cross_pack_rows = _cross_pack_decision_rows(model)
     primary_cross_pack = (
         "\n".join([
@@ -513,7 +520,7 @@ def render_views(model: dict[str, Any], binding: dict[str, Any], *, report_name:
         "### Not applicable", "\n".join("- " + value for value in capabilities["not-applicable"]) or "- None recorded.", "",
         "## Runtime sets and authored motion",
         "\n".join(["| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |", "|---|---|---|---|---|---|"] + runtime_rows) if runtime_rows else "No important runtime sets were identified.", "",
-        "## Integration recipe", "\n".join(recipe), "", "\n\n".join(recipe_details), "",
+        "## Integration recipe", "\n".join(recipe), "",
         "## Technical issue register",
         "\n".join(["| ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |", "|---|---|---|---|---|---|---|"] + issue_rows) if issue_rows else "No material technical issues were found at the stated scope.", "",
         "## Engine status", "| Runtime | Evidence level | Technical result | Remaining gate |", "|---|---|---|---|", *(_engine_rows(model)), "",
@@ -651,6 +658,79 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
             observed = {(link["text"], link["destination"]) for link in matching[0]["links"]}
             if observed != expected:
                 errors.append(f"model-to-view {label} {record['id']} has misattached evidence")
+    def assert_integration_projection() -> None:
+        paragraphs = [
+            paragraph for paragraph in report_ast["paragraphs"]
+            if paragraph["section"] == "Integration recipe"
+            and not paragraph["blockquote"]
+        ]
+        slot_positions: dict[str, int] = {}
+        for index, (action, label, _key) in enumerate(RECIPE_SLOTS, start=1):
+            matching = [
+                position for position, paragraph in enumerate(paragraphs)
+                if paragraph["list_depth"] == 1
+                and paragraph["list_item"] == index
+                and f"{label}:" in paragraph["strong"]
+            ]
+            if len(matching) == 1:
+                slot_positions[action] = matching[0]
+        for record in model["integration_steps"]:
+            matching = [
+                (position, paragraph)
+                for position, paragraph in enumerate(paragraphs)
+                if paragraph["list_depth"] == 2
+                and record["id"] in paragraph["code"]
+            ]
+            if len(matching) != 1:
+                errors.append(
+                    f"model-to-view integration step {record['id']} is missing or duplicated"
+                )
+                continue
+            position, paragraph = matching[0]
+            expected_code = [
+                record["id"], record["action"],
+                record["coordinates_or_thresholds"],
+                record["movement_owner"], record["phase_owner"],
+                *record["evidence_refs"],
+            ]
+            expected_prefix = (
+                f"Step {record['id']}: action={record['action']}; "
+                f"thresholds={record['coordinates_or_thresholds']}; "
+                f"movement owner={record['movement_owner']}; "
+                f"phase owner={record['phase_owner']}; "
+            )
+            if (
+                paragraph["code"] != expected_code
+                or not paragraph["text"].startswith(expected_prefix)
+            ):
+                errors.append(
+                    f"model-to-view integration step {record['id']} differs from authority"
+                )
+            slot_position = slot_positions.get(record["action"])
+            later_slots = [
+                value for value in slot_positions.values()
+                if slot_position is not None and value > slot_position
+            ]
+            if (
+                slot_position is None
+                or position <= slot_position
+                or later_slots and position >= min(later_slots)
+            ):
+                errors.append(
+                    f"model-to-view integration step {record['id']} is under the wrong action slot"
+                )
+            expected_links = {
+                (evidence[ref]["summary"], evidence[ref]["locator"])
+                for ref in record["evidence_refs"]
+            }
+            observed_links = {
+                (link["text"], link["destination"])
+                for link in paragraph["links"]
+            }
+            if observed_links != expected_links:
+                errors.append(
+                    f"model-to-view integration step {record['id']} has misattached evidence"
+                )
     assert_projection_links(report_ast, report_validator.RUNTIME_SET_HEADER, model["runtime_sets"], 1, ("evidence_refs",), "primary runtime-set")
     assert_projection_links(report_ast, report_validator.ISSUE_HEADER, model["issues"], 6, ("evidence_refs",), "issue")
     assert_projection_links(report_ast, report_validator.ENGINE_HEADER, [next(record for record in model["engine_evidence"] if record["runtime"] == runtime) for runtime in report_validator.ENGINE_LABELS], 2, ("evidence_refs",), "primary engine")
@@ -677,7 +757,7 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
         assert_projection_links(appendix_ast, ("Pack/rig/set pair", "Skeleton/retarget", "Scale/axes", "Root policy", "Timing/blend", "Overall evidence"), model["collection"]["cross_pack_records"], 5, ("evidence_refs",), "cross-pack")
     assert_projection_links(appendix_ast, ("Clip", "Source", "Take", "Take name", "Role", "Loop", "Duration", "RM speed", "Movement owner", "Assessment"), model["clips"], 9, ("evidence_refs",), "clip")
     assert_paragraph_links(report_ast, model["capabilities"], ("evidence_refs",), "capability")
-    assert_paragraph_links(report_ast, model["integration_steps"], ("evidence_refs",), "integration step")
+    assert_integration_projection()
     assert_paragraph_links(report_ast, model["sources"], ("evidence_refs",), "source")
     assert_paragraph_links(appendix_ast, model["limitations"], ("evidence_refs",), "limitation")
     assert_paragraph_links(appendix_ast, model["sources"], ("evidence_refs",), "source")

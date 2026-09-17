@@ -433,14 +433,10 @@ After every generated output:
 5. record which original problem changed, which facts remained stable, and
    which new findings or unknowns appeared.
 
-An available command, a successful exit, or a generated candidate does not
-mean the reported problem is solved. Keep the issue's severity tied to the
-as-delivered bytes. State a lower residual severity only for one identified
-output that passed the declared mechanical postcondition and every acceptance
-gate needed by the claimed use. If engine, visual, contact, deformation, or
-artist acceptance remains material and did not run, say so and leave the
-residual result unresolved. An external or unpromoted candidate is evidence of
-a possible workflow, not the pack's current adoption state.
+Apply the [issue-severity policy](references/assessment-taxonomy.md#issue-severity)
+to the source and candidate separately. Record the demonstrated mechanical
+change and the remaining adoption gates; command success alone is not a fixed
+pack verdict.
 
 Report effort as concrete steps plus `none`, `low`, `moderate`, `high`, or
 `unknown`; explain assumptions instead of inventing precise labor hours.
@@ -548,13 +544,9 @@ judgment, contact cleanup, deformation-aware retargeting, style matching,
 missing transitions, additive-base creation, or recovery of information that
 the file does not contain.
 
-Do not label a project-policy choice as an artist or vendor defect. Use
-`artist-author` when delivered motion must change to satisfy authoritative
-intent; use `vendor-license` when promised delivery or vendor-controlled source
-must change; use `engine-config` when acceptable source needs a consuming
-controller, importer, state graph, mask, or project convention. If the expected
-behavior itself has no authority, choose `unknown`, record the decision the
-project or vendor must supply, and avoid defect language.
+Assign one owner using the canonical
+[remediation ownership taxonomy](references/assessment-taxonomy.md#remediation-ownership).
+Keep source defects, project-policy choices, and missing intent distinct.
 
 Every material issue must be actionable without access to the evaluator's
 private notes. Name the exact affected files or runtime-set members, a bounded

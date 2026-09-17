@@ -161,13 +161,10 @@ were found at the stated scope.`
 |---|---|---|---|---|---|---|
 | {{ISSUE_ID}} | {{AS_DELIVERED_SEVERITY}} | Scope: {{EXACT_FILES_OR_SET_MEMBERS}}; reproduce: {{BOUNDED_COMMAND_CONFIG_OR_ENGINE_STATE}}; impact: {{PLAYER_OR_DEVELOPER_VISIBLE_RESULT}}; link `../game-ready-clips.md#{{RELEVANT_SECTION}}` in the completed report | {{ONE_PRIMARY_OWNER}} | Action: {{CONCRETE_CHANGE_OR_PROJECT_DECISION}}; acceptance: {{OBSERVABLE_PASS_CONDITION}}; residual: {{SEVERITY_AFTER_ACCEPTED_FIX_OR_UNRESOLVED}} | {{FUTURE_FEASIBILITY_SAFETY_AND_PROOF}} | {{CONFIDENCE_AND_STATUS}} |
 
-`Severity` is the as-delivered impact. `Residual` may be lower only for an
-identified adopted output/configuration with passed postconditions and every
-material acceptance gate; a generated, external, or unpromoted candidate stays
-`unresolved`. For artist/vendor work, include available time/frame ranges,
-bones, contacts, or transition boundaries in scope or reproduction. Do not
-call a missing controller/import/mask choice an artist defect; use the owner
-taxonomy and `unknown` when intended behavior lacks authority.
+Apply the canonical [issue-severity](../references/assessment-taxonomy.md#issue-severity)
+and [ownership](../references/assessment-taxonomy.md#remediation-ownership) policies.
+Fill the separate severity/residual fields above, with available time/frame,
+bone, contact, or transition boundaries for artist/vendor work.
 
 ## Engine status
 

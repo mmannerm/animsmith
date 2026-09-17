@@ -82,15 +82,12 @@ integration-step actions to state topology, timing, movement/phase ownership,
 composition, and acceptance. Use typed collection pair results for cross-pack
 scope rather than extending a one-pack conclusion.
 
-For each issue, `severity` is the as-delivered severity. Write `impact` so it
-names exact files or set members, a bounded reproduction, and the visible or
-developer impact. Write `current_action` so it names the action or project
-decision, observable acceptance condition, and residual severity. A lower
-residual severity is justified only for an identified adopted output or
-configuration with passed postconditions and all material acceptance gates;
-otherwise write `residual: unresolved` or `residual: unknown`. The frozen
-schema stores these distinctions as bounded text, so evidence references must
-support them and the validator does not infer their truth.
+The [assessment taxonomy](assessment-taxonomy.md#issue-severity) governs issue
+severity and residual status. Store the as-delivered value in `severity`;
+use `impact` for exact scope/reproduction and `current_action` for the action,
+acceptance condition, and residual result. The frozen schema carries those
+last distinctions as bounded text: evidence references must support them,
+and schema validation does not establish their truth.
 
 ## Rendering
 

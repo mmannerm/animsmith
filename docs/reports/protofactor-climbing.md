@@ -24,11 +24,11 @@
 
 ### Complete core
 
-- The delivery has wall, ladder, obstacle, fall, jump, landing, entry, and exit filename families.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 
-- Mechanical and declared-loop evidence is available, but traversal contacts and controller behavior are untested.
+- Eight wall directions and a separate ladder up/down pair are concrete traversal candidates. Scene alignment, contact locking, entry/top-out and collision behavior remain open.
 
 ### Absent
 

@@ -4744,6 +4744,7 @@ class EvaluationModelTests(unittest.TestCase):
             identifier: next(paragraph for paragraph in recipe if identifier in paragraph["code"])
             for identifier in ("a-accept", "b-topology", "c-topology", "d-owner")
         }
+        self.assertTrue(all(paragraph["list_depth"] == 2 for paragraph in details.values()))
         self.assertEqual(
             {link["destination"] for link in details["b-topology"]["links"]},
             {"docs/synthetic-evidence.md"},
@@ -4751,6 +4752,66 @@ class EvaluationModelTests(unittest.TestCase):
         self.assertEqual(
             {link["destination"] for link in details["c-topology"]["links"]},
             {"docs/second-evidence.md"},
+        )
+        self.assertLess(recipe.index(slots[1]), recipe.index(details["b-topology"]))
+        self.assertLess(recipe.index(details["c-topology"]), recipe.index(slots[2]))
+        self.assertLess(recipe.index(slots[3]), recipe.index(details["d-owner"]))
+        self.assertLess(recipe.index(details["d-owner"]), recipe.index(slots[4]))
+        self.assertLess(recipe.index(slots[5]), recipe.index(details["a-accept"]))
+
+        mutations = (
+            ("action", "action=`topology`", "action=`timing`"),
+            ("thresholds", "thresholds=`first topology`", "thresholds=`changed topology`"),
+            ("movement-owner", "movement owner=`engine-config`", "movement owner=`artist-author`"),
+            ("phase-owner", "phase owner=`engine-config`", "phase owner=`artist-author`"),
+            ("field-label", "movement owner=`engine-config`", "phase owner=`engine-config`"),
+        )
+        for label, original, replacement in mutations:
+            with self.subTest(recipe_mutation=label):
+                altered = views.report.replace(original, replacement, 1)
+                errors = model_renderer.validate_views(
+                    model, binding,
+                    model_renderer.RenderedViews(altered, views.appendix),
+                    report_name="fixture.md", appendix_name="fixture-evidence.md",
+                )
+                self.assertIn(
+                    "model-to-view integration step b-topology differs from authority",
+                    errors,
+                )
+
+        detail_line = next(
+            line for line in views.report.splitlines()
+            if "Step `b-topology`:" in line
+        )
+        for label, altered in (
+            ("missing", views.report.replace(detail_line + "\n", "", 1)),
+            ("duplicate", views.report.replace(detail_line, detail_line + "\n" + detail_line, 1)),
+        ):
+            with self.subTest(recipe_detail=label):
+                errors = model_renderer.validate_views(
+                    model, binding,
+                    model_renderer.RenderedViews(altered, views.appendix),
+                    report_name="fixture.md", appendix_name="fixture-evidence.md",
+                )
+                self.assertIn(
+                    "model-to-view integration step b-topology is missing or duplicated",
+                    errors,
+                )
+
+        escaped_model = copy.deepcopy(model)
+        escaped_model["integration_steps"][1]["coordinates_or_thresholds"] = (  # type: ignore[index]
+            r"first [topology] | <raw> \\ path `tick`"
+        )
+        escaped = model_renderer.render_views(
+            escaped_model, binding,
+            report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertEqual(
+            model_renderer.validate_views(
+                escaped_model, binding, escaped,
+                report_name="fixture.md", appendix_name="fixture-evidence.md",
+            ),
+            [],
         )
 
     def test_renderer_projects_typed_cross_pack_decisions_in_primary_fit(self) -> None:
@@ -4810,10 +4871,26 @@ class EvaluationModelTests(unittest.TestCase):
     def test_report_validator_accepts_v2_gait_groups_without_broadening_v1(self) -> None:
         binding = valid_collection_output_v11()
         binding["runtime_sets"][0]["kind"] = "gait-group"  # type: ignore[index]
-        for member in binding["runtime_sets"][0]["members"]:  # type: ignore[index]
-            member["gait_phase"] = {"availability": "not_applicable"}
+        phases = (0.0, 0.25)
+        sources = {source["key"]: source for source in binding["sources"]}  # type: ignore[index]
+        clips = {clip["id"]: clip for clip in binding["clips"]}  # type: ignore[index]
+        for member, phase in zip(binding["runtime_sets"][0]["members"], phases):  # type: ignore[index]
+            member["gait_phase"] = {"availability": "measured", "phase": phase}
+            clip = clips[member["id"]]
+            gait = {
+                "phase": phase, "phase_availability": "measured",
+                "lr_amplitude_m": 0.1,
+            }
+            clip["binding"]["measurements"]["gait_availability"] = "measured"
+            clip["binding"]["measurements"]["gait"] = gait
+            reference = clip["binding"]["check_reference"]["reference"]
+            nested = sources[reference["source"]]["result"]["envelope"]["files"][0]["measurements"]["clips"][reference["measurement_key"]]
+            nested["gait_availability"] = "measured"
+            nested["gait"] = copy.deepcopy(gait)
         binding["runtime_sets"][0]["evidence"]["gait_phase"] = {  # type: ignore[index]
-            "lifecycle": "incomplete", "members_measured": 0,
+            "lifecycle": "complete", "members_measured": 2,
+            "phase_spread": 0.125,
+            "spread_basis": "max_circular_deviation_from_mean",
         }
         for _iteration in range(16):
             raw = model_contract_v2.canonical_json(binding)
@@ -4825,9 +4902,24 @@ class EvaluationModelTests(unittest.TestCase):
         model_validator_v2.validate_with_animsmith(self.animsmith, raw)
         model = valid_evaluation_model_v2(binding, raw)
         self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+        self.assertEqual(
+            binding["runtime_sets"][0]["members"][1]["gait_phase"]["phase"],  # type: ignore[index]
+            0.25,
+        )
+        self.assertEqual(
+            binding["runtime_sets"][0]["evidence"]["gait_phase"]["phase_spread"],  # type: ignore[index]
+            0.125,
+        )
         views = model_renderer.render_views(
             model, binding, binding_bytes=raw,
             report_name="fixture.md", appendix_name="fixture-evidence.md",
+        )
+        self.assertEqual(
+            model_renderer.validate_views(
+                model, binding, views, binding_bytes=raw,
+                report_name="fixture.md", appendix_name="fixture-evidence.md",
+            ),
+            [],
         )
         self.assertEqual(
             report_validator.validate(
@@ -4853,6 +4945,24 @@ class EvaluationModelTests(unittest.TestCase):
         self.assertTrue(
             any("malformed variant or set type" in error for error in legacy_errors),
             legacy_errors,
+        )
+        legacy_kind_report = views.report.replace("gait-group", "other")
+        legacy_kind_appendix = views.appendix.replace("gait-group", "other")
+        self.assertEqual(
+            report_validator.validate(
+                legacy_kind_report,
+                evaluation_schema=model_contract_v2.SCHEMA,
+                report_format="2",
+            ),
+            [],
+        )
+        self.assertEqual(
+            report_validator.validate_appendix(
+                legacy_kind_appendix,
+                evaluation_schema=model_contract_v2.SCHEMA,
+                report_format="2",
+            ),
+            [],
         )
 
     def test_format_two_renderer_refuses_ambiguous_historical_order(self) -> None:

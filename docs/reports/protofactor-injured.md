@@ -24,11 +24,11 @@
 
 ### Complete core
 
-- The delivery has injured idle, kneel, sit, transition, walk, and run filename families.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 
-- Current contract evidence covers 14 declared in-place files. Their external gait candidates are mechanically verified, but loop and blend conditions remain unresolved.
+- Seven separately selected idle/walk/run styles support proposed injured-locomotion states. Injury expression, speed/phase calibration and healthy-state handoffs remain open.
 
 ### Absent
 

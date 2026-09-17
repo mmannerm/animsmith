@@ -2,7 +2,7 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — current mechanical, declared-contract, runtime-group, and remediation evidence is complete; engine, visual, contact, retargeting, and artistic acceptance are not evaluated.
+> Evaluation completeness: **partial** — current mechanical, declared-contract, runtime-group, and remediation checks are complete, with bounded Unity source/mixer probes; visual, contact, retargeting, and target game-controller acceptance remain open.
 >
 > Confidence: **medium**
 >
@@ -24,8 +24,7 @@ All 25 fresh transform candidates were produced outside the repository and passe
 
 ### Complete core
 
-- Mechanical intake covers 189 FBXs, 188 animation-bearing files, 186 individual motions, and 1 combined take.
-- Combat/action, reaction/death, idle, and directional locomotion content is present and mechanically measurable.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 

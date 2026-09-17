@@ -24,11 +24,11 @@
 
 ### Complete core
 
-- The delivered files contain idle, posture-transition, fire-lighting, food, and log-toss filename families.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 
-- Current contract evidence identifies loop continuity gates; the one external pruning candidate has no contact or attachment acceptance.
+- Selected kneel/sit/lie and grill sequences provide interaction-state candidates. Prop attachment, entry/exit continuity, interruption and contact behavior remain open.
 
 ### Absent
 

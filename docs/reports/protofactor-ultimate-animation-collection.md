@@ -26,7 +26,7 @@ The constituent reports now name exact current scenario members and actions. The
 
 ### Complete core
 
-- Fresh file/contract evidence covers the eight named packs. Exact selected locomotion, style and interaction scenarios are linked from each constituent; this does not establish whole-game coverage.
+- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
 
 ### Partial supporting gameplay
 
