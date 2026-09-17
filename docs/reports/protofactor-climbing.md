@@ -54,7 +54,7 @@ New evaluator-selected generic scenarios: current source bytes establish the exa
 ## Integration recipe
 
 1. **Members/topology:** `topology=directional-blend`; use the wall set in the wall plane, with horizontal/vertical input. Use ladder up/down as a separate state; select obstacle-height and wall-jump actions discretely.
-2. **Timing/synchronization:** `sync=normalized-phase`; equal durations do not prove matching hand/foot support phases. Check neighboring wall directions at intermediate weights and ladder reversals on actual geometry.
+2. **Timing/synchronization:** `sync=not-evaluated`; establish intended cyclic playback and support-contact timing before choosing synchronization. equal durations do not prove matching hand/foot support phases. Check neighboring wall directions at intermediate weights and ladder reversals on actual geometry.
 3. **State ownership:** `owner=controller`; the selected root trajectories are stationary. The controller owns wall projection, vertical displacement and collisions. Do not use horizontal-only speed as a measure of an RM climb.
 4. **Composition constraints:** `composition=full-body`; keep arm/leg coupling and solve scene contact constraints. Locomotion weapon masks are not validated for climbing.
 5. **Acceptance gate:** `gate=engine-and-visual-review`; test entry, top-out, corner changes, interruption/fall and varying wall/ladder dimensions before treating this as a traversal system.

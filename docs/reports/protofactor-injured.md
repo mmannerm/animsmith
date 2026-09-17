@@ -65,7 +65,7 @@ New evaluator-selected generic scenarios: current source bytes establish the exa
 ## Integration recipe
 
 1. **Members/topology:** `topology=speed-blend`; create one idle/walk/run tree per chosen style A–G. Treat style changes as explicit state transitions; do not distribute injury letters around a direction tree.
-2. **Timing/synchronization:** `sync=normalized-phase`; walks measure 1.333 s; runs measure 0.700 or 0.800 s. Match support-foot timing between moving clips; an almost-stationary idle gait phase is not a useful contact anchor. `Humanoid@RunInjuredB.fbx` passes a non-looping declaration, which does not establish it as a clean repeating run.
+2. **Timing/synchronization:** `sync=not-evaluated`; establish intended cyclic playback and support-contact timing before choosing synchronization. walks measure 1.333 s; runs measure 0.700 or 0.800 s. Match support-foot timing between moving clips; an almost-stationary idle gait phase is not a useful contact anchor. `Humanoid@RunInjuredB.fbx` passes a non-looping declaration, which does not establish it as a clean repeating run.
 3. **State ownership:** `owner=controller`; selected non-RM roots are stationary. Tune speed thresholds to stride/contact behavior, not their measured zero root speed. Keep RM alternatives under a separate movement policy.
 4. **Composition constraints:** `composition=full-body`; preserve the limp and compensating torso pose. Upper-body masks can erase the injury expression; validate any weapon layer separately.
 5. **Acceptance gate:** `gate=engine-and-visual-review`; test start/stop, velocity changes, healthy-to-injured transitions and interruptions on the target character.
