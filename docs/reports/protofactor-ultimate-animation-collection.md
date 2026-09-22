@@ -82,7 +82,7 @@ Severity is scoped to the intended combined controller. A missing test is an ado
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | observed-engine | 26/26 bounded source checks: 13 samples, nine cross-pack mixer schedules, four RM samples. Finite poses/fixed owner under explicit policy. | Visual/contact, actual controller, target character, compression, candidate output and build acceptance. |
+| Unity 6000.5.8f1 | observed-engine | 26/26 bounded source checks: 13 samples, nine Basic/Sword & Shield-to-melee mixer schedules, four RM samples. Injured, Climbing and Campfire handoffs were not tested. Finite poses/fixed owner under explicit policy. | Visual/contact, actual controller, target character, compression, candidate output and build acceptance. |
 | Unreal Engine | not-evaluated | No current import or playback run. | Import, retarget, graph, contact, and build tests. |
 | Godot | not-evaluated | No current conversion, import, or playback run. | Conversion/import, graph, contact, and export tests. |
 | Bevy | not-evaluated | No current conversion, addressability, or runtime run. | Conversion, target mapping, runtime, and performance tests. |
@@ -97,7 +97,7 @@ Severity is scoped to the intended combined controller. A missing test is an ado
 | Basic + Campfire | Stop at interaction anchor, then enter explicit posture sequence | Seat/fire placement, props, interrupt and return-to-ground behavior |
 | Protofactor + Mixamo | No approved cross-library handoff | Target rig, rest pose, scale, root convention, phase, style and attachment tests |
 
-Fresh Unity 6000.5.8f1 source tests passed 26/26 bounded checks: 13 individual Humanoid samples, nine named cross-pack mixer schedules and four RM samples. For the nine mixers, five weights (0, 0.25, 0.5, 0.75, 1) produced finite sampled bone transforms with `applyRootMotion=false` and a fixed Animator owner. This supports technical feasibility of the named source combinations, not visually smooth handoffs or a finished kinematic controller.
+Fresh Unity 6000.5.8f1 source tests passed 26/26 bounded checks: 13 individual Humanoid samples, nine named cross-pack mixer schedules and four RM samples. The nine mixers cover Basic idle/walk and Sword & Shield idle paired with 1-Handed Melee, 2-Handed Melee and Dual Swords; they do not cover Injured, Climbing or Campfire handoffs. For the nine mixers, five weights (0, 0.25, 0.5, 0.75, 1) produced finite sampled bone transforms with `applyRootMotion=false` and a fixed Animator owner. This supports technical feasibility of the named source combinations, not visually smooth handoffs or a finished kinematic controller.
 
 The proposed state architecture remains `inferred`; this bounded feasibility evidence is not an accepted full-controller verdict. The reports are useful for selecting a prototype and assigning author/project work; they do not establish a universal game-ready controller.
 

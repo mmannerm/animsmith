@@ -77,7 +77,7 @@ Severity describes impact as delivered for the stated use. Residual status is ex
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | observed-engine | Source inventory: 177 Humanoid clips; 6/6 sample and 3/3 mixer executions. A separate named cross-pack subset has finite-pose/fixed-root assertions (26 total checks across five packs). | Inventory probe is execution-only; cross-pack probe adds finite poses, not visual/contact quality. Controller, candidate-output and build acceptance remain open. |
+| Unity 6000.5.8f1 | observed-engine | Source inventory: 177 Humanoid clips; 6/6 sample and 3/3 representative mixer executions; the run mixer used `RunForwardUnarmed.FBX`, not the selected ring’s `RunForward2Unarmed.fbx`. A separate named cross-pack subset has finite-pose/fixed-root assertions (26 total checks across five packs). | Inventory probe is execution-only and does not validate the complete selected rings; cross-pack probe adds finite poses, not visual/contact quality. Controller, candidate-output and build acceptance remain open. |
 | Unreal Engine unspecified | not-evaluated | No current import or playback run. | Import, retarget, graph, and build tests. |
 | Godot unspecified | not-evaluated | No current conversion, import, or playback run. | Conversion/import, graph, and export tests. |
 | Bevy unspecified | not-evaluated | No current glTF handoff or runtime run. | Conversion, addressability, runtime, and performance tests. |
