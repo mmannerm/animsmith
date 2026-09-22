@@ -1053,7 +1053,9 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
     let pair_links = canonical_report_pair_links(&report_index);
     assert_eq!(pair_links.len() % 2, 0, "every report has an evidence link");
     let pairs: BTreeMap<_, _> = pair_links
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| (pair[0].as_str(), pair[1].as_str()))
         .collect();
     assert_eq!(
