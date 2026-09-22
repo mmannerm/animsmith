@@ -226,12 +226,10 @@ class EditorialReportTests(unittest.TestCase):
             appendix_path = folder / "fixture-evidence.md"
             report_path.write_text(foreign, encoding="utf-8")
             appendix_path.write_text(appendix, encoding="utf-8")
-            environment = os.environ.copy()
-            environment.update(RUSTUP_TOOLCHAIN="1.98.0", RUSTC_WRAPPER="")
             result = subprocess.run(
                 [sys.executable, str(Path(reports.__file__)), str(report_path),
                  "--appendix", str(appendix_path)],
-                capture_output=True, text=True, check=False, env=environment,
+                capture_output=True, text=True, check=False,
             )
         self.assertEqual(1, result.returncode, result.stderr)
         self.assertIn("exact-member evidence target is missing", result.stderr)
