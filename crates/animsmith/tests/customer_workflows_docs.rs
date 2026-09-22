@@ -449,10 +449,12 @@ fn commercial_report_index_equals_the_maintained_on_disk_pairs() {
         );
     }
 
-    let index: BTreeSet<String> = rendered_links(&markdown("docs/reports/README.md"))
-        .into_iter()
-        .map(|(_, destination)| destination)
-        .filter(|destination| destination.ends_with(".md"))
+    let report_index = markdown("docs/reports/README.md");
+    let table = table_headed_by(&report_index, "Technical report");
+    let index: BTreeSet<String> = table[1..]
+        .iter()
+        .flat_map(|row| row.iter().take(2))
+        .flat_map(|cell| cell.links.iter().cloned())
         .collect();
     let technical_in_index: BTreeSet<String> = index
         .iter()
