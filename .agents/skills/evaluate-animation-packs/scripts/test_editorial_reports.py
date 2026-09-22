@@ -214,6 +214,24 @@ class EditorialReportTests(unittest.TestCase):
                 finally:
                     outside.unlink(missing_ok=True)
 
+    def test_cli_accepts_unicode_with_non_utf8_process_locale(self) -> None:
+        primary, appendix = valid_editorial_pair()
+        primary = primary.replace("Forward locomotion", "Caf\u00e9 locomotion")
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            report_path = folder / "fixture.md"
+            appendix_path = folder / "fixture-evidence.md"
+            report_path.write_text(primary, encoding="utf-8")
+            appendix_path.write_text(appendix, encoding="utf-8")
+            environment = os.environ.copy()
+            environment.update(PYTHONUTF8="0", PYTHONCOERCECLOCALE="0", LC_ALL="C")
+            result = subprocess.run(
+                [sys.executable, str(Path(reports.__file__)), str(report_path)],
+                capture_output=True, text=True, encoding="utf-8", check=False,
+                env=environment,
+            )
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_cli_rejects_missing_foreign_member_target(self) -> None:
         primary, appendix = valid_editorial_pair()
         foreign = primary.replace(

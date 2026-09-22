@@ -66,19 +66,23 @@ class Element {
 }
 function walk(node) { return [node, ...node.children.flatMap(walk)]; }
 function el(tag, text = "") { const node = new Element(tag); node.textContent = text; return node; }
-function table(headers, cells) {
+function table(headers, rows) {
   const wrapper = el("div"); wrapper.className = "table-wrapper";
   const node = el("table");
-  const head = el("thead"), body = el("tbody"), headerRow = el("tr"), row = el("tr");
+  const head = el("thead"), body = el("tbody"), headerRow = el("tr");
   headerRow.cells = headers.map((name) => headerRow.appendChild(el("th", name)));
-  row.cells = cells.map((value) => {
-    const cell = el("td");
-    if (Array.isArray(value)) value.forEach((child) => cell.appendChild(child));
-    else cell.textContent = value;
-    return row.appendChild(cell);
+  const bodyRows = rows.map((values) => {
+    const row = el("tr");
+    row.cells = values.map((value) => {
+      const cell = el("td");
+      if (Array.isArray(value)) value.forEach((child) => cell.appendChild(child));
+      else cell.textContent = value;
+      return row.appendChild(cell);
+    });
+    return row;
   });
-  head.rows = [headerRow]; body.rows = [row];
-  head.appendChild(headerRow); body.appendChild(row);
+  head.rows = [headerRow]; body.rows = bodyRows;
+  head.appendChild(headerRow); bodyRows.forEach((row) => body.appendChild(row));
   node.tHead = head; node.tBodies = [body];
   node.appendChild(head); node.appendChild(body); wrapper.appendChild(node);
   wrapper.scrollWidth = 1200; wrapper.clientWidth = 500;
@@ -89,18 +93,26 @@ const root = el("div");
 const setHeading = el("h2", "Runtime sets and authored motion");
 setHeading.setAttribute("id", "runtime-sets-and-authored-motion"); root.appendChild(setHeading);
 const setLink = el("a", "Exact files"); setLink.setAttribute("href", "set-evidence.md#exact-runtime-members");
+const secondSetLink = el("a", "Second set files"); secondSetLink.setAttribute("href", "other-evidence.md#exact-runtime-members");
 const setHeaders = ["Set", "Controller use", "Adoption decision", "Exact members"];
-const set = table(setHeaders, ["run-8-way", "Full-body locomotion", "Test foot contacts", [setLink]]);
+const set = table(setHeaders, [
+  ["run-8-way", "Full-body locomotion", "Test foot contacts", [setLink]],
+  ["idle-to-run", "Starting movement", "Check the transition", [secondSetLink]],
+]);
 root.appendChild(set.wrapper);
 const heading = el("h2", "Technical issue register");
 heading.setAttribute("id", "technical-issue-register"); root.appendChild(heading);
 const guidance = el("a", "Readiness guidance"); guidance.setAttribute("href", "../guide.html#readiness");
-const issue = table(headers, ["ISSUE-1", "major", [el("span", "Reproduce with current config. "), guidance], "artist-author", "Fix and retest", "Possible tool work", "observed; unresolved"]);
+const secondGuidance = el("a", "Contact procedure"); secondGuidance.setAttribute("href", "../guide.html#contact");
+const issue = table(headers, [
+  ["ISSUE-1", "major", [el("span", "Reproduce with current config. "), guidance], "artist-author", "Fix and retest", "Possible tool work", "observed; unresolved"],
+  ["ISSUE-2", "minor", [el("span", "Inspect contact. "), secondGuidance], "engine-config", "Test the target rig", "No generic fix", "untested; open"],
+]);
 root.appendChild(issue.wrapper);
 const nextHeading = el("h2", "Engine status"); root.appendChild(nextHeading);
-const unrelated = table(headers, ["OTHER", "minor", "Unrelated", "unknown", "none", "none", "none"]);
+const unrelated = table(headers, [["OTHER", "minor", "Unrelated", "unknown", "none", "none", "none"]]);
 root.appendChild(unrelated.wrapper);
-const evidence = table(["File", "Measurement"], ["clip.fbx", "42"]);
+const evidence = table(["File", "Measurement"], [["clip.fbx", "42"]]);
 root.appendChild(evidence.wrapper);
 const observed = [];
 class ResizeObserver {
@@ -116,33 +128,34 @@ const document = {
 };
 const context = vm.createContext({ document, ResizeObserver, MutationObserver: undefined });
 vm.runInContext(source, context);
+function assertCardRows(tableNode, cardContainer, labels) {
+  const rows = tableNode.tBodies[0].rows;
+  assert.equal(cardContainer.children.length, rows.length);
+  rows.forEach((row, rowIndex) => {
+    const card = cardContainer.children[rowIndex];
+    assert.equal(card.tagName, "ARTICLE");
+    assert.equal(card.children[0].textContent, row.cells[0].textContent);
+    const details = card.children[1].children;
+    assert.equal(details.length, (labels.length - 1) * 2);
+    labels.slice(1).forEach((label, columnIndex) => {
+      assert.equal(details[columnIndex * 2].textContent, label);
+      assert.equal(details[columnIndex * 2 + 1].textContent, row.cells[columnIndex + 1].textContent);
+    });
+    const links = (node) => walk(node).filter((item) => item.tagName === "A")
+      .map((item) => [item.textContent, item.getAttribute("href")]);
+    assert.deepEqual(links(card), links(row), "each row keeps its links in order");
+  });
+}
 const cards = walk(root).filter((node) => node.className === "as-issue-cards");
 assert.equal(cards.length, 1);
 assert.equal(issue.wrapper.hidden, true);
 assert.equal(issue.node.getAttribute("data-as-cards"), "true");
-const card = cards[0].children[0];
-assert.equal(card.tagName, "ARTICLE");
-assert.equal(card.children[0].textContent, "ISSUE-1");
-const details = card.children[1].children;
-assert.equal(details.length, 12);
-headers.slice(1).forEach((name, index) => {
-  assert.equal(details[index * 2].textContent, name);
-  assert.equal(details[index * 2 + 1].textContent, issue.node.tBodies[0].rows[0].cells[index + 1].textContent);
-});
-const copiedLink = walk(card).find((node) => node.tagName === "A");
-assert.equal(copiedLink.getAttribute("href"), "../guide.html#readiness");
+assertCardRows(issue.node, cards[0], headers);
 const setCards = walk(root).filter((node) => node.className === "as-set-cards");
 assert.equal(setCards.length, 1);
 assert.equal(set.wrapper.hidden, false, "the semantic table remains the desktop and no-JS source");
 assert.equal(set.node.getAttribute("data-as-set-cards"), "true");
-assert.equal(setCards[0].children[0].children[0].textContent, "run-8-way");
-const setDetails = setCards[0].children[0].children[1].children;
-assert.equal(setDetails.length, 6);
-setHeaders.slice(1).forEach((name, index) => {
-  assert.equal(setDetails[index * 2].textContent, name);
-  assert.equal(setDetails[index * 2 + 1].textContent, set.node.tBodies[0].rows[0].cells[index + 1].textContent);
-});
-assert.equal(walk(setCards[0]).find((node) => node.tagName === "A").getAttribute("href"), "set-evidence.md#exact-runtime-members");
+assertCardRows(set.node, setCards[0], setHeaders);
 assert.equal(unrelated.wrapper.hidden, false);
 assert.equal(evidence.wrapper.hidden, false);
 assert.equal(evidence.wrapper.getAttribute("tabindex"), "0");
@@ -150,6 +163,11 @@ assert.equal(evidence.wrapper.getAttribute("role"), "region");
 assert.match(evidence.wrapper.getAttribute("aria-label"), /Engine status table, scroll horizontally/);
 const hints = walk(root).filter((node) => node.className === "as-table-hint");
 assert.equal(hints.length, 2, "only the unrelated and evidence tables need scroll hints");
+for (const hint of hints) {
+  assert.equal(hint.hidden, false, "overflow hints are visible");
+  assert.match(hint.textContent, /scroll horizontally/i);
+  assert.match(hint.textContent, /arrow keys/i);
+}
 assert.equal(observed.length, 3);
 const setHint = walk(root).find((node) => node.className === "as-table-hint as-set-table-hint");
 assert.ok(setHint, "the desktop table retains a cue when narrow");

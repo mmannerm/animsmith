@@ -88,6 +88,8 @@ The [exact runtime members](#exact-runtime-members) below record source members 
 
 Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
 
+For these multi-member gait rows, duration and RM speed cells are set minima, not per-clip values. The ranges below retain authored variation; individual speed assignments are not reproduced here.
+
 | Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
 |---|---|---|---|---|---|
 | `walk-combat-8-way-in-place` | eight-way directional gait | `Humanoid@WalkForwardS&S.fbx`; `Humanoid@WalkForwardLeftS&S.fbx`; `Humanoid@WalkLeftS&S.fbx`; `Humanoid@WalkBackwardsLeftS&S.fbx`; `Humanoid@WalkBackwardsS&S.fbx`; `Humanoid@WalkBackwardsRightS&S.fbx`; `Humanoid@WalkRightS&S.fbx`; `Humanoid@WalkForwardRightS&S.fbx` | variant=in-place | duration=1.333 s | loop=true; sync=not-evaluated |

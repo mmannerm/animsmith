@@ -84,6 +84,8 @@ The [exact runtime members](#exact-runtime-members) below record source members 
 
 Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
 
+For these multi-member gait rows, duration and RM speed cells are set minima, not per-clip values. The ranges below retain authored variation; individual speed assignments are not reproduced here.
+
 The original grouped gait rows below mix eight in-place and eight root-motion files. The selectable eight-member variants follow this retained source table.
 
 | Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |

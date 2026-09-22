@@ -30,28 +30,37 @@ class LatestEvaluationsTests(unittest.TestCase):
             current = root / 'dev/docs/reports/index.html'
             current.parent.mkdir(parents=True)
             current.write_text('<main>Current evidence</main>')
-            report = root / 'docs/reports/pack.html'
-            report.parent.mkdir(parents=True)
-            before = '<!doctype html>\n<main\n id="content">Released evidence &amp; links</main>'
-            report.write_text(before)
-            alias = report.with_name('README.html')
+            reports_dir = root / 'docs/reports'
+            reports_dir.mkdir(parents=True)
+            originals = {
+                reports_dir / 'pack.html': '<!doctype html>\n<main\n id="content">Released evidence &amp; links</main>',
+                reports_dir / 'second-pack.html': '<html><main class="chapter"><h1>Second report</h1><p>Different release findings.</p></main></html>',
+            }
+            for report, before in originals.items():
+                report.write_text(before)
+            alias = reports_dir / 'README.html'
             alias.write_text('<a href="index.html">Old index alias</a>')
             unrelated = root / 'index.html'
             unrelated.write_text('<main>Released landing</main>')
             composer.link_latest_evaluations(root)
-            after = report.read_text()
-            self.assertIn('Released evidence &amp; links</main>', after)
-            # Removing only the inserted aside recovers every original chapter byte.
-            start = after.index('\n<aside ')
-            end = after.index('</aside>\n', start) + len('</aside>\n')
-            self.assertEqual(after[:start] + after[end:], before)
+            for report, before in originals.items():
+                after = report.read_text()
+                self.assertEqual(after.count('<aside class="warning"'), 1)
+                self.assertIn('This is a release snapshot.', after)
+                # Removing only the inserted aside recovers every original chapter byte.
+                start = after.index('\n<aside ')
+                end = after.index('</aside>\n', start) + len('</aside>\n')
+                self.assertEqual(after[:start] + after[end:], before)
+                links = Links(after).hrefs
+                self.assertEqual(len(links), 1)
+                self.assertEqual((report.parent / links[0]).resolve(), current.resolve())
             self.assertEqual(unrelated.read_text(), '<main>Released landing</main>')
             self.assertEqual(alias.read_text(), '<a href="index.html">Old index alias</a>')
             self.assertEqual(current.read_text(), '<main>Current evidence</main>')
-            for page in (report, root / 'evaluations/index.html'):
-                links = Links(page.read_text()).hrefs
-                self.assertEqual(len(links), 1)
-                self.assertEqual((page.parent / links[0]).resolve(), current.resolve())
+            latest = root / 'evaluations/index.html'
+            links = Links(latest.read_text()).hrefs
+            self.assertEqual(len(links), 1)
+            self.assertEqual((latest.parent / links[0]).resolve(), current.resolve())
 
     def test_refuses_broken_latest_target_before_mutation(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -207,6 +207,7 @@ def _parser_binary() -> Path:
         cwd=root,
         env=environment,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=True,
     )
@@ -227,7 +228,8 @@ def _parser_binary() -> Path:
 def parse_markdown(text: str) -> dict[str, Any]:
     """Parse Markdown with the repository's pinned pulldown-cmark helper."""
     result = subprocess.run(
-        [_parser_binary()], input=text, text=True, capture_output=True, check=True
+        [_parser_binary()], input=text, text=True, encoding="utf-8",
+        capture_output=True, check=True
     )
     document = json.loads(result.stdout)
     if not isinstance(document, dict):
