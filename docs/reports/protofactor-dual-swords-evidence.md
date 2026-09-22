@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -72,8 +72,41 @@ Current evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluati
 | `draw-combat-put-away` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; engine and visual gates not evaluated |
 | `combo-alternatives` | other | 38 exact files; 19 IP, 19 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 1/38 files pass the retained declaration; engine and visual gates not evaluated |
 | `single-attack-alternatives` | other | 22 exact files; 11 IP, 11 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/22 files pass the retained declaration; engine and visual gates not evaluated |
+| `crouch-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `crouch-combat-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `run-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `run-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `run-combat-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `run-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `walk-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `walk-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `walk-combat-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `walk-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
 
-The primary [runtime-set table](protofactor-dual-swords.md#runtime-sets-and-authored-motion) records exact members and fresh timing/motion for the decision-driving gait sets. No historical membership is promoted solely from prose or filenames.
+The [exact runtime members](#exact-runtime-members) below record source members and fresh timing/motion for the decision-driving gait sets. No unavailable membership authority is inferred from prose or filenames.
+
+### Grouped gait measurements (retained)
+
+Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
+
+The original grouped gait rows below mix eight in-place and eight root-motion files. The selectable eight-member variants follow this retained source table.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `crouch-combat-8-way` | eight-way directional gait | `Humanoid@CrouchForwardDualSwords.fbx`; `Humanoid@CrouchForwardDualSwords_RM.fbx`; `Humanoid@CrouchForwardLeftDualSwords.fbx`; `Humanoid@CrouchForwardLeftDualSwords_RM.fbx`; `Humanoid@CrouchLeftDualSwords.fbx`; `Humanoid@CrouchLeftDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsLeftDualSwords.fbx`; `Humanoid@CrouchBackwardsLeftDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsDualSwords.fbx`; `Humanoid@CrouchBackwardsDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsRightDualSwords.fbx`; `Humanoid@CrouchBackwardsRightDualSwords_RM.fbx`; `Humanoid@CrouchRightDualSwords.fbx`; `Humanoid@CrouchRightDualSwords_RM.fbx`; `Humanoid@CrouchForwardRightDualSwords.fbx`; `Humanoid@CrouchForwardRightDualSwords_RM.fbx` | set_type=directional-blend | duration=1.667 s; rm_speed=0.730 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+| `run-combat-8-way` | eight-way directional gait | `Humanoid@RunForwardDualSwords.fbx`; `Humanoid@RunForwardDualSwords_RM.fbx`; `Humanoid@RunForwardLeftDualSwords.fbx`; `Humanoid@RunForwardLeftDualSwords_RM.fbx`; `Humanoid@RunLeftDualSwords.fbx`; `Humanoid@RunLeftDualSwords_RM.fbx`; `Humanoid@RunBackwardsLeftDualSwords.fbx`; `Humanoid@RunBackwardsLeftDualSwords_RM.fbx`; `Humanoid@RunBackwardsDualSwords.fbx`; `Humanoid@RunBackwardsDualSwords_RM.fbx`; `Humanoid@RunBackwardsRightDualSwords.fbx`; `Humanoid@RunBackwardsRightDualSwords_RM.fbx`; `Humanoid@RunRightDualSwords.fbx`; `Humanoid@RunRightDualSwords_RM.fbx`; `Humanoid@RunForwardRightDualSwords.fbx`; `Humanoid@RunForwardRightDualSwords_RM.fbx` | set_type=directional-blend | duration=0.600 s; rm_speed=2.475 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+| `walk-combat-8-way` | eight-way directional gait | `Humanoid@WalkForwardDualSwords.fbx`; `Humanoid@WalkForwardDualSwords_RM.fbx`; `Humanoid@WalkForwardLeftDualSwords.fbx`; `Humanoid@WalkForwardLeftDualSwords_RM.fbx`; `Humanoid@WalkLeftDualSwords.fbx`; `Humanoid@WalkLeftDualSwords_RM.fbx`; `Humanoid@WalkBackwardsLeftDualSwords.fbx`; `Humanoid@WalkBackwardsLeftDualSwords_RM.fbx`; `Humanoid@WalkBackwardsDualSwords.fbx`; `Humanoid@WalkBackwardsDualSwords_RM.fbx`; `Humanoid@WalkBackwardsRightDualSwords.fbx`; `Humanoid@WalkBackwardsRightDualSwords_RM.fbx`; `Humanoid@WalkRightDualSwords.fbx`; `Humanoid@WalkRightDualSwords_RM.fbx`; `Humanoid@WalkForwardRightDualSwords.fbx`; `Humanoid@WalkForwardRightDualSwords_RM.fbx` | set_type=directional-blend | duration=1.333 s; rm_speed=0.692 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+
+Measured RM speed spans are `crouch-combat-8-way` 0.730–0.732 m/s (ratio 0.997); `run-combat-8-way` 2.475–2.500 m/s (ratio 0.990); `walk-combat-8-way` 0.692–0.765 m/s (ratio 0.905). Preserve authored variation unless the project declares a normalization policy; diagonals and cardinals require the full blend test. Measured source in-place phase spreads (cycles, eight measured members each) are `crouch-combat-8-way` 0.6184; `run-combat-8-way` 0.6732; `walk-combat-8-way` 0.7086. Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. Keep `sync=not-evaluated` until the selected synchronization and contact policy is tested. The current catalog also measures `forward-speed-alternatives`, `draw-combat-put-away`, `combo-alternatives`, and `single-attack-alternatives` as evaluator-defined hypotheses; they remain candidate groupings.
+
+### Exact runtime members
+
+Each row is one selectable eight-member variant. Duration and RM speed ranges are preserved in the grouped measurement paragraph above; numeric table values are the measured minima. Continuous-loop declarations remain unaccepted.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `crouch-combat-8-way-in-place` | eight-way directional gait | `Humanoid@CrouchForwardDualSwords.fbx`; `Humanoid@CrouchForwardLeftDualSwords.fbx`; `Humanoid@CrouchLeftDualSwords.fbx`; `Humanoid@CrouchBackwardsLeftDualSwords.fbx`; `Humanoid@CrouchBackwardsDualSwords.fbx`; `Humanoid@CrouchBackwardsRightDualSwords.fbx`; `Humanoid@CrouchRightDualSwords.fbx`; `Humanoid@CrouchForwardRightDualSwords.fbx` | variant=in-place | duration=1.667 s | loop=true; sync=not-evaluated |
+| `crouch-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@CrouchForwardDualSwords_RM.fbx`; `Humanoid@CrouchForwardLeftDualSwords_RM.fbx`; `Humanoid@CrouchLeftDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsLeftDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsDualSwords_RM.fbx`; `Humanoid@CrouchBackwardsRightDualSwords_RM.fbx`; `Humanoid@CrouchRightDualSwords_RM.fbx`; `Humanoid@CrouchForwardRightDualSwords_RM.fbx` | variant=root-motion | duration=1.667 s; rm_speed=0.730 m/s | loop=true; sync=not-evaluated |
+| `run-combat-8-way-in-place` | eight-way directional gait | `Humanoid@RunForwardDualSwords.fbx`; `Humanoid@RunForwardLeftDualSwords.fbx`; `Humanoid@RunLeftDualSwords.fbx`; `Humanoid@RunBackwardsLeftDualSwords.fbx`; `Humanoid@RunBackwardsDualSwords.fbx`; `Humanoid@RunBackwardsRightDualSwords.fbx`; `Humanoid@RunRightDualSwords.fbx`; `Humanoid@RunForwardRightDualSwords.fbx` | variant=in-place | duration=0.600 s | loop=true; sync=not-evaluated |
+| `run-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@RunForwardDualSwords_RM.fbx`; `Humanoid@RunForwardLeftDualSwords_RM.fbx`; `Humanoid@RunLeftDualSwords_RM.fbx`; `Humanoid@RunBackwardsLeftDualSwords_RM.fbx`; `Humanoid@RunBackwardsDualSwords_RM.fbx`; `Humanoid@RunBackwardsRightDualSwords_RM.fbx`; `Humanoid@RunRightDualSwords_RM.fbx`; `Humanoid@RunForwardRightDualSwords_RM.fbx` | variant=root-motion | duration=0.600 s; rm_speed=2.475 m/s | loop=true; sync=not-evaluated |
+| `walk-combat-8-way-in-place` | eight-way directional gait | `Humanoid@WalkForwardDualSwords.fbx`; `Humanoid@WalkForwardLeftDualSwords.fbx`; `Humanoid@WalkLeftDualSwords.fbx`; `Humanoid@WalkBackwardsLeftDualSwords.fbx`; `Humanoid@WalkBackwardsDualSwords.fbx`; `Humanoid@WalkBackwardsRightDualSwords.fbx`; `Humanoid@WalkRightDualSwords.fbx`; `Humanoid@WalkForwardRightDualSwords.fbx` | variant=in-place | duration=1.333 s | loop=true; sync=not-evaluated |
+| `walk-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@WalkForwardDualSwords_RM.fbx`; `Humanoid@WalkForwardLeftDualSwords_RM.fbx`; `Humanoid@WalkLeftDualSwords_RM.fbx`; `Humanoid@WalkBackwardsLeftDualSwords_RM.fbx`; `Humanoid@WalkBackwardsDualSwords_RM.fbx`; `Humanoid@WalkBackwardsRightDualSwords_RM.fbx`; `Humanoid@WalkRightDualSwords_RM.fbx`; `Humanoid@WalkForwardRightDualSwords_RM.fbx` | variant=root-motion | duration=1.333 s; rm_speed=0.692 m/s | loop=true; sync=not-evaluated |
 
 ### Pipeline-stage coverage
 

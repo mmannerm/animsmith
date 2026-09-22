@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix contains scrubbed facts only. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative. The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; it is retained as opaque historical classification input, not current source-to-vendor mapping authority.
 
@@ -60,6 +60,21 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | `emote-cinematic` | 0 | 0 | Not authoritatively classified |
 | `other-unknown` | 83 | 83 | One opaque current source unit per delivered FBX |
 | **Total** | **83** | **83** | Current exact source paths; no vendor mapping inferred |
+
+### Exact runtime members
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `hypothesis/kinematic-run-8way` | forward=(0,1) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run forward.fbx` | variant=in-place | duration=0.500 s; frames=28 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-8way` | forward-left=(-0.707,0.707) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run forward left.fbx` | variant=in-place | duration=0.500 s; frames=16 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-8way` | left=(-1,0) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run left.fbx` | variant=in-place | duration=0.500 s; frames=16 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-8way` | back-left=(-0.707,-0.707) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run backward left.fbx` | variant=in-place | duration=0.500 s; frames=20 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-8way` | back=(0,-1) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run backward.fbx` | variant=in-place | duration=0.500 s; frames=20 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-8way` | back-right=(0.707,-0.707) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run backward right.fbx` | variant=in-place | duration=0.500 s; frames=16 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-8way` | right=(1,0) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run right.fbx` | variant=in-place | duration=0.500 s; frames=18 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-8way` | forward-right=(0.707,0.707) | `Rifle_8-Way_Locomotion_Pack_-_in-place/run forward right.fbx` | variant=in-place | duration=0.500 s; frames=23 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+
+The table above preserves the measured member detail from the companion report; its proposed controller still requires target-engine acceptance.
 
 ### Runtime-set inventory
 

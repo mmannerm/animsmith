@@ -257,8 +257,10 @@ The workflow source is the default branch; pull requests only retain a rendered
 preview artifact and never deploy. The release root is selected from GitHub's
 latest published release, rather than from an assumed version prefix. Its
 mdBook executable and its `scripts/build-docs-site.py` both come from that
-selected tag, so a new site shape on the default branch never rewrites — or
-breaks — an already released documentation tree; the `/dev/` subtree separately
+selected tag. Composition preserves its chapter content and adds only a
+report-version navigation notice linking older evaluations to current main.
+The stable `/evaluations/` route also leads to the current report index.
+The `/dev/` subtree separately
 uses the default branch's own pin and build script. If no published release
 exists, do not enable Pages deployment: publish the first release first, then
 dispatch the workflow as shown below.

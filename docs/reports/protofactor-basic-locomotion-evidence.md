@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix preserves current evidence only. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -70,6 +70,37 @@ New evaluator-selected generic scenarios: current source bytes establish the exa
 | Walk eight directions | `directional-blend` | `Humanoid@WalkForwardUnarmed2.fbx`, `Humanoid@WalkForwardLeftUnarmed.fbx`, `Humanoid@WalkLeftUnarmed.fbx`, `Humanoid@WalkBackwardsLeftUnarmed.fbx`, `Humanoid@WalkBackwardsUnarmed.fbx`, `Humanoid@WalkBackwardsRightUnarmed.fbx`, `Humanoid@WalkRightUnarmed.fbx`, `Humanoid@WalkForwardRightUnarmed.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 | Run eight directions | `directional-blend` | `Humanoid@RunForward2Unarmed.fbx`, `Humanoid@RunForwardLeftUnarmed.fbx`, `Humanoid@RunLeftUnarmed.fbx`, `Humanoid@RunBackwardsLeftUnarmed.fbx`, `Humanoid@RunBackwardsUnarmed.fbx`, `Humanoid@RunBackwardsRightUnarmed.fbx`, `Humanoid@RunRightUnarmed.fbx`, `Humanoid@RunForwardRightUnarmed.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 | Crouch eight directions | `directional-blend` | `Humanoid@CrouchForwardUnarmed.fbx`, `Humanoid@CrouchForwardLeftUnarmed.fbx`, `Humanoid@CrouchLeftUnarmed.fbx`, `Humanoid@CrouchBackwardsLeftUnarmed.fbx`, `Humanoid@CrouchBackwardsUnarmed.fbx`, `Humanoid@CrouchBackwardsRightUnarmed.fbx`, `Humanoid@CrouchRightUnarmed.fbx`, `Humanoid@CrouchForwardRightUnarmed.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
+
+### Exact runtime members
+
+Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Walk eight directions | Proposed forward (0,1) | `Humanoid@WalkForwardUnarmed2.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed forward-left (-1,1) | `Humanoid@WalkForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed left (-1,0) | `Humanoid@WalkLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed back-left (-1,-1) | `Humanoid@WalkBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed back (0,-1) | `Humanoid@WalkBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed back-right (1,-1) | `Humanoid@WalkBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed right (1,0) | `Humanoid@WalkRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Proposed forward-right (1,1) | `Humanoid@WalkForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed forward (0,1) | `Humanoid@RunForward2Unarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed forward-left (-1,1) | `Humanoid@RunForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed left (-1,0) | `Humanoid@RunLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed back-left (-1,-1) | `Humanoid@RunBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed back (0,-1) | `Humanoid@RunBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed back-right (1,-1) | `Humanoid@RunBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed right (1,0) | `Humanoid@RunRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Run eight directions | Proposed forward-right (1,1) | `Humanoid@RunForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed forward (0,1) | `Humanoid@CrouchForwardUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed forward-left (-1,1) | `Humanoid@CrouchForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed left (-1,0) | `Humanoid@CrouchLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed back-left (-1,-1) | `Humanoid@CrouchBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed back (0,-1) | `Humanoid@CrouchBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed back-right (1,-1) | `Humanoid@CrouchBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed right (1,0) | `Humanoid@CrouchRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Crouch eight directions | Proposed forward-right (1,1) | `Humanoid@CrouchForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
 
 ### Pipeline-stage coverage
 

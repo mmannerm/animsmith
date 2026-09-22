@@ -10,44 +10,46 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Evidence appendix](mixamo-basic-locomotion-evidence.md)
 
 ## Technical decision
 
-All 12 delivered FBX files loaded under AnimSmith 0.14.0 and the untouched baseline produced 0 errors, 4 `duration-sanity` warnings, and 1712 non-gating `constant-track` notes. The current archive-level contracts produced 4 errors where files in the root-motion directory remain effectively stationary. That is a movement-ownership decision for the consuming project, not proof of defective animation. Two `X Bot.fbx` files use a 68-bone reference skeleton; the other 10 files use 66 bones, and every file resolves the nine-role Mixamo profile.
-
 Developer decision: admit this pack only to an isolated basic unarmed locomotion prototyping pilot. Use the explicitly new `hypothesis/kinematic-walk-3way` proposal with a kinematic controller owning XZ translation, yaw, and collision; selected members measured at no more than 0.000000 m/s root speed. Do not promote the proposal, loops, phase policy, root-motion use, or shipment until the issue acceptance gates and target-engine blend/contact review pass. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains the boundary.
+
+All 12 delivered FBX files loaded under AnimSmith 0.14.0 and the untouched baseline produced 0 errors, 4 `duration-sanity` warnings, and 1712 non-gating `constant-track` notes. The current archive-level contracts produced 4 errors where files in the root-motion directory remain effectively stationary. That is a movement-ownership decision for the consuming project, not proof of defective animation. Two `X Bot.fbx` files use a 68-bone reference skeleton; the other 10 files use 66 bones, and every file resolves the nine-role Mixamo profile.
 
 ## Capability coverage
 
-### Complete core
+This is a full-body humanoid controller hypothesis for visible characters. Third-person gameplay-camera appearance and target-character deformation remain visually untested. Dedicated first-person arms/viewmodel content and close-camera suitability were not established.
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+### Content present
 
-### Partial supporting gameplay
+| Candidate ingredients in the evaluated files | Current use boundary |
+|---|---|
+| Walk forward and strafe left/right are named and measured. Idle, jump and turns also appear by filename; their controller roles remain unclassified. | Filename-based candidates and current measurements; these do not establish a complete accepted gameplay controller. |
+
+### Content gaps and unknowns
+
+No authoritative 10-motion-to-12-file mapping was established. The remaining motion-named files have no accepted canonical role classification; this does not show that gameplay content is absent.
+
+### Evaluation still needed
 
 - `hypothesis/kinematic-walk-3way` is a new evaluator-selected controller hypothesis over exact current files and measurements. It is not vendor intent, a recovered historical set, or runtime evidence.
-- Archive-level in-place/root-motion declarations ran on 4 and 8 files respectively; 4 files need per-file movement ownership.
-
-### Absent
-
-- No authoritative 10-motion-to-12-file mapping, loop/phase declarations, target-engine graph, visual/contact review, retarget proof, performance result, or cross-pack acceptance was established.
+- Loop/phase policy, target-engine graph, contact and visual review, target-character retargeting, performance and cross-pack acceptance remain open.
 
 ## Runtime sets and authored motion
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| `hypothesis/kinematic-walk-3way` | forward=(0,1) | `Basic_Locomotion_Pack_-_in-place/walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
-| `hypothesis/kinematic-walk-3way` | left=(-1,0) | `Basic_Locomotion_Pack_-_in-place/left strafe walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
-| `hypothesis/kinematic-walk-3way` | right=(1,0) | `Basic_Locomotion_Pack_-_in-place/right strafe walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| `hypothesis/kinematic-walk-3way` | Three-direction unarmed walk; controller owns XZ translation, yaw and collision | The three selected in-place walks have no reported source finding. Prototype with controller-owned movement and project-defined speed; configure loop and phase only after contact review. Four other root-motion-directory states need per-file ownership; idle and left turn also have endpoint warnings. No AnimSmith repair was tried. | [Member timings, coordinates and contracts](mixamo-basic-locomotion-evidence.md#exact-runtime-members) |
 
 This set is a current evaluator hypothesis based on exact filenames plus measurements. AnimSmith measured phase (cycles) as forward `0.4841`, left `0.4905`, and right `0.4587`; their normalized circular-range spread is `0.0318` cycles (`1 - largest cyclic gap` across member phases on the unit cycle). This is mechanical evidence, not a synchronization verdict: loop intent, foot-contact correspondence, phase acceptance, and gameplay use remain `not-evaluated`; `sync=not-evaluated`.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=directional-blend`; use only the exact `hypothesis/kinematic-walk-3way` members and coordinates above; do not infer missing directions or IP/RM pairs.
+1. **Members/topology:** `topology=directional-blend`; use only the exact `hypothesis/kinematic-walk-3way` members and coordinates in the linked appendix; do not infer missing directions or IP/RM pairs.
 2. **Timing/synchronization:** `sync=not-evaluated`; keep each measured duration and phase as evidence, leave loop flags unknown, and test normalized phase plus foot contacts before enabling continuous blends.
 3. **State ownership:** `owner=controller-xz-yaw-collision`; animation supplies pose while the kinematic controller applies translation, yaw, and collision once.
 4. **Composition constraints:** `composition=full-body-only`; use full-body states and transitions; no mask, additive, IK, socket, or layered result is established.

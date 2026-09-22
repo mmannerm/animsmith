@@ -569,7 +569,7 @@ Create a linked pair:
   1,500–2,000 rendered words and never more than 2,000 words;
 - `<vendor>-<pack>-evidence.md`: the exhaustive evidence appendix.
 
-This two-document contract is report format version 2. Record the format
+The editorial two-document contract is report format version 3. Record the format
 version in both files so future AnimSmith revisions can migrate or compare
 reports explicitly.
 
@@ -580,20 +580,31 @@ deleting required coverage.
 
 Write the primary report in this reader order:
 
-1. technical verdict and largest evidence boundary;
-2. complete, partial, and absent gameplay capabilities;
-3. named important runtime-set members with exact delivered identifiers,
-   explicit movement variants, loop policy, measured cycle durations,
-   root-motion speeds, and an interpretation of within-set speed/stride ranges
-   where applicable;
-4. an implementable blend/integration recipe with coordinates or thresholds,
-   loop/phase policy, and movement ownership;
-5. one issue/remediation register, with player/developer impact, one primary
-   owner, and applicable repository-relative `docs/game-ready-clips.md` links;
-6. Unity, Unreal Engine, Godot, and Bevy status;
-7. best fit, poor fit, cross-pack status, and limitations;
-8. one concise changes-between-AnimSmith-versions section;
-9. a short evidence/provenance boundary and sources.
+1. scope, camera/character context, and a concrete adoption decision;
+2. content present, content gaps/unknowns, and evaluation still needed, as
+   separate sections; missing tests must not read as missing animation;
+3. one compact summary per coherent runtime set and movement variant, covering
+   controller use and the unchanged/configuration/tool-candidate/source-fix path;
+4. an implementable integration recipe with movement ownership;
+5. an actionable issue register with affected sets/clips and residual status;
+6. engine status, best/poor fit, and remaining evidence boundaries.
+
+Use report format 3 for editorial reports. Exact members, coordinates, measured
+timing/speeds and runtime contracts live in the appendix's `Exact runtime
+members` section, linked from each set summary. Retain format 1/2 validation
+and generated structured-model views unchanged; format 3 is not a migration
+of the frozen evaluation-model schemas.
+
+An eight-direction ring is one blend set. In-place and root-motion alternatives
+must be independently selectable; never imply that all sixteen members form
+one tree. A collection should compare all evaluated constituent families before
+showing individual member detail. State overlap as unknown unless established.
+Keep current vendor membership dated and separate from local acquired revision.
+
+Separate full-body content, dedicated first-person arms/viewmodel content,
+proposed gameplay camera, and tested camera acceptance. Full-body animations
+may serve visible bodies or NPCs in a first-person game without establishing
+first-person weapon presentation. Use unknown where the content audit is absent.
 
 The primary report is technical, not a commercial scorecard. Keep evaluator
 license/setup failures, acquisition records, prices, and legal uncertainty out
@@ -615,11 +626,10 @@ one sentence in the primary report:
 Do not duplicate the issue register or redefine the readiness ladder in the
 appendix. Link to the canonical ladder instead.
 
-Keep detailed decision evidence where the reader needs it. In particular, an
-implementable primary runtime-set table may retain exact members, timing, and
-motion measurements. The appendix must link directly to that evidence and
-preserve its grouping basis, validation status, and evidence boundary without
-copying the full table or implying that the measurements are absent.
+Keep exact decision evidence in the linked appendix; the primary set summary
+must state the practical consequence. A generated candidate with improved metrics
+is not an accepted AnimSmith-only fix. Name any remaining author or project work,
+and distinguish observed source defects from untested risks.
 
 Preserve misspelled source identifiers exactly when they are evidence. If the
 repository's spelling tooling needs an exception, scope it to the complete

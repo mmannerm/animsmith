@@ -10,13 +10,17 @@
 >
 > Current evaluator: **AnimSmith {{SEMVER}}**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: `{{REPORT_STEM}}-evidence.md` (replace with a relative Markdown link in the completed report)
 
 ## Technical decision
 
 {{ONE_SHORT_OUTCOME_FIRST_TECHNICAL_DECISION}}
+
+State camera and character scope: full-body or dedicated viewmodel content,
+intended camera, and actually tested camera acceptance are separate facts.
+An untested first-person view is not evidence that first-person assets are absent.
 
 State separately:
 
@@ -62,17 +66,17 @@ visual/contact acceptance and must not by itself justify layered use.
 
 ## Capability coverage
 
-### Complete core
+### Content present
 
-- {{COMPLETE_GAMEPLAY_CAPABILITY}}
+- {{OBSERVED_OR_FILENAME_INFERRED_CONTENT_AND_BASIS}}
 
-### Partial supporting gameplay
+### Content gaps and unknowns
 
-- {{PARTIAL_GAMEPLAY_CAPABILITY_AND_MISSING_PREREQUISITE}}
+- {{CONTENT_NOT_FOUND_OR_UNCLASSIFIED_WITH_SCOPE}}
 
-### Absent
+### Evaluation still needed
 
-- {{MATERIAL_ABSENT_CAPABILITY}}
+- {{UNTESTED_RUNTIME_VISUAL_OR_CONTACT_BEHAVIOR}}
 
 Use gameplay capabilities, not marketing families. Explicitly cover core
 locomotion, transitions, airborne/traversal, combat/actions, reactions/deaths,
@@ -80,51 +84,21 @@ paired interactions, additive/aim use, and first-person content.
 
 ## Runtime sets and authored motion
 
-Name every member of each important runtime set. Record its semantic variant,
-measured timing or motion, and implementable runtime contract. For moving
-root-motion clips, include cycle duration and horizontal speed. Calculate the
-within-set minimum/maximum speed ratio and compare forward, cardinal, and
-diagonal members when those roles exist. Explain the controller consequence;
-speed variation is not automatically a defect without a declared movement
-policy. State how in-place counterparts relate and which owner must preserve,
-normalize, or re-author the variation.
+Summarize each coherent set once. An eight-direction gait ring is one set;
+in-place and root-motion rings are separate alternatives with separate owners.
+Collection summaries compare all evaluated constituents and link their evidence.
+Do not enumerate eight direction members as eight adoption decisions.
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| {{SET}} | {{DIRECTION_ROLE_OR_THRESHOLD}} | `{{EXACT_FILE_SCOPED_MEMBER}}` | variant={{VARIANT_ID}} | duration={{SECONDS}} s; rm_speed={{METERS_PER_SECOND}} m/s | loop={{TRUE_FALSE_UNKNOWN_OR_NOT_APPLICABLE}}; sync={{POLICY}} |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| {{SET}} | {{CONTROLLER_MOVEMENT_AND_TOPOLOGY}} | {{UNCHANGED_PROTOTYPE_CONFIGURATION_TOOL_CANDIDATE_SOURCE_FIX_OR_UNKNOWN_WITH_LIMIT}} | `{{REPORT_STEM}}-evidence.md#exact-runtime-members` (replace with a relative Markdown link) |
 
-Use this comparison table for locomotion, sync, transition, mask-composition,
-paired-interaction, motion-database, or other important sets. `Exact members`
-must name every file-scoped member with the delivered case and spelling; never
-silently normalize them from a vendor list or display label. State separately
-when another bundled manifest or animation list disagrees. `Runtime contract`
-captures the applicable loop, sync, state transition, mask, additive, contact,
-or interaction policy.
-Treat this table as decision evidence. When it carries the detailed per-member
-measurements, the evidence appendix should link to it and preserve only the
-grouping basis, validation status, and evidence boundary rather than duplicating
-the rows.
-Use semicolon-separated `key=value` timing terms (`duration`, `rm_speed`,
-`sample_rate`, `frames`, or `threshold`) with finite non-negative values and
-units. Use semicolon-separated runtime terms keyed by `loop`, `sync`,
-`transition`, `mask`, `additive`, `contact`, `interaction`, `movement`, `state`,
-`database`, or `playback`; use a specific lowercase/hyphenated value such as
-`one-shot`, `gait-phase`, or `unknown`. Fields that do not apply stay explicitly
-`N/A`. If no important runtime sets exist, write exactly: `No important runtime
-sets were identified.` Retain the grouping evidence in the appendix. This
-sentence is allowed only after reconciling current structured output: do not
-use it when that output contains a gait group or other runtime relationship.
-Use its exact current ID and membership. When semantic authority is missing,
-use `unknown`/`not-evaluated` contracts and state the vendor or project
-decision needed. Do not reconstruct historical memberships from prose,
-filenames, or superseded evidence.
-
-Write `Variant/type` as one `variant=<id>` or `set_type=<id>` token. Moving
-root-motion and paired IP/RM rows require `duration` and `rm_speed`; paired rows
-also require distinct `loop_ip`, `loop_rm`, and `sync` policies. Do not repeat a
-key with conflicting values. Prefix paired exact members with `IP` and `RM`;
-any movement-labeled member requires the matching `in-place`, `root-motion`,
-`rotation-only-root`, or `paired-ip-rm` variant.
+Use the same set name in the appendix's exact-member table and inventory.
+A collection may instead link a constituent's exact-member appendix; identify
+its scope without manufacturing a collection contract. Keep the adoption
+answer short and state what changed after a tool trial and what remains.
+If no important sets exist, omit the table and write exactly:
+`No important runtime sets were identified.`
 
 ## Integration recipe
 

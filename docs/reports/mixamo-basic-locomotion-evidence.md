@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix contains scrubbed facts only. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative. The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; it is retained as opaque historical classification input, not current source-to-vendor mapping authority.
 
@@ -60,6 +60,16 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | `emote-cinematic` | 0 | 0 | Not authoritatively classified |
 | `other-unknown` | 12 | 12 | One opaque current source unit per delivered FBX |
 | **Total** | **12** | **12** | Current exact source paths; no vendor mapping inferred |
+
+### Exact runtime members
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `hypothesis/kinematic-walk-3way` | forward=(0,1) | `Basic_Locomotion_Pack_-_in-place/walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-walk-3way` | left=(-1,0) | `Basic_Locomotion_Pack_-_in-place/left strafe walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-walk-3way` | right=(1,0) | `Basic_Locomotion_Pack_-_in-place/right strafe walking.fbx` | variant=in-place | duration=1.033 s; frames=32 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+
+The table above preserves the measured member detail from the companion report; its proposed controller still requires target-engine acceptance.
 
 ### Runtime-set inventory
 

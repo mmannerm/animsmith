@@ -10,11 +10,19 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Protofactor Basic Locomotion evidence](protofactor-basic-locomotion-evidence.md)
 
 ## Technical decision
+
+**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+
+The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+
+**Content in evaluated inventory:** Ground movement: walk, run, crouch. Cover, turns, jumps and throws appear in evaluated filenames; starts/stops and transitions are not classified into accepted sets. This describes candidate content, not accepted gameplay behavior.
+
+**Adoption route:** Use the three in-place rings to prototype controller-owned travel. Configure root ownership and loop/contact policy; the declared gait-anchor trial is an AnimSmith mechanical candidate, not an adopted output.
 
 **For a kinematic character: a useful locomotion foundation, conditional on phase and loop cleanup.** Start with the three in-place direction sets below. Do not put every delivered movement into one blend tree: cover, jumps, throws, and turns need state-specific selection and ownership. Equal duration within each ring helps synchronization but does not prove foot contacts or crossfades.
 
@@ -22,52 +30,31 @@
 
 ## Capability coverage
 
-### Complete core
+### Content present
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+Filename-classified candidates include three complete eight-direction in-place walk, run and crouch rings. The wider evaluated inventory also names cover, turn, jump and throw motions; these are not members of the three selected gait rings.
 
-### Partial supporting gameplay
+### Content gaps and unknowns
 
-- Three complete eight-direction source selections support proposed walk/run/crouch trees. Cover, turn, jump and action families need separate reviewed states; start/stop, contact and controller behavior remain open.
+Start/stop sequences and foot-contact markers are not classified into accepted runtime sets here. Their status is an evaluation gap, not a claim that the delivered pack lacks them.
 
-### Absent
+### Evaluation still needed
 
-- No current evidence establishes additive, first-person, paired interaction, engine acceptance, or artistic readiness.
+Test loop/contact correspondence, starts/stops, reversals, crouch changes and target-character playback. The bounded Unity source probe does not accept a controller, visual quality or first-person presentation.
 
 ## Runtime sets and authored motion
 
-New evaluator-selected generic scenarios: current source bytes establish the exact members, take names, durations, and measured roots below. Names suggest gameplay roles; topology and semantic intent are hypotheses requiring clip review. These are not reconstructed historical manifests or measured collection-output sets. Every listed member uses `Take 001`; full identities are in the external selected-set ledger.
+These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| Walk eight directions | Proposed forward (0,1) | `Humanoid@WalkForwardUnarmed2.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Walk eight directions | Proposed forward-left (-1,1) | `Humanoid@WalkForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Walk eight directions | Proposed left (-1,0) | `Humanoid@WalkLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Walk eight directions | Proposed back-left (-1,-1) | `Humanoid@WalkBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Walk eight directions | Proposed back (0,-1) | `Humanoid@WalkBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Walk eight directions | Proposed back-right (1,-1) | `Humanoid@WalkBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Walk eight directions | Proposed right (1,0) | `Humanoid@WalkRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Walk eight directions | Proposed forward-right (1,1) | `Humanoid@WalkForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed forward (0,1) | `Humanoid@RunForward2Unarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed forward-left (-1,1) | `Humanoid@RunForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed left (-1,0) | `Humanoid@RunLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed back-left (-1,-1) | `Humanoid@RunBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed back (0,-1) | `Humanoid@RunBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed back-right (1,-1) | `Humanoid@RunBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed right (1,0) | `Humanoid@RunRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Run eight directions | Proposed forward-right (1,1) | `Humanoid@RunForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=0.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed forward (0,1) | `Humanoid@CrouchForwardUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed forward-left (-1,1) | `Humanoid@CrouchForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed left (-1,0) | `Humanoid@CrouchLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed back-left (-1,-1) | `Humanoid@CrouchBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed back (0,-1) | `Humanoid@CrouchBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed back-right (1,-1) | `Humanoid@CrouchBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed right (1,0) | `Humanoid@CrouchRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Crouch eight directions | Proposed forward-right (1,1) | `Humanoid@CrouchForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| Walk eight directions | Eight-direction controller gait | Source prototype with controller travel. Loop/contact policy needs review; phase-anchor trial remains unadopted (22/24 candidates retain lint across all three rings). | [8 exact members](protofactor-basic-locomotion-evidence.md#exact-runtime-members) |
+| Run eight directions | Eight-direction controller gait | Source prototype with controller travel. Verify faster contact timing; phase-anchor trial remains unadopted (22/24 candidates retain lint across all three rings). | [8 exact members](protofactor-basic-locomotion-evidence.md#exact-runtime-members) |
+| Crouch eight directions | Eight-direction controller gait | Source prototype with controller travel. Configure stance changes; phase-anchor trial remains unadopted (22/24 candidates retain lint across all three rings). | [8 exact members](protofactor-basic-locomotion-evidence.md#exact-runtime-members) |
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=directional-blend`; create separate walk, run, and crouch two-parameter trees from the listed members. Use local horizontal velocity for direction; handle standing/crouching and cover as states.
+1. **Members/topology:** `topology=directional-blend`; create separate walk, run, and crouch two-parameter trees from the appendix members. Use local horizontal velocity for direction; handle standing/crouching and cover as states.
 2. **Timing/synchronization:** `sync=not-evaluated`; establish the project or vendor loop/contact policy before choosing synchronized blending. Current unpromoted gait-anchor candidates reduce measured phase spread; test the declared support-foot correspondence, loop closure, and intermediate weights before adoption.
 3. **State ownership:** `owner=controller`; the selected in-place roots have no measured travel. Let the kinematic controller own translation/collision and choose playback speed from observed stride/contact tests; zero root speed is not a usable speed threshold. Give RM actions an explicit separate movement policy.
 4. **Composition constraints:** `composition=full-body`; preserve authored lower-body/torso coupling initially. Weapon layers need an explicit spine mask, reference-pose convention, and planted-foot test.

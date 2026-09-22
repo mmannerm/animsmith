@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -74,6 +74,34 @@ New evaluator-selected generic scenarios: current source bytes establish the exa
 | Injury style E speed | `speed-blend` | `Humanoid@IdleInjuredE.fbx`, `Humanoid@WalkInjuredE.fbx`, `Humanoid@RunInjuredE.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 | Injury style F speed | `speed-blend` | `Humanoid@IdleInjuredF.fbx`, `Humanoid@WalkInjuredF.fbx`, `Humanoid@RunInjuredF.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 | Injury style G speed | `speed-blend` | `Humanoid@IdleInjuredG.fbx`, `Humanoid@WalkInjuredG.fbx`, `Humanoid@RunInjuredG.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
+
+### Exact runtime members
+
+Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Injury style A speed | Proposed idle | `Humanoid@IdleInjuredA.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Proposed walk | `Humanoid@WalkInjuredA.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Proposed run | `Humanoid@RunInjuredA.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style B speed | Proposed idle | `Humanoid@IdleInjuredB.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style B speed | Proposed walk | `Humanoid@WalkInjuredB.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style B speed | Proposed run | `Humanoid@RunInjuredB.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style C speed | Proposed idle | `Humanoid@IdleInjuredC.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style C speed | Proposed walk | `Humanoid@WalkInjuredC.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style C speed | Proposed run | `Humanoid@RunInjuredC.fbx::Take 001` | set_type=speed-blend | duration=0.700 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style D speed | Proposed idle | `Humanoid@IdleInjuredD.fbx::Take 001` | set_type=speed-blend | duration=1.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style D speed | Proposed walk | `Humanoid@WalkInjuredD.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style D speed | Proposed run | `Humanoid@RunInjuredD.fbx::Take 001` | set_type=speed-blend | duration=0.700 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style E speed | Proposed idle | `Humanoid@IdleInjuredE.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style E speed | Proposed walk | `Humanoid@WalkInjuredE.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style E speed | Proposed run | `Humanoid@RunInjuredE.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style F speed | Proposed idle | `Humanoid@IdleInjuredF.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style F speed | Proposed walk | `Humanoid@WalkInjuredF.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style F speed | Proposed run | `Humanoid@RunInjuredF.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style G speed | Proposed idle | `Humanoid@IdleInjuredG.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style G speed | Proposed walk | `Humanoid@WalkInjuredG.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style G speed | Proposed run | `Humanoid@RunInjuredG.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
 
 ### Pipeline-stage coverage
 

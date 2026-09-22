@@ -10,11 +10,19 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Protofactor Campfire evidence](protofactor-campfire-evidence.md)
 
 ## Technical decision
+
+**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+
+The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+
+**Content in evaluated inventory:** Kneel, sit, lie and grill interactions. The evaluated inventory includes posture changes and prop actions; locomotion coverage is outside this pack. This describes candidate content, not accepted gameplay behavior.
+
+**Adoption route:** Prototype discrete full-body interactions with project anchors and prop attachment. Configure one-shots and exits; scene contact and interruption remain unknown.
 
 **Use as a full-body interaction state family, not a locomotion blend tree.** The candidate kneel/sit/lie and grill sequences give a developer concrete states to prototype. The game still owns interaction anchors, interruption rules and props. A one-shot failing a deliberately looping contract is a policy mismatch, not automatically an artist defect.
 
@@ -22,36 +30,27 @@
 
 ## Capability coverage
 
-### Complete core
+### Content present
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+Filename-classified kneel/sit/lie transitions, held postures and skewer/grill actions support three proposed interaction chains. Named reverse transitions can be evaluated for exit.
 
-### Partial supporting gameplay
+### Content gaps and unknowns
 
-- Selected kneel/sit/lie and grill sequences provide interaction-state candidates. Prop attachment, entry/exit continuity, interruption and contact behavior remain open.
+Ground locomotion is outside this interaction selection. Prop attachment, scene anchors and complete interrupt/return topology are unclassified in this evaluation.
 
-### Absent
+### Evaluation still needed
 
-- No current locomotion, masking, IK, retarget, or engine acceptance result exists.
+Play entry, hold, prop actions, interruption and exits on the target scene. No current target-engine or visual/contact acceptance exists.
 
 ## Runtime sets and authored motion
 
-New evaluator-selected generic scenarios: current source bytes establish the exact members, take names, durations, and measured roots below. Names suggest gameplay roles; topology and semantic intent are hypotheses requiring clip review. These are not reconstructed historical manifests or measured collection-output sets. Every listed member uses `Take 001`; full identities are in the external selected-set ledger.
+These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| Kneel and sit sequence | Candidate member 1 | `Humanoid@StandToKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.500 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Kneel and sit sequence | Candidate member 2 | `Humanoid@IdleKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.167 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Kneel and sit sequence | Candidate member 3 | `Humanoid@KneelToSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Kneel and sit sequence | Candidate member 4 | `Humanoid@IdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Sit and lie sequence | Candidate member 1 | `Humanoid@IdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Sit and lie sequence | Candidate member 2 | `Humanoid@IdleSitToIdleLayDownCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.000 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Sit and lie sequence | Candidate member 3 | `Humanoid@IdleLayDownCampfire.fbx::Take 001` | set_type=transition-chain | duration=1.967 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Sit and lie sequence | Candidate member 4 | `Humanoid@IdleLayDownToIdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Grill interaction sequence | Candidate member 1 | `Humanoid@IdleKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.167 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Grill interaction sequence | Candidate member 2 | `Humanoid@IdleKneelToIdleGrillSkewerCampfire.fbx::Take 001` | set_type=transition-chain | duration=3.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Grill interaction sequence | Candidate member 3 | `Humanoid@IdleGrillSkewerCampfire.fbx::Take 001` | set_type=transition-chain | duration=3.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Grill interaction sequence | Candidate member 4 | `Humanoid@KneelEatSkewerCampfire.fbx::Take 001` | set_type=transition-chain | duration=11.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| Kneel and sit sequence | Discrete posture/prop chain | Source prototype for discrete entry/hold/exit. The kneel hold has a measured rotational seam that pruning did not clear; review its intended loop before repetition ([CF-LOOP](#technical-issue-register)). | [4 exact members](protofactor-campfire-evidence.md#exact-runtime-members) |
+| Sit and lie sequence | Discrete posture/prop chain | Source prototype after configuring one-shot transitions and explicit return. Pose and seat contact still need scene review. | [4 exact members](protofactor-campfire-evidence.md#exact-runtime-members) |
+| Grill interaction sequence | Discrete posture/prop chain | Source prototype after prop-anchor and event configuration. If kneel hold repeats, its seam remains; grip/contact is untested. | [4 exact members](protofactor-campfire-evidence.md#exact-runtime-members) |
 
 ## Integration recipe
 

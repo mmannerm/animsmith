@@ -10,11 +10,19 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Protofactor Climbing evidence](protofactor-climbing-evidence.md)
 
 ## Technical decision
+
+**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+
+The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+
+**Content in evaluated inventory:** Wall movement and ladder movement. Wall directions and ladder up/down are selected; ledge, jump and obstacle actions are outside the selected runtime sets. This describes candidate content, not accepted gameplay behavior.
+
+**Adoption route:** Prototype separate wall and ladder states with controller-owned movement. Configure cyclic policy, wall distance and contacts; source correction depends on reviewed motion.
 
 **A conditional traversal source, not a drop-in climbing controller.** The selected wall set supplies eight named directions with equal durations; the ladder pair is a separate topology. Use kinematic surface-relative movement with the selected stationary-root files, or an explicit RM policy. Hand/foot contact, wall distance and ledge transitions remain acceptance gates.
 
@@ -22,34 +30,26 @@
 
 ## Capability coverage
 
-### Complete core
+### Content present
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+Filename-classified wall movement offers eight directions; ladder up/down forms a separate two-member candidate. The wider inventory also names obstacle and jump actions.
 
-### Partial supporting gameplay
+### Content gaps and unknowns
 
-- Eight wall directions and a separate ladder up/down pair are concrete traversal candidates. Scene alignment, contact locking, entry/top-out and collision behavior remain open.
+Entry, top-out and fall/interrupt state paths are not classified as accepted runtime sets. Wall geometry and hand/foot contact requirements are project dependent.
 
-### Absent
+### Evaluation still needed
 
-- No current IK, retarget, engine, or artistic acceptance is established.
+Test cyclic intent, reversals, surface alignment, collision and contact on actual wall and ladder geometry. Target-engine, IK and artistic acceptance remain open.
 
 ## Runtime sets and authored motion
 
-New evaluator-selected generic scenarios: current source bytes establish the exact members, take names, durations, and measured roots below. Names suggest gameplay roles; topology and semantic intent are hypotheses requiring clip review. These are not reconstructed historical manifests or measured collection-output sets. Every listed member uses `Take 001`; full identities are in the external selected-set ledger.
+These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| Wall eight directions | Proposed up (0,1) | `Humanoid@WallClimbUp.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Wall eight directions | Proposed up-left (-1,1) | `Humanoid@WallClimbUpLeft.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Wall eight directions | Proposed left (-1,0) | `Humanoid@WallClimbLeft.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Wall eight directions | Proposed down-left (-1,-1) | `Humanoid@WallClimbDownLeft.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Wall eight directions | Proposed down (0,-1) | `Humanoid@WallClimbDown.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Wall eight directions | Proposed down-right (1,-1) | `Humanoid@WallClimbDownRight.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Wall eight directions | Proposed right (1,0) | `Humanoid@WallClimbRight.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Wall eight directions | Proposed up-right (1,1) | `Humanoid@WallClimbUpRight.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Ladder up and down | Proposed up (0,1) | `Humanoid@ClimbUpLadder.fbx::Take 001` | set_type=directional-blend | duration=1.200 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Ladder up and down | Proposed down | `Humanoid@ClimbDownLadder.fbx::Take 001` | set_type=directional-blend | duration=1.200 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| Wall eight directions | Separate traversal state | Source-only traversal prototype. All ten selected wall/ladder members fail declared-loop contracts; pruning did not clean WallClimbUp. Review true cycles and scene contacts ([CL-LOOP](#technical-issue-register)). | [8 exact members](protofactor-climbing-evidence.md#exact-runtime-members) |
+| Ladder up and down | Separate traversal state | Source-only ladder prototype with controller travel. Both belong to the ten non-clean declared loops; review cyclic intent, seams and rung contacts before repetition. | [2 exact members](protofactor-climbing-evidence.md#exact-runtime-members) |
 
 ## Integration recipe
 

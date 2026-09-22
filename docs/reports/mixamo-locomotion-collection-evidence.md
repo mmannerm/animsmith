@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix contains scrubbed rollup facts. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative. The retained collection manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; it does not provide current semantic membership authority.
 
@@ -58,6 +58,15 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | `emote-cinematic` | 0 | 0 | Not authoritatively classified |
 | `other-unknown` | 249 | 249 | One opaque current source unit per delivered FBX |
 | **Total** | **249** | **249** | No vendor mapping inferred |
+
+### Exact runtime members
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `hypothesis/full-body-unarmed-to-pistol` | source-state | `mixamo-basic-locomotion::Basic_Locomotion_Pack_-_in-place/walking.fbx` | set_type=transition-chain | duration=1.033 s; frames=32 frames | loop=unknown; transition=full-body; movement=controller-xz-yaw; state=unarmed |
+| `hypothesis/full-body-unarmed-to-pistol` | destination-state | `mixamo-pistol-handgun-locomotion::Pistol-Handgun_Locomotion_Pack_-_in-place/pistol run.fbx` | set_type=transition-chain | duration=0.500 s; frames=16 frames | loop=unknown; transition=full-body; movement=controller-xz-yaw; state=pistol |
+
+The table above preserves the measured member detail from the companion report; its proposed controller still requires target-engine acceptance.
 
 ### Runtime-set inventory
 

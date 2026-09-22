@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith {{SEMVER}}**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix preserves the detailed evidence behind the concise technical
 report. Link the canonical readiness ladder at
@@ -75,10 +75,8 @@ Include every versioned primary role, including zero-count rows.
 
 Use the exact same set name as the primary report for every promoted set; the
 appendix may also retain additional candidate sets.
-If the primary runtime-set table contains detailed exact members, durations,
-speeds, or ratios, link to that table here. Retain the grouping evidence and
-validation boundary without duplicating the decision table or suggesting that
-its measurements were not captured.
+The primary report contains the adoption summary; preserve detailed members
+and measurements below so they remain reachable without widening that summary.
 
 If no runtime sets exist, omit the table and write exactly: `No runtime sets
 were identified.` This is valid only when current structured evidence contains
@@ -86,6 +84,56 @@ no measured gait group or other runtime relationship. Preserve measured groups
 under their exact current structured IDs and memberships. When vendor/project
 semantics are missing, mark those boundaries `not-evaluated`; do not
 reconstruct older memberships from prose or filenames.
+
+### Exact runtime members
+
+Name every member of each important runtime set. Record its semantic variant,
+measured timing or motion, and implementable runtime contract. For moving
+root-motion clips, include cycle duration and horizontal speed. Calculate the
+within-set minimum/maximum speed ratio and compare forward, cardinal, and
+diagonal members when those roles exist. Explain the controller consequence;
+speed variation is not automatically a defect without a declared movement
+policy. State how in-place counterparts relate and which owner must preserve,
+normalize, or re-author the variation.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| {{SET}} | {{DIRECTION_ROLE_OR_THRESHOLD}} | `{{EXACT_FILE_SCOPED_MEMBER}}` | variant={{VARIANT_ID}} | duration={{SECONDS}} s; rm_speed={{METERS_PER_SECOND}} m/s | loop={{TRUE_FALSE_UNKNOWN_OR_NOT_APPLICABLE}}; sync={{POLICY}} |
+
+Use this detailed table for locomotion, sync, transition, mask-composition,
+paired-interaction, motion-database, or other important sets. `Exact members`
+must name every file-scoped member with the delivered case and spelling; never
+silently normalize them from a vendor list or display label. State separately
+when another bundled manifest or animation list disagrees. `Runtime contract`
+captures the applicable loop, sync, state transition, mask, additive, contact,
+or interaction policy.
+Treat this table as exact decision evidence. The primary summary links here;
+retain grouping basis and validation status in the inventory above without
+duplicating these member rows.
+Use semicolon-separated `key=value` timing terms (`duration`, `rm_speed`,
+`sample_rate`, `frames`, or `threshold`) with finite non-negative values and
+units. Use semicolon-separated runtime terms keyed by `loop`, `sync`,
+`transition`, `mask`, `additive`, `contact`, `interaction`, `movement`, `state`,
+`database`, or `playback`; use a specific lowercase/hyphenated value such as
+`one-shot`, `gait-phase`, or `unknown`. Fields that do not apply stay explicitly
+`N/A`. If no important runtime sets exist, write exactly: `No important runtime
+sets were identified.` Retain the grouping evidence in the appendix. This
+sentence is allowed only after reconciling current structured output: do not
+use it when that output contains a gait group or other runtime relationship.
+Use its exact current ID and membership. When semantic authority is missing,
+use `unknown`/`not-evaluated` contracts and state the vendor or project
+decision needed. Do not reconstruct historical memberships from prose,
+filenames, or superseded evidence.
+
+Write `Variant/type` as one `variant=<id>` or `set_type=<id>` token. Moving
+root-motion and paired IP/RM rows require `duration` and `rm_speed`; paired rows
+also require distinct `loop_ip`, `loop_rm`, and `sync` policies. Do not repeat a
+key with conflicting values. Prefix paired exact members with `IP` and `RM`;
+any movement-labeled member requires the matching `in-place`, `root-motion`,
+`rotation-only-root`, or `paired-ip-rm` variant.
+
+If no important sets exist, replace this detailed table with exactly:
+`No important runtime sets were identified.`
 
 ### Pipeline-stage coverage
 

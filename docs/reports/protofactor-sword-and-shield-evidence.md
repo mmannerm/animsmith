@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -82,7 +82,22 @@ Current evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluati
 | `draw-combat-put-away-1` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; engine and visual gates not evaluated |
 | `draw-combat-put-away-2` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; engine and visual gates not evaluated |
 
-The primary [runtime-set table](protofactor-sword-and-shield.md#runtime-sets-and-authored-motion) records exact members and fresh timing/motion for the decision-driving gait sets. No historical membership is promoted solely from prose or filenames.
+The [exact runtime members](#exact-runtime-members) below record source members and fresh timing/motion for the decision-driving gait sets. No historical membership is promoted solely from prose or filenames.
+
+### Exact runtime members
+
+Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `walk-combat-8-way-in-place` | eight-way directional gait | `Humanoid@WalkForwardS&S.fbx`; `Humanoid@WalkForwardLeftS&S.fbx`; `Humanoid@WalkLeftS&S.fbx`; `Humanoid@WalkBackwardsLeftS&S.fbx`; `Humanoid@WalkBackwardsS&S.fbx`; `Humanoid@WalkBackwardsRightS&S.fbx`; `Humanoid@WalkRightS&S.fbx`; `Humanoid@WalkForwardRightS&S.fbx` | variant=in-place | duration=1.333 s | loop=true; sync=not-evaluated |
+| `walk-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@WalkForwardS&S_RM.fbx`; `Humanoid@WalkForwardLeftS&S_RM.fbx`; `Humanoid@WalkLeftS&S_RM.fbx`; `Humanoid@WalkBackwardsLeftS&S_RM.fbx`; `Humanoid@WalkBackwardsS&S_RM.fbx`; `Humanoid@WalkBackwardsRightS&S_RM.fbx`; `Humanoid@WalkRightS&S_RM.fbx`; `Humanoid@WalkForwardRightS&S_RM.fbx` | variant=root-motion | duration=1.333 s; rm_speed=0.750 m/s | loop=true; sync=not-evaluated |
+| `run-combat-8-way-in-place` | eight-way directional gait | `Humanoid@RunForwardS&S.fbx`; `Humanoid@RunForwardLeftS&S.fbx`; `Humanoid@RunLeftS&S.fbx`; `Humanoid@RunBackwardsLeftS&S.fbx`; `Humanoid@RunBackwardsS&S.fbx`; `Humanoid@RunBackwardsRightS&S.fbx`; `Humanoid@RunRightS&S.fbx`; `Humanoid@RunForwardRightS&S.fbx` | variant=in-place | duration=0.600 s | loop=true; sync=not-evaluated |
+| `run-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@RunForwardS&S_RM.fbx`; `Humanoid@RunForwardLeftS&S_RM.fbx`; `Humanoid@RunLeftS&S_RM.fbx`; `Humanoid@RunBackwardsLeftS&S_RM.fbx`; `Humanoid@RunBackwardsS&S_RM.fbx`; `Humanoid@RunBackwardsRightS&S_RM.fbx`; `Humanoid@RunRightS&S_RM.fbx`; `Humanoid@RunForwardRightS&S_RM.fbx` | variant=root-motion | duration=0.600 s; rm_speed=2.793 m/s | loop=true; sync=not-evaluated |
+| `crouch-combat-8-way-in-place` | eight-way directional gait | `Humanoid@CrouchForwardS&S.fbx`; `Humanoid@CrouchForwardLeftS&S.fbx`; `Humanoid@CrouchLeftS&S.fbx`; `Humanoid@CrouchBackwardsLeftS&S.fbx`; `Humanoid@CrouchBackwardsS&S.fbx`; `Humanoid@CrouchBackwardsRightS&S.fbx`; `Humanoid@CrouchRightS&S.fbx`; `Humanoid@CrouchForwardRightS&S.fbx` | variant=in-place | duration=1.667 s | loop=true; sync=not-evaluated |
+| `crouch-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@CrouchForwardS&S_RM.fbx`; `Humanoid@CrouchForwardLeftS&S_RM.fbx`; `Humanoid@CrouchLeftS&S_RM.fbx`; `Humanoid@CrouchBackwardsLeftS&S_RM.fbx`; `Humanoid@CrouchBackwardsS&S_RM.fbx`; `Humanoid@CrouchBackwardsRightS&S_RM.fbx`; `Humanoid@CrouchRightS&S_RM.fbx`; `Humanoid@CrouchForwardRightS&S_RM.fbx` | variant=root-motion | duration=1.667 s; rm_speed=0.701 m/s | loop=true; sync=not-evaluated |
+
+Measured RM speed spans are walk 0.750–1.107 m/s (ratio 0.677); run 2.793–3.189 m/s (ratio 0.876); crouch 0.701–0.789 m/s (ratio 0.889). Preserve authored variation unless the project declares a normalization policy; diagonals and cardinals require the full blend test. Measured source in-place phase spreads (cycles, eight measured members each) are `walk-combat-8-way-in-place` 0.7231; `run-combat-8-way-in-place` 0.6605; `crouch-combat-8-way-in-place` 0.6974. Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. Keep `sync=not-evaluated` until the selected synchronization and contact policy is tested. The current catalog also measures paired normal/fast speed hypotheses, four death/downed/recovery chains, and two draw/combat/put-away chains. The transition chains are mechanically stronger than the gait sets, but still lack engine and visual acceptance.
 
 ### Pipeline-stage coverage
 

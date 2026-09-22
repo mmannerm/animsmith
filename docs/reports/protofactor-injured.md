@@ -10,11 +10,19 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Protofactor Injured evidence](protofactor-injured-evidence.md)
 
 ## Technical decision
+
+**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+
+The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+
+**Content in evaluated inventory:** Seven idle/walk/run injury styles. Each A–G style has an evaluated three-file candidate; filenames do not establish a severity order or recovery path. This describes candidate content, not accepted gameplay behavior.
+
+**Adoption route:** Prototype a separate style-local speed state for each injury style. Configure speed and healthy-state transitions; foot contacts and character fit remain unknown.
 
 **Use as seven separate injury-style locomotion candidates.** Each proposed style has idle/walk/run members; there is no evidence that A–G are interchangeable directions or severity levels. Keep the selected style coherent, let the kinematic controller own motion, and check walk/run contact timing and transitions to healthy locomotion.
 
@@ -22,45 +30,31 @@
 
 ## Capability coverage
 
-### Complete core
+### Content present
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+Filename-classified A–G styles each supply idle, walk and run candidates. Each style is a distinct three-member speed-state hypothesis.
 
-### Partial supporting gameplay
+### Content gaps and unknowns
 
-- Seven separately selected idle/walk/run styles support proposed injured-locomotion states. Injury expression, speed/phase calibration and healthy-state handoffs remain open.
+The letters do not classify severity or an ordered progression. Recovery and healthy-state handoffs have no accepted set classification here; this does not establish absence from the wider source.
 
-### Absent
+### Evaluation still needed
 
-- No current recovery, retarget, masking, engine, or artistic acceptance is established.
+Test style choice, speed calibration, planted-foot behavior, cross-style and healthy-state transitions on the target character. Engine, retarget and visual acceptance remain open.
 
 ## Runtime sets and authored motion
 
-New evaluator-selected generic scenarios: current source bytes establish the exact members, take names, durations, and measured roots below. Names suggest gameplay roles; topology and semantic intent are hypotheses requiring clip review. These are not reconstructed historical manifests or measured collection-output sets. Every listed member uses `Take 001`; full identities are in the external selected-set ledger.
+These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| Injury style A speed | Proposed idle | `Humanoid@IdleInjuredA.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style A speed | Proposed walk | `Humanoid@WalkInjuredA.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style A speed | Proposed run | `Humanoid@RunInjuredA.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style B speed | Proposed idle | `Humanoid@IdleInjuredB.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style B speed | Proposed walk | `Humanoid@WalkInjuredB.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style B speed | Proposed run | `Humanoid@RunInjuredB.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style C speed | Proposed idle | `Humanoid@IdleInjuredC.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style C speed | Proposed walk | `Humanoid@WalkInjuredC.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style C speed | Proposed run | `Humanoid@RunInjuredC.fbx::Take 001` | set_type=speed-blend | duration=0.700 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style D speed | Proposed idle | `Humanoid@IdleInjuredD.fbx::Take 001` | set_type=speed-blend | duration=1.667 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style D speed | Proposed walk | `Humanoid@WalkInjuredD.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style D speed | Proposed run | `Humanoid@RunInjuredD.fbx::Take 001` | set_type=speed-blend | duration=0.700 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style E speed | Proposed idle | `Humanoid@IdleInjuredE.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style E speed | Proposed walk | `Humanoid@WalkInjuredE.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style E speed | Proposed run | `Humanoid@RunInjuredE.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style F speed | Proposed idle | `Humanoid@IdleInjuredF.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style F speed | Proposed walk | `Humanoid@WalkInjuredF.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style F speed | Proposed run | `Humanoid@RunInjuredF.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style G speed | Proposed idle | `Humanoid@IdleInjuredG.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style G speed | Proposed walk | `Humanoid@WalkInjuredG.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
-| Injury style G speed | Proposed run | `Humanoid@RunInjuredG.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| Injury style A speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. RunInjuredA has loop seam findings; review true cycles and foot contacts before speed blending ([IN-LOOP](#technical-issue-register)). | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style B speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style C speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style D speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style E speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style F speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style G speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
 
 ## Integration recipe
 

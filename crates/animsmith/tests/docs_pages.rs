@@ -413,6 +413,22 @@ pin = (args.source / ".mdbook-version").read_text(encoding="utf-8")
     f"{{marker}}builder={builder}\nmdbook={{args.mdbook.name}}\npin={{pin}}source-ref={{args.source_ref}}\n",
     encoding="utf-8",
 )
+reports = args.stage / "book" / "docs" / "reports"
+reports.mkdir(parents=True)
+if "{builder}" == "release":
+    (reports / "index.html").write_text(
+        "<html><main><h1>Release report index</h1><p>Released decisions stay here.</p></main></html>\n",
+        encoding="utf-8",
+    )
+    (reports / "older.html").write_text(
+        "<html><main><h1>Released report</h1><p>Historical evidence stays here.</p></main></html>\n",
+        encoding="utf-8",
+    )
+else:
+    (reports / "index.html").write_text(
+        "<html><main><h1>Current report index</h1></main></html>\n",
+        encoding="utf-8",
+    )
 "#
         ),
     )
@@ -536,6 +552,48 @@ fn canonical_report_pair_links(markdown: &str) -> Vec<String> {
         }
     }
     links
+}
+
+/// Each row is an overview destination followed by its constituent report
+/// destinations.  Read only the rendered collection table, never source lines.
+fn canonical_collection_membership(markdown: &str) -> Vec<Vec<String>> {
+    let mut in_table = false;
+    let mut in_head = false;
+    let mut collection_table = false;
+    let mut header = Vec::new();
+    let mut cell_text = String::new();
+    let mut row = Vec::new();
+    let mut groups = Vec::new();
+    for event in Parser::new_ext(markdown, options()) {
+        match event {
+            Event::Start(Tag::Table(_)) => {
+                in_table = true;
+                in_head = true;
+                collection_table = false;
+                header.clear();
+            }
+            Event::Start(Tag::TableCell) if in_table && in_head => cell_text.clear(),
+            Event::Text(text) | Event::Code(text) if in_table && in_head => {
+                cell_text.push_str(&text);
+            }
+            Event::End(TagEnd::TableCell) if in_table && in_head => {
+                header.push(cell_text.trim().to_owned());
+            }
+            Event::End(TagEnd::TableHead) if in_table => {
+                in_head = false;
+                collection_table = header == ["Collection overview", "Evaluated constituents"];
+            }
+            Event::Start(Tag::TableRow) if collection_table => row.clear(),
+            Event::Start(Tag::Link { dest_url, .. }) if collection_table => {
+                row.push(dest_url.into_string());
+            }
+            Event::End(TagEnd::TableRow) if collection_table => groups.push(row.clone()),
+            Event::End(TagEnd::Table) if collection_table => break,
+            Event::End(TagEnd::Table) => in_table = false,
+            _ => {}
+        }
+    }
+    groups
 }
 
 fn summary_destination(destination: &str) -> String {
@@ -828,6 +886,33 @@ fn pages_composition_uses_release_at_root_and_main_below_dev() {
         ],
         "the /dev subtree uses current main and its independent mdBook pin:\n{development_root}"
     );
+    let released_report = std::fs::read_to_string(output.join("docs/reports/older.html"))
+        .expect("reads released report chapter");
+    assert!(
+        released_report.contains("<h1>Released report</h1><p>Historical evidence stays here.</p>"),
+        "released chapter content survives composition: {released_report}"
+    );
+    assert!(
+        released_report.contains("href=\"../../dev/docs/reports/index.html\""),
+        "released report points to the current report index: {released_report}"
+    );
+    let released_index = std::fs::read_to_string(output.join("docs/reports/index.html"))
+        .expect("reads released report index");
+    assert!(
+        released_index.contains("<h1>Release report index</h1>")
+            && released_index.contains("href=\"../../dev/docs/reports/index.html\""),
+        "release index keeps its content and offers the current route: {released_index}"
+    );
+    let current_index = std::fs::read_to_string(output.join("dev/docs/reports/index.html"))
+        .expect("reads current report index");
+    assert!(current_index.contains("<h1>Current report index</h1>"));
+    let latest = std::fs::read_to_string(output.join("evaluations/index.html"))
+        .expect("reads stable latest-evaluations route");
+    assert!(
+        latest.contains("href=\"../dev/docs/reports/index.html\"")
+            && latest.contains("url=../dev/docs/reports/index.html"),
+        "stable route points to the current report index: {latest}"
+    );
     assert_eq!(
         strict_lines(
             &std::fs::read_to_string(output.join("BUILD-INFO.txt"))
@@ -965,16 +1050,44 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
 
     let report_index = std::fs::read_to_string(root.join("docs/reports/README.md"))
         .expect("reads canonical reports index");
-    let expected_report_links = canonical_report_pair_links(&report_index)
-        .into_iter()
-        .enumerate()
-        .map(|(index, destination)| {
-            (
-                format!("docs/reports/{destination}"),
-                if index % 2 == 0 { 3 } else { 4 },
-            )
-        })
-        .collect::<Vec<_>>();
+    let pair_links = canonical_report_pair_links(&report_index);
+    assert_eq!(pair_links.len() % 2, 0, "every report has an evidence link");
+    let pairs: BTreeMap<_, _> = pair_links
+        .chunks_exact(2)
+        .map(|pair| (pair[0].as_str(), pair[1].as_str()))
+        .collect();
+    assert_eq!(
+        pairs.len() * 2,
+        pair_links.len(),
+        "report destinations are unique"
+    );
+    let groups = canonical_collection_membership(&report_index);
+    assert!(
+        !groups.is_empty(),
+        "the collection map is present in the current index"
+    );
+    let mut seen = BTreeSet::new();
+    let mut expected_report_links = Vec::new();
+    for group in groups {
+        assert!(group.len() >= 2, "a collection has linked constituents");
+        for (index, report) in group.iter().enumerate() {
+            assert!(
+                seen.insert(report.clone()),
+                "report appears once in collection map: {report}"
+            );
+            let evidence = pairs.get(report.as_str()).unwrap_or_else(|| {
+                panic!("collection member is absent from Current reports: {report}")
+            });
+            let depth = if index == 0 { 3 } else { 4 };
+            expected_report_links.push((format!("docs/reports/{report}"), depth));
+            expected_report_links.push((format!("docs/reports/{evidence}"), depth + 1));
+        }
+    }
+    assert_eq!(
+        seen.len(),
+        pairs.len(),
+        "collection map covers every report once"
+    );
     let generated_links: Vec<(String, usize)> = summary_chapters(&first_summary)
         .into_iter()
         .map(|(_, _, destination, depth)| (destination, depth))
@@ -987,7 +1100,7 @@ fn summary_is_deterministic_and_has_the_public_information_architecture() {
     assert_eq!(
         &generated_links[reports_position + 1..report_links_end],
         expected_report_links,
-        "every report/evidence pair is nested in canonical table order so mdBook publishes it"
+        "each report/evidence pair follows collection membership and evidence is adjacent"
     );
     let index =
         std::fs::read_to_string(root.join("docs/README.md")).expect("reads canonical index");

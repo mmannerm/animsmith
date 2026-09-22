@@ -45,6 +45,7 @@ V1_PRIMARY_HEADINGS = tuple(
     if heading != "Changes between AnimSmith versions"
 )
 CAPABILITY_HEADINGS = ("Complete core", "Partial supporting gameplay", "Absent")
+EDITORIAL_CAPABILITY_HEADINGS = ("Content present", "Content gaps and unknowns", "Evaluation still needed")
 V1_CAPABILITY_HEADINGS = CAPABILITY_HEADINGS + ("Not evaluated", "Not applicable")
 APPENDIX_HEADINGS = (
     "Evaluation scope and provenance", "Evaluation manifest and taxonomy",
@@ -66,7 +67,9 @@ PIPELINE_STAGE_LABELS = tuple(label for _identifier, label in PIPELINE_STAGE_ROW
 PROFILE_LABELS = tuple(label for _identifier, label in PROFILE_ROWS)
 ENGINE_LABELS = ("Unity", "Unreal Engine", "Godot", "Bevy")
 MAX_PRIMARY_WORDS = 2000
-REPORT_FORMAT_VERSION = "2"
+REPORT_FORMAT_VERSION = "2"  # Frozen generated view default.
+EDITORIAL_REPORT_FORMAT = "3"
+SET_SUMMARY_HEADER = ("Set", "Controller use", "Adoption decision", "Exact members")
 REPORT_TITLE_PREFIX = "Animation pack evaluation: "
 APPENDIX_TITLE_PREFIX = "Animation pack evidence appendix: "
 RUNTIME_SET_HEADER = (
@@ -182,7 +185,7 @@ def parse_args() -> argparse.Namespace:
     model = parser.add_mutually_exclusive_group()
     model.add_argument("--evaluation-model-v1", action="store_true", help="validate the fixed V1 renderer projection")
     model.add_argument("--evaluation-model-v2", action="store_true", help="validate the current V2 renderer projection")
-    parser.add_argument("--report-format", choices=("1", "2"), help="override the report-view format independently of the evidence schema")
+    parser.add_argument("--report-format", choices=("1", "2", "3"), help="override the report-view format independently of the evidence schema")
     return parser.parse_args()
 
 
@@ -655,14 +658,58 @@ def _placeholder_errors(document: dict[str, Any]) -> list[str]:
     return [f"unresolved template placeholders: {preview}{suffix}"]
 
 
-def _validate_runtime_sets(
-    document: dict[str, Any], *, set_types: set[str] = SET_TYPES
-) -> list[str]:
-    section = "Runtime sets and authored motion"
+def _expected_format(document: dict[str, Any], schema: str, override: str | None) -> str:
+    if override is not None:
+        return override
+    # Editorial format is opt-in; frozen structured-model projections stay unchanged.
+    metadata = _metadata(document, "Report format")
+    if schema == SCHEMA and metadata is not None and metadata["text"] == "Report format: 3":
+        return EDITORIAL_REPORT_FORMAT
+    return "1" if schema != SCHEMA else REPORT_FORMAT_VERSION
+
+
+def _validate_set_summary(document: dict[str, Any]) -> list[str]:
+    table = _table(document, "Runtime sets and authored motion", SET_SUMMARY_HEADER)
+    paragraphs = _top_level_paragraphs(document, "Runtime sets and authored motion")
     no_sets = "No important runtime sets were identified."
-    paragraphs = _top_level_paragraphs(document, section)
+    if table is None and len(paragraphs) == 1 and paragraphs[0]["text"] == no_sets and _section_body_count(document, "Runtime sets and authored motion") == 1:
+        return []
+    if table is None or not table["rows"]:
+        return ["editorial report requires a nonempty set summary table"]
+    if any(paragraph["text"] == no_sets for paragraph in paragraphs):
+        return ["set summary contradicts the explicit no-set result"]
+    errors: list[str] = []
+    names: set[str] = set()
+    for row in table["rows"]:
+        if len(row) != 4 or any(not cell["text"].strip() for cell in row):
+            errors.append("set summary requires four nonempty cells")
+            continue
+        name = row[0]["text"]
+        if name in names:
+            errors.append("set summary repeats a set: " + name)
+        names.add(name)
+        links = row[3]["links"]
+        if len(links) != 1:
+            errors.append("set summary requires one exact-member appendix link: " + name)
+            continue
+        destination = links[0]["destination"]
+        filename, separator, fragment = destination.partition("#")
+        if (separator != "#" or fragment != "exact-runtime-members"
+                or not filename.endswith("-evidence.md")
+                or Path(filename).name != filename or ":" in filename or "\\" in filename):
+            errors.append("set summary requires a local exact-member appendix link: " + name)
+    return errors
+
+
+def _validate_runtime_sets(
+    document: dict[str, Any], *, set_types: set[str] = SET_TYPES,
+    section: str = "Runtime sets and authored motion", subsection: str | None = None,
+) -> list[str]:
+    no_sets = "No important runtime sets were identified."
+    paragraphs = (_subsection_paragraphs(document, section, subsection) if subsection
+                  else _top_level_paragraphs(document, section))
     absence = [p for p in paragraphs if p["text"] == no_sets]
-    table = _table(document, section, RUNTIME_SET_HEADER)
+    table = _table(document, section, RUNTIME_SET_HEADER, subsection)
     errors: list[str] = []
     if absence and table is not None:
         errors.append("runtime-set inventory contradicts the explicit no-set result")
@@ -670,7 +717,7 @@ def _validate_runtime_sets(
         if (
             len(paragraphs) == 1
             and paragraphs[0]["text"] == no_sets
-            and _section_body_count(document, section) == 1
+            and _section_body_count(document, section, subsection) == 1
         ):
             return errors
         return errors + ["runtime-set inventory must use the required member/contract table"]
@@ -770,12 +817,11 @@ def validate(
         or _document_identity(document, REPORT_TITLE_PREFIX) is None
     ):
         errors.append("report must start with '# Animation pack evaluation:'")
-    expected_format = report_format or (
-        "1" if evaluation_schema != SCHEMA else REPORT_FORMAT_VERSION
-    )
+    expected_format = _expected_format(document, evaluation_schema, report_format)
     headings = V1_PRIMARY_HEADINGS if expected_format == "1" else PRIMARY_HEADINGS
     errors.extend(_heading_order(document, headings, level=2))
-    capability_headings = V1_CAPABILITY_HEADINGS if evaluation_schema != SCHEMA else CAPABILITY_HEADINGS
+    capability_headings = (EDITORIAL_CAPABILITY_HEADINGS if expected_format == EDITORIAL_REPORT_FORMAT
+                           else V1_CAPABILITY_HEADINGS if evaluation_schema != SCHEMA else CAPABILITY_HEADINGS)
     errors.extend(_heading_order(document, capability_headings, level=3, section="Capability coverage"))
     errors.extend(_required_body_errors(
         document,
@@ -783,7 +829,10 @@ def validate(
         tuple(("Capability coverage", heading) for heading in capability_headings),
     ))
     set_types = _set_types(evaluation_schema)
-    errors.extend(_validate_runtime_sets(document, set_types=set_types))
+    if expected_format == EDITORIAL_REPORT_FORMAT:
+        errors.extend(_validate_set_summary(document))
+    else:
+        errors.extend(_validate_runtime_sets(document, set_types=set_types))
     errors.extend(_validate_recipe(document))
 
     verdict = _metadata(document, "Technical verdict")
@@ -814,7 +863,7 @@ def validate(
         or report_format["strong"] != [expected_format]
     ):
         errors.append(f"report must declare Report format {expected_format}")
-    if expected_format == REPORT_FORMAT_VERSION:
+    if expected_format in {REPORT_FORMAT_VERSION, EDITORIAL_REPORT_FORMAT}:
         errors.extend(_history_boundary_errors(document))
         errors.extend(_changes_section_errors(document, _current_evaluator_version(document)))
     word_count = int(document["word_count"])
@@ -896,9 +945,7 @@ def validate_appendix(
         or _document_identity(document, APPENDIX_TITLE_PREFIX) is None
     ):
         errors.append("appendix must start with '# Animation pack evidence appendix:'")
-    expected_format = report_format or (
-        "1" if evaluation_schema != SCHEMA else REPORT_FORMAT_VERSION
-    )
+    expected_format = _expected_format(document, evaluation_schema, report_format)
     headings = V1_APPENDIX_HEADINGS if expected_format == "1" else APPENDIX_HEADINGS
     errors.extend(_heading_order(document, headings, level=2))
     errors.extend(_heading_order(
@@ -920,9 +967,14 @@ def validate_appendix(
         or report_format["strong"] != [expected_format]
     ):
         errors.append(f"appendix must declare Report format {expected_format}")
-    if expected_format == REPORT_FORMAT_VERSION:
+    if expected_format in {REPORT_FORMAT_VERSION, EDITORIAL_REPORT_FORMAT}:
         errors.extend(_history_boundary_errors(document))
         errors.extend(_changes_section_errors(document, _current_evaluator_version(document)))
+    if expected_format == EDITORIAL_REPORT_FORMAT:
+        errors.extend(_validate_runtime_sets(
+            document, set_types=_set_types(evaluation_schema),
+            section="Evaluation manifest and taxonomy", subsection="Exact runtime members",
+        ))
     evidence_status = _bold_metadata_value(
         document, "Evidence status", allow_boundary=True
     )
@@ -1114,7 +1166,7 @@ def validate_pair(
         errors.append("report and appendix must declare the same evaluation date")
     report_format = _metadata(report, "Report format")
     appendix_format = _metadata(appendix, "Report format")
-    if report_format is not None and report_format["text"] == "Report format: 2":
+    if report_format is not None and report_format["text"] in {"Report format: 2", "Report format: 3"}:
         report_evaluator = _current_evaluator_version(report)
         appendix_evaluator = _current_evaluator_version(appendix)
         if report_evaluator is None or report_evaluator != appendix_evaluator:
@@ -1125,7 +1177,18 @@ def validate_pair(
         and report_format["text"] != appendix_format["text"]
     ):
         errors.append("report and appendix must declare the same report format")
-    report_has_sets, report_sets = _runtime_sets(report, RUNTIME_SET_HEADER)
+    if report_format is not None and report_format["text"] == "Report format: 3":
+        summary = _table(report, "Runtime sets and authored motion", SET_SUMMARY_HEADER)
+        detail = _table(appendix, "Evaluation manifest and taxonomy", RUNTIME_SET_HEADER, "Exact runtime members")
+        detail_names = {row[0]["text"] for row in detail["rows"] if row} if detail else set()
+        for row in summary["rows"] if summary else []:
+            if len(row) == 4 and any(link["destination"] == appendix_path.name + "#exact-runtime-members" for link in row[3]["links"]):
+                if row[0]["text"] not in detail_names:
+                    errors.append("set summary has no exact member evidence: " + row[0]["text"])
+        # Every detailed set must still appear in the appendix's grouping inventory.
+        report_has_sets, report_sets = detail is not None, detail_names
+    else:
+        report_has_sets, report_sets = _runtime_sets(report, RUNTIME_SET_HEADER)
     appendix_has_sets, appendix_sets = _runtime_sets(appendix, APPENDIX_RUNTIME_HEADER)
     if report_has_sets and not appendix_has_sets:
         errors.append("report and appendix disagree on runtime-set presence")
@@ -1139,6 +1202,37 @@ def validate_pair(
     appendix_link = _metadata(appendix, "Companion report")
     if appendix_link is None or not any(link["destination"] == report_path.name for link in appendix_link["links"]):
         errors.append(f"appendix must link companion report: {report_path.name}")
+    return errors
+
+
+def validate_member_links(report_path: Path) -> list[str]:
+    """Resolve editorial evidence links without following paths outside the report directory."""
+    document = parse_markdown(report_path.read_text(encoding="utf-8"))
+    metadata = _metadata(document, "Report format")
+    if metadata is None or metadata["text"] != "Report format: 3":
+        return []
+    summary = _table(document, "Runtime sets and authored motion", SET_SUMMARY_HEADER)
+    if summary is None or _validate_set_summary(document):
+        return []  # Structural diagnostics belong to validate().
+    errors: list[str] = []
+    checked: set[str] = set()
+    for row in summary["rows"]:
+        filename = row[3]["links"][0]["destination"].partition("#")[0]
+        if filename in checked:
+            continue
+        checked.add(filename)
+        target = report_path.parent / filename
+        if target.resolve().parent != report_path.parent.resolve() or not target.is_file():
+            errors.append("exact-member evidence target is missing or outside the report directory: " + filename)
+            continue
+        detail = parse_markdown(target.read_text(encoding="utf-8"))
+        table = _table(detail, "Evaluation manifest and taxonomy", RUNTIME_SET_HEADER, "Exact runtime members")
+        if table is None or not table["rows"]:
+            errors.append("linked appendix has no exact-member table: " + filename)
+        else:
+            errors.extend(filename + ": " + error for error in _validate_runtime_sets(
+                detail, section="Evaluation manifest and taxonomy", subsection="Exact runtime members",
+            ))
     return errors
 
 
@@ -1165,6 +1259,7 @@ def main() -> int:
             report_format=args.report_format,
         ))
         errors.extend(validate_pair(report_text, appendix_text, str(args.report), str(appendix)))
+        errors.extend(validate_member_links(args.report))
     except (OSError, UnicodeError, subprocess.SubprocessError, ValueError) as error:
         print(f"validate_report.py: {error}", file=sys.stderr)
         return 2
