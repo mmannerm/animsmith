@@ -104,14 +104,15 @@ class MainStart(HTMLParser):
 
     def __init__(self, text: str) -> None:
         super().__init__()
-        self.lines = text.splitlines(keepends=True)
+        # HTMLParser counts only LF as a line break.
+        self.lines = text.split("\n")
         self.insertion_offset: int | None = None
         self.feed(text)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "main" and self.insertion_offset is None:
             line, column = self.getpos()
-            self.insertion_offset = sum(len(value) for value in self.lines[:line - 1]) + column + len(self.get_starttag_text())
+            self.insertion_offset = sum(len(value) + 1 for value in self.lines[:line - 1]) + column + len(self.get_starttag_text())
 
 
 def link_latest_evaluations(output: Path) -> None:
@@ -119,6 +120,9 @@ def link_latest_evaluations(output: Path) -> None:
     target = Path("dev/docs/reports/index.html")
     if not (output / target).is_file():
         raise ValueError("latest evaluations require the development report index")
+    latest = output / "evaluations"
+    if latest.exists() or latest.is_symlink():
+        raise ValueError(f"reserved latest-evaluations route already exists: {latest}")
     for page in sorted((output / "docs/reports").glob("*.html")):
         text = page.read_text(encoding="utf-8")
         offset = MainStart(text).insertion_offset
@@ -130,7 +134,6 @@ def link_latest_evaluations(output: Path) -> None:
                   f'<a href="{href}">Read the latest pack evaluations</a> '
                   '(current main).</aside>\n')
         page.write_text(text[:offset] + banner + text[offset:], encoding="utf-8")
-    latest = output / "evaluations"
     latest.mkdir()
     (latest / "index.html").write_text(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
