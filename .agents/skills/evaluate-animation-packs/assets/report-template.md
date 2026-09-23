@@ -49,6 +49,11 @@ coverage gap for only the skeleton variants it names; automatic or
 case-insensitive aliases remain acceptable only when ambiguity is detected and
 handled fail-closed.
 
+Lead with the usable set, its main blocker, and the next action. Write for the
+developer choosing a controller or the artist repairing a clip. Explain
+internal evaluation terms in ordinary words; link detailed evidence instead of
+narrating the evaluation process.
+
 Write this section and every ordinary report section as the current evaluation
 against the declared current evaluator. Do not narrate earlier tool behavior,
 ticket history, superseded measurements, or the steps by which the current
@@ -102,25 +107,25 @@ If no important sets exist, omit the table and write exactly:
 
 ## Integration recipe
 
-1. **Members/topology:** `topology={{LOWERCASE_POLICY_ID}}`; {{NAMED_SET_MEMBERS_BLEND_TOPOLOGY_AND_THRESHOLDS}}
-2. **Timing/synchronization:** `sync={{LOWERCASE_POLICY_ID}}`; {{LOOP_PHASE_TRANSITION_OR_CONTACT_POLICY}}
-3. **State ownership:** `owner={{LOWERCASE_POLICY_ID_OR_NOT_EVALUATED}}`; {{MOVEMENT_ACTION_INTERACTION_OR_STATE_OWNER}}
-4. **Composition constraints:** `composition={{LOWERCASE_POLICY_ID}}`; {{TRANSITION_MASK_ADDITIVE_SOCKET_OR_IK_POLICY}}
-5. **Acceptance gate:** `gate={{LOWERCASE_POLICY_ID}}`; {{TARGET_ENGINE_AND_VISUAL_ACCEPTANCE_GATE}}
+1. **Members/topology:** {{NAMED_SET_MEMBERS_BLEND_TOPOLOGY_AND_THRESHOLDS}}
+2. **Timing/synchronization:** {{LOOP_PHASE_TRANSITION_OR_CONTACT_POLICY}}
+3. **State ownership:** {{MOVEMENT_ACTION_INTERACTION_OR_STATE_OWNER}}
+4. **Composition constraints:** {{TRANSITION_MASK_ADDITIVE_SOCKET_OR_IK_POLICY}}
+5. **Acceptance gate:** {{TARGET_ENGINE_AND_VISUAL_ACCEPTANCE_GATE}}
 
 A recipe must be implementable: name members, blend coordinates/thresholds,
 loop flags, phase policy, movement owner, and what may not be mixed. Link the
 relevant repository guidance for loop, gait, root-motion, rig, or scale issues.
-The inline `key=value` tokens are the comparable contract; keep the explanation
-reader-facing and use `not-evaluated` rather than vague prose when evidence is
-missing.
+Write these steps as instructions to the developer, without internal policy
+identifiers or `key=value` tags. State exactly what has not been tested. The
+appendix retains structured runtime contracts and detailed measurements.
 
 Cover each material common pattern present in scope: a named blend tree;
 controller ownership of translation, yaw, and collision; full-body transition
 and any separately gated layer; and namespaced cross-pack state/layer
 composition. A recipe may be a bounded project proposal when runtime evidence
-is unavailable, but its `gate` and affected terms must say `not-evaluated` and
-name the exact engine/visual/contact test that would promote it.
+is unavailable, but it must state what is untested and
+name the engine, visual, or contact checks needed before use.
 
 ## Technical issue register
 

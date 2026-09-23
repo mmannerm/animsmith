@@ -90,6 +90,30 @@ class EditorialReportTests(unittest.TestCase):
         )
         self.assertTrue(any(expected in error for error in errors), errors)
 
+    def test_editorial_recipe_accepts_prose_but_requires_each_written_step(self) -> None:
+        primary, _ = valid_editorial_pair()
+        replacements = {
+            "`topology=2d-blend`; fixture coordinates `(0,1)`.": "Blend the linked walk clips using local horizontal velocity.",
+            "`sync=gait-phase`; fixture loop policy.": "Check foot contacts before synchronizing the loops.",
+            "`owner=gameplay-controller`; fixture movement policy.": "Let the controller move and turn the character.",
+            "`composition=separate-variants`; fixture limits.": "Keep in-place and root-motion sets separate.",
+            "`gate=target-character-review`; fixture visual gate.": "Test stops and reversals on the target character.",
+        }
+        for old, new in replacements.items():
+            self.assertIn(old, primary)
+            primary = primary.replace(old, new)
+        self.assertEqual(reports.validate(primary), [])
+        for index, (label, decision) in enumerate(zip(reports.RECIPE_LABELS, replacements.values()), 1):
+            with self.subTest(step=label):
+                blank = primary.replace(decision, "")
+                self.assertIn(f"integration recipe step {index} needs a written {label} decision", reports.validate(blank))
+                missing = primary.replace(f"{index}. **{label}:** {decision}", "")
+                self.assertTrue(any("integration recipe" in error for error in reports.validate(missing)))
+        legacy = valid_report()
+        for old, new in replacements.items():
+            legacy = legacy.replace(old, new)
+        self.assertTrue(any("lacks an implementable" in error for error in reports.validate(legacy)))
+
     def test_valid_pair_retains_member_measurements(self) -> None:
         primary, appendix = valid_editorial_pair()
         self.assertIn("duration=1.0 s; rm_speed=1.0 m/s", appendix)
