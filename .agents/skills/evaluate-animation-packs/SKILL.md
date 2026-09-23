@@ -589,6 +589,15 @@ Write the primary report in this reader order:
 5. an actionable issue register with affected sets/clips and residual status;
 6. engine status, best/poor fit, and remaining evidence boundaries.
 
+Write to the developer or artist making a decision: name the usable set, the
+main blocker, who can address it, and the check needed before use. Use plain
+instructions in the integration recipe, without internal `key=value` tags.
+Explain a trial output as a possible fix still awaiting the named checks;
+do not make readers decode promotion, semantic-authority, or evaluator-policy
+language. Put audit machinery and long measurement derivations in the appendix.
+Keep uncertainty specific to the affected use rather than repeating a general
+disclaimer in every paragraph.
+
 Use report format 3 for editorial reports. Exact members, coordinates, measured
 timing/speeds and runtime contracts live in the appendix's `Exact runtime
 members` section, linked from each set summary. Retain format 1/2 validation
@@ -678,8 +687,10 @@ When changing the skill or publishing repository reports, run
 every report/appendix pair under `docs/reports/`. The same check is part of
 `just gates`.
 
-Publishing a pair in this repository also means indexing it in
-`docs/reports/README.md`: one current-reports row, and one scorecard row that
-copies that pair's header-block verdict, completeness, confidence, evaluation
-date, and current evaluator. A separate repository gate compares both rows
-against the published pair, so a missing or stale row fails `just gates`.
+Publishing a pair in this repository also means indexing it once in the
+`Current reports` catalog in `docs/reports/README.md`, with its evidence link,
+scope, and evaluation status. Add its collection membership to `Browse by
+collection` for grouped navigation. Keep verdict, confidence, date, and evaluator
+in the report header rather than maintaining a second full report list. The
+repository checks that the catalog covers the maintained pairs and that the
+collection map covers the catalog.

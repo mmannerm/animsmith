@@ -2,7 +2,7 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — current mechanical, declared-contract, runtime-group, and remediation checks are complete, with bounded Unity source/mixer probes; visual, contact, retargeting, and target game-controller acceptance remain open.
+> Evaluation completeness: **partial** — source files, declared checks and transform trials were reviewed, with limited Unity source playback; target-character visuals, contacts, retargeting and the game controller remain untested.
 >
 > Confidence: **medium**
 >
@@ -16,17 +16,17 @@
 
 ## Technical decision
 
-**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+**Prototype decision:** Try one in-place or root-motion gait variant at a time after loop-policy review. Continuous gait defects require artist or source correction if confirmed. The 73-bone block/guard animation differs from the common 56-bone rig and needs an isolated retarget/import check. In-place clips leave travel to the controller; root-motion clips carry authored travel.
 
-The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+**Camera scope:** Full-body humanoid animations; appearance on your target character and camera is untested. Dedicated first-person arms/viewmodel use is unverified.
 
-**Content in evaluated inventory:** Armed walk, run, crouch and equipment/actions. Evaluated filenames include airborne, attacks and reactions; these have no accepted controller topology here. This describes candidate content, not accepted gameplay behavior.
+This animset is one of eight locally evaluated parts of [Ultimate Animation Collection](protofactor-ultimate-animation-collection.md). The local asset revision is unknown; the collection report separates evaluated files from the dated vendor listing.
 
-**Adoption route:** Prototype one motion-owner variant per gait after loop-policy review. Continuous gait defects require artist or source correction if confirmed. The 73-bone blocked state needs an isolated retarget/import check.
+**Content in evaluated inventory:** Armed walk, run, crouch and equipment/actions. Evaluated filenames include airborne, attacks and reactions; these have no accepted controller topology here. These are identified motions; gameplay behavior has not been approved.
 
-AnimSmith 0.14.0 reads all 113 delivered FBX candidates. The untouched baseline has no errors; it reports 13629 constant-track notes. The retained per-file declarations are stricter: 23/110 motion files pass and 87 fail, chiefly because loop treatment is unresolved. Named one-shots must be re-declared before their seam failures are attributed to the source. Intended continuous gait files still need source or loop-policy correction.
+AnimSmith 0.14.0 reads all 113 delivered FBX candidates. The untouched baseline has no errors; it reports 13629 constant-track notes. With the per-file settings used in this evaluation, 23/110 motion files pass and 87 fail, mainly because loop settings need review. These loop and movement settings still need confirmation from the project or vendor; their failures are not all source defects. Set confirmed one-time actions to play once before treating their wrap seams as source defects. For intended repeating gaits, review the loop policy and correct actual source seams.
 
-All 25 fresh transform candidates were produced outside the repository and passed inspect/measure. All candidates remain non-clean under their retained configs. None is adopted, so residual severity remains unresolved. Developer decision: run a bounded full-body target-engine pilot only after correcting one-shot loop declarations and obtaining clean contracts for one named gait set; require blend, foot-contact, root-owner, and visual acceptance before production use.
+All 25 transform trials passed file inspection and measurement. All transformed outputs still fail their declared checks. For a target-engine pilot, first correct the one-shot loop settings and secure one gait set that passes its intended checks. Production use still requires blending, foot-contact, movement and visual approval.
 
 ## Capability coverage
 
@@ -36,7 +36,7 @@ Filename-classified walk, run and crouch combat gaits have separate in-place and
 
 ### Content gaps and unknowns
 
-Additive aim, paired interactions and dedicated viewmodel content have no established classification. The 73-bone blocked state differs from the common 56-bone family and needs its own import/retarget check.
+Additive aim, paired interactions and dedicated viewmodel content have no established classification. The 73-bone block/guard animation differs from the common 56-bone family and needs its own import/retarget check.
 
 ### Evaluation still needed
 
@@ -44,40 +44,40 @@ Redeclare one-shots, resolve continuous gait contracts, and test blend coordinat
 
 ## Runtime sets and authored motion
 
-These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
+Use each row as a separate blend or sequence proposal. The linked appendix names its exact clips, timings and measurements; controller playback and contact quality still need testing.
 
 | Set | Controller use | Adoption decision | Exact members |
 |---|---|---|---|
-| `crouch-combat-8-way-in-place` | Crouch eight directions; controller travel | Source-only crouch prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
-| `crouch-combat-8-way-root-motion` | Crouch eight directions; animation travel; measured RM 0.480–0.730 m/s | Source-only crouch prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
-| `run-8-way-in-place` | Run eight directions; controller travel | Source-only run prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
-| `run-8-way-root-motion` | Run eight directions; animation travel; measured RM 1.905–2.117 m/s | Source-only run prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
-| `walk-combat-8-way-in-place` | Walk eight directions; controller travel | Source-only walk prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
-| `walk-combat-8-way-root-motion` | Walk eight directions; animation travel; measured RM 0.491–0.951 m/s | Source-only walk prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
+| `crouch-combat-8-way-in-place` | Crouch eight directions; controller travel | Crouch prototype with controller travel. Its declared checks still fail. Confirm which motions should loop, correct any genuine seam, and test foot contacts before using the full blend. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
+| `crouch-combat-8-way-root-motion` | Crouch eight directions; animation travel; measured root-motion 0.480–0.730 m/s | Crouch prototype with animation travel. Its declared checks still fail. Confirm which motions should loop, correct any genuine seam, and test foot contacts before using the full blend. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
+| `run-8-way-in-place` | Run eight directions; controller travel | Run prototype with controller travel. Its declared checks still fail. Confirm which motions should loop, correct any genuine seam, and test foot contacts before using the full blend. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
+| `run-8-way-root-motion` | Run eight directions; animation travel; measured root-motion 1.905–2.117 m/s | Run prototype with animation travel. Its declared checks still fail. Confirm which motions should loop, correct any genuine seam, and test foot contacts before using the full blend. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
+| `walk-combat-8-way-in-place` | Walk eight directions; controller travel | Walk prototype with controller travel. Its declared checks still fail. Confirm which motions should loop, correct any genuine seam, and test foot contacts before using the full blend. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
+| `walk-combat-8-way-root-motion` | Walk eight directions; animation travel; measured root-motion 0.491–0.951 m/s | Walk prototype with animation travel. Its declared checks still fail. Confirm which motions should loop, correct any genuine seam, and test foot contacts before using the full blend. | [8 exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
 
-The appendix retains measured duration, RM speed and in-place phase ranges. Both eight-file `run-8-way` alternatives span 0.600–0.667 s; the detailed table reports each variant’s minimum. Use IP and RM as separate motion-owner choices; neither variant has accepted contact synchronization.
+The appendix gives timings, travel speeds and phase measurements for each motion. Both eight-file `run-8-way` alternatives span 0.600–0.667 s; the detailed table reports each variant’s minimum. Use in-place and root-motion as separate movement ownership choices; neither variant has accepted contact synchronization.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=eight-way-cartesian`; select one eight-member in-place or root-motion row from the appendix and map forward/cardinal/diagonal coordinates explicitly.
-2. **Timing/synchronization:** `sync=not-evaluated`; loop only confirmed continuous states, keep named one-shots at `loop=false`, and require phase/contact review before synchronized blending.
-3. **State ownership:** `owner=project-controller`; choose IP controller translation or RM animation translation per state, with one owner for translation, yaw, and collision.
-4. **Composition constraints:** `composition=full-body-handoff`; keep weapon combat states namespaced to this pack and require separate mask/socket/IK evidence before layering.
-5. **Acceptance gate:** `gate=engine-visual-contact`; require clean intended contracts plus target-engine import, full blend-space playback, foot/weapon contact, and artist review.
+1. **Members/topology:** Select one eight-member in-place or root-motion row from the appendix and map forward/cardinal/diagonal coordinates explicitly.
+2. **Timing/synchronization:** Loop only confirmed continuous states, keep named one-shots at `loop=false`, and require phase/contact review before synchronized blending.
+3. **State ownership:** Choose controller translation for in-place clips or animation translation for root-motion clips per state, with one owner for translation, yaw, and collision.
+4. **Composition constraints:** Keep weapon combat states namespaced to this pack and require separate mask/socket/IK evidence before layering.
+5. **Acceptance gate:** Require clean intended contracts plus target-engine import, full blend-space playback, foot/weapon contact, and artist review.
 
 ## Technical issue register
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| PF1-PHASE | note | Scope: the three named in-place directional gait hypotheses above; reproduce their measured minimum-covering-arc spreads from the appendix member phases. Contact correspondence and intended synchronization are unconfirmed, so spread alone is not an artist defect. [Guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Obtain project or vendor loop/contact intent, then sweep the exact blend coordinates against a declared contact tolerance. Use engine phase markers or declared alignment only after intent is established; request artist cleanup only for a confirmed source-motion problem. Residual unresolved. | Current phase measurements inform a declared alignment trial; they do not prove contact or visual acceptance. | `observed-animsmith` phases; synchronization/contact acceptance `not-evaluated`. |
-| PF1-01 | major | Scope: `Humanoid@RunForward1hMelee.fbx`, `Humanoid@RunForward1hMelee_RM.fbx`, and all members of `run-8-way`; reproduce: lint each exact file with its retained per-file config; impact: every named gait hypothesis has 0 contract-clean members and cannot be admitted as a production blend set. [Guidance](../game-ready-clips.md#the-readiness-ladder) | artist-author | Action: re-export intended continuous cycles with matching pose and velocity boundaries, or document a non-loop policy; acceptance: all exact members pass the intended loop contract and a full blend-space visual/contact review; residual: unresolved | AnimSmith can validate and compare candidates, but cannot infer intended contact phase or approve visible motion. | `observed-animsmith`; current exact-file evidence, high confidence mechanically |
-| PF1-02 | moderate | Scope: `Humanoid@AttackA1hMelee.fbx` and other attacks, reactions, parries, or emotes currently declared as loops; reproduce: run the retained config and observe loop seam errors; impact: a project declaration can reject valid one-shots or cause unintended replay seams. [Guidance](../game-ready-clips.md#the-readiness-ladder) | engine-config | Action: set `loop=false` for confirmed one-shots and retain looping only for vendor/project-authorized continuous states; acceptance: revised declarations lint clean and state transitions play once; residual: unresolved | A future classifier may suggest intent, but project or vendor authority remains required. | `observed-animsmith`; declaration defect distinguished from source-animation quality |
+| PF1-PHASE | note | The three selected in-place gait sets have measured phase differences (see appendix). Foot-contact timing and intended synchronization are unknown, so the measurements alone do not show a source defect. [Guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Obtain project or vendor loop/contact intent, then sweep the exact blend coordinates against a declared contact tolerance. Use engine phase markers or declared alignment only after intent is established; request artist cleanup only for a confirmed source-motion problem. Residual unresolved. | Current phase measurements inform a declared alignment trial; they do not prove contact or visual acceptance. | `observed-animsmith` phases; synchronization/contact acceptance `not-evaluated`. |
+| PF1-01 | major | `Humanoid@RunForward1hMelee.fbx`, `Humanoid@RunForward1hMelee_RM.fbx` and their eight-direction sets fail the per-file settings used in this evaluation; none of the selected gait sets is ready for a production blend. [Guidance](../game-ready-clips.md#the-readiness-ladder) | artist-author | Re-export intended repeating gaits with matching endpoint pose and velocity, or document a play-once setting. All eight members must pass their intended checks, then pass visual and contact review across the blend. Unresolved. | AnimSmith can validate and compare candidates, but cannot infer intended contact phase or approve visible motion. | `observed-animsmith`; current exact-file evidence, high confidence mechanically |
+| PF1-02 | moderate | `Humanoid@AttackA1hMelee.fbx` and other attacks, reactions, parries or emotes are declared as loops. Their wrap-seam findings may reflect the project setting for one-time actions rather than bad source motion. [Guidance](../game-ready-clips.md#the-readiness-ladder) | engine-config | Set confirmed one-time actions to `loop=false`; keep looping only where the project or vendor intends it. Recheck the settings and play each transition once. Unresolved. | AnimSmith may suggest a play-once setting, but the project or vendor must confirm intent. | `observed-animsmith`; declaration defect distinguished from source-animation quality |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | source-controller-feasibility | Fresh import and standalone sampling passed for `IdleCombat1hMelee`, `WalkForwardCombat1hMelee`, and `WalkForwardCombat1hMelee_RM`; `basic-idle-to-onehand-idle`, `sword-shield-idle-to-onehand-idle`, and `basic-walk-ip-to-onehand-walk-ip` produced finite mixer poses with fixed gameplay-owned root; the RM walk produced finite 1.215074 owner translation with animation-owned root. | Inspect rendered motion, contacts, deformation, authored AnimatorController behavior, and a player build; do not generalize beyond named sources. |
+| Unity 6000.5.8f1 | source-controller-feasibility | Fresh import and standalone sampling passed for `IdleCombat1hMelee`, `WalkForwardCombat1hMelee`, and `WalkForwardCombat1hMelee_RM`; `basic-idle-to-onehand-idle`, `sword-shield-idle-to-onehand-idle`, and `basic-walk-ip-to-onehand-walk-ip` produced finite mixer poses with fixed gameplay-owned root; the root-motion walk produced finite 1.215074 owner translation with animation-owned root. | Inspect rendered motion, contacts, deformation, authored AnimatorController behavior, and a player build; do not generalize beyond named sources. |
 | Unreal Engine unspecified | not-evaluated | No current import or retarget result. | Import, retarget, root-motion, blend, and visual tests. |
 | Godot unspecified | not-evaluated | No current conversion or playback result. | Convert/import and test animation graph, roots, contacts, and visuals. |
 | Bevy unspecified | not-evaluated | No current conversion or playback result. | Convert/load and test graph, root ownership, performance, and visuals. |
@@ -90,7 +90,7 @@ The fresh Unity probe establishes finite source playback and the named cross-pac
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.14.0 — revalidated the unchanged retained source inventory, per-file declarations, measured runtime hypotheses, and every previously recommended bounded transform. Current candidates remain unadopted. AnimSmith 0.10.0 — retained command ledgers and classification material supplied replay controls; its conclusions are superseded for current behavior.
+AnimSmith 0.14.0 — revalidated the unchanged retained source inventory, per-file declarations, measured runtime hypotheses, and every previously recommended bounded transform. Current transformed outputs still need gameplay and visual checks. AnimSmith 0.10.0 — retained command ledgers and classification material supplied replay controls; its conclusions are superseded for current behavior.
 
 ## Evidence status
 

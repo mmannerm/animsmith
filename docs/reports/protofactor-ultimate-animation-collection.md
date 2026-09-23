@@ -2,7 +2,7 @@
 
 > Technical verdict: **Insufficient technical evidence**
 >
-> Evaluation completeness: **partial** — eight constituent source baselines and declared contracts were rerun with AnimSmith 0.14.0; new constituent scenarios guide integration; collection semantic authority and visual/gameplay acceptance remain open.
+> Evaluation completeness: **partial** — source and declared checks were rerun for eight animsets with AnimSmith 0.14.0; proposed cross-pack states and visual/gameplay behavior remain untested.
 >
 > Confidence: **medium**
 >
@@ -16,19 +16,19 @@
 
 ## Technical decision
 
-**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+**Prototype decision:** Choose a ground state and add one full-body family at a time. Configure ownership and handoffs; trial outputs and source corrections are in the constituent reports. Collection-wide compatibility remains unknown. In-place clips leave travel to the controller; root-motion clips carry authored travel.
+
+**Camera scope:** Full-body humanoid animations; appearance on your target character and camera is untested. Dedicated first-person arms/viewmodel use is unverified.
 
 As of the 2026-09-17 vendor listing, Ultimate advertises 24 animsets. Eight constituents were evaluated here; 16 were not: Combat Bare Fists, Fencing, Wizard, Bow & Arrow, 2 Handed Gun, Assault Rifle, Bazooka, Dual Guns, Minigun, Shotgun, Hostage, Zombie, Creature, Crowd, Push & Pull Cube, and Female Basic Locomotion. The older local report named “Double Guns”; its relationship to the listed “Dual Guns” is unverified. Current listing membership does not establish that the unknown local revision contained all 24.
 
-**Content in evaluated inventory:** Eight evaluated constituent state families. Ground locomotion, injured styles, three melee styles, shield combat, climbing and campfire interactions have selected candidates; sixteen currently advertised constituents are unevaluated. This describes candidate content, not accepted gameplay behavior.
-
-**Adoption route:** Choose a ground state and add one full-body family at a time. Configure ownership and handoffs; individual mechanical candidates and source corrections are in constituent reports. Collection-wide compatibility remains unknown.
+**Content in evaluated inventory:** Eight evaluated constituent state families. Ground locomotion, injured styles, three melee styles, shield combat, climbing and campfire interactions have selected candidates; sixteen currently advertised constituents are unevaluated. These are identified motions; gameplay behavior has not been approved.
 
 The official AnimSmith 0.14.0 release reran [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), and [Dual Swords](protofactor-dual-swords.md). They contain 918 source candidates, including 895 individual motion-labelled inputs. This is current mechanical intake evidence, not collection-level approval.
 
 **Can these packs form a kinematic animation controller?** They provide useful candidate ingredients, but the evaluated combination is not an accepted controller. Use Basic Locomotion as the ground state, Injured as separate style states, melee packs as full-body armed states, and Climbing/Campfire as constrained traversal/interaction states. Shared clip naming and successful import cannot establish smooth handoffs, matching contacts, or compatible upper-body layers.
 
-The constituent reports now name exact current scenario members and actions. They do not reconstruct a missing historical collection manifest. All 159 external transform candidates remain unpromoted; passing a transform is not a ready-to-use motion verdict.
+The constituent reports now name exact current scenario members and actions. They do not reconstruct a missing historical collection manifest. All 159 transform trials still need the relevant in-game checks before any output can replace its source.
 
 ## Capability coverage
 
@@ -46,26 +46,26 @@ Test one cross-pack state boundary at a time, then target-character blend, conta
 
 ## Runtime sets and authored motion
 
-These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
+Use each row as a separate blend or sequence proposal. The linked appendix names its exact clips, timings and measurements; controller playback and contact quality still need testing.
 
 | Set | Controller use | Adoption decision | Exact members |
 |---|---|---|---|
-| Basic locomotion | Ground walk/run/crouch; controller travel | Start a controller-owned source prototype; phase-anchor is unadopted and 22/24 candidate outputs retain lint across its three rings. Set loop/contact and root policy. | [Constituent exact members](protofactor-basic-locomotion-evidence.md#exact-runtime-members) |
+| Basic locomotion | Ground walk/run/crouch; controller travel | Start a controller-owned source prototype; phase-alignment output still needs in-game checks and 22/24 candidate outputs retain lint across its three rings. Set loop/contact and root policy. | [Constituent exact members](protofactor-basic-locomotion-evidence.md#exact-runtime-members) |
 | Injured | Seven style-local idle/walk/run states | Add one style-local source state at a time; 20/21 selected files fail declared contracts. Review true loops and healthy-state handoff. | [Constituent exact members](protofactor-injured-evidence.md#exact-runtime-members) |
-| Sword & Shield | Full-body shield combat; IP or RM gait | Choose IP or RM source gait; no named set is contract-clean. Crouch RM is blocked by a two-bone source member; review one-shot policy separately. | [Constituent exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
-| 1-Handed Melee | Full-body one-hand combat; IP or RM gait | Choose one source gait variant; no named set is contract-clean. Review continuous seams and isolate the 73-bone blocked state for import/retarget. | [Constituent exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
-| 2-Handed Melee | Full-body two-hand combat; IP or RM gait | Choose one source gait variant; no named set is contract-clean. Review continuous seams and isolate the two 56-bone block states. | [Constituent exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
-| Dual Swords | Full-body dual-weapon combat; IP or RM gait | Choose one source gait variant; no named set is contract-clean. Review continuous seams, dual-grip contacts and full-body handoff. | [Constituent exact members](protofactor-dual-swords-evidence.md#exact-runtime-members) |
-| Climbing | Separate wall and ladder traversal | Prototype wall and ladder separately. All ten selected members fail declared-loop contracts; pruning did not clean WallClimbUp. Geometry/contact remains open. | [Constituent exact members](protofactor-climbing-evidence.md#exact-runtime-members) |
+| Sword & Shield | Full-body shield combat; in-place or root-motion gait | Choose in-place or root-motion source gait; no named set passes its declared checks. The root-motion crouch set is blocked by a two-bone source member; review one-shot policy separately. | [Constituent exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
+| 1-Handed Melee | Full-body one-hand combat; in-place or root-motion gait | Choose one source gait variant; no named set passes its declared checks. Review continuous seams and isolate the 73-bone blocked state for import/retarget. | [Constituent exact members](protofactor-one-handed-melee-evidence.md#exact-runtime-members) |
+| 2-Handed Melee | Full-body two-hand combat; in-place or root-motion gait | Choose one source gait variant; no named set passes its declared checks. Review continuous seams and isolate the two 56-bone block states. | [Constituent exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
+| Dual Swords | Full-body dual-weapon combat; in-place or root-motion gait | Choose one source gait variant; no named set passes its declared checks. Review continuous seams, dual-grip contacts and full-body handoff. | [Constituent exact members](protofactor-dual-swords-evidence.md#exact-runtime-members) |
+| Climbing | Separate wall and ladder traversal | Prototype wall and ladder separately. All ten selected members fail declared-loop contracts; pruning did not clear the WallClimbUp loop findings. Geometry/contact remains open. | [Constituent exact members](protofactor-climbing-evidence.md#exact-runtime-members) |
 | Campfire | Posture and prop interaction chains | Prototype discrete interaction chains. Configure anchors/props/exits; kneel hold has a rotational seam that pruning did not clear. | [Constituent exact members](protofactor-campfire-evidence.md#exact-runtime-members) |
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=state-machine`; keep ground locomotion, injury styles, armed stances, traversal and interactions as explicit states. Use direction/speed trees only within a reviewed compatible set.
-2. **Timing/synchronization:** `sync=not-evaluated`; confirm intended loop/contact correspondence before choosing normalized-phase synchronization, then test outgoing/incoming poses for state handoffs. Do not equate identical durations with matching support feet.
-3. **State ownership:** `owner=controller`; select in-place ground motions for a kinematic capsule. Declare any RM action as a separate movement mode, including collision and return of authority.
-4. **Composition constraints:** `composition=full-body`; armed/unarmed full-body handoffs are the starting hypothesis. A weapon mask needs explicit spine/root ownership, grip, stance and foot-contact checks before adoption.
-5. **Acceptance gate:** `gate=current-cross-pack-engine-and-visual-review`; run speed/direction sweeps, starts/stops, interruptions, attachment and geometry tests on the intended character and engine build.
+1. **Members/topology:** Keep ground locomotion, injury styles, armed stances, traversal and interactions as explicit states. Use direction/speed trees only within a reviewed compatible set.
+2. **Timing/synchronization:** Confirm intended loop/contact correspondence before choosing normalized-phase synchronization, then test outgoing/incoming poses for state handoffs. Do not equate identical durations with matching support feet.
+3. **State ownership:** Select in-place ground motions for a kinematic capsule. Declare any root-motion action as a separate movement mode, including collision and return of authority.
+4. **Composition constraints:** Armed/unarmed full-body handoffs are the starting hypothesis. A weapon mask needs explicit spine/root ownership, grip, stance and foot-contact checks before adoption.
+5. **Acceptance gate:** Run speed/direction sweeps, starts/stops, interruptions, attachment and geometry tests on the intended character and engine build.
 
 ## Technical issue register
 
@@ -73,16 +73,16 @@ Severity is scoped to the intended combined controller. A missing test is an ado
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| UC-PHASE | note | Evaluator-selected locomotion groups have measured phase differences; intended shared contact phase is not authoritative, so no artist defect follows from the spread. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Confirm project or vendor synchronization intent, then test the exact constituent sets against declared phase/contact tolerances. Treat per-pack loop findings separately and request artist changes only where intended playback establishes a source defect. Slicing/anchoring candidates remain unpromoted; residual adoption unresolved. | Declared anchoring can reduce measured spread; it cannot choose or approve intended contacts. | `observed-animsmith` measurements; synchronization/contact acceptance `not-evaluated`. |
+| UC-PHASE | note | Evaluator-selected locomotion groups have measured phase differences; intended shared contact phase is not authoritative, so no artist defect follows from the spread. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | unknown | Confirm project or vendor synchronization intent, then test the exact constituent sets against declared phase/contact tolerances. Treat per-pack loop findings separately and request artist changes only where intended playback establishes a source defect. Slicing and phase-alignment outputs still need gameplay checks. | Declared anchoring can reduce measured spread; it cannot choose or approve intended contacts. | `observed-animsmith` measurements; synchronization/contact acceptance `not-evaluated`. |
 | UC-CONTROLLER | major | Arbitrary cross-pack blending has no accepted movement, transition or contact contract. Guidance: not applicable. | engine-config | Build the explicit state topology above and test exact handoffs. Residual unknown until project acceptance; no pack defect inferred. | Explicit collection contracts can record selected relationships and diagnostics. | `inferred` integration guidance; controller acceptance `not-evaluated`. |
-| UC-MASK | major | Full-body weapon/interaction motions may conflict with locomotion when masked at the torso. Guidance: not applicable. | engine-config | Start with full-body state changes. Validate any selected upper-body mask, grip and planted feet before promotion; residual unknown. | Mask diagnostics could expose affected channels; authored style/contact judgment remains. | Masked artistic/contact fit `not-evaluated`. |
+| UC-MASK | major | Full-body weapon/interaction motions may conflict with locomotion when masked at the torso. Guidance: not applicable. | engine-config | Start with full-body state changes. Check any upper-body mask against grip, stance and planted feet before using it; compatibility remains unknown. | Mask diagnostics could expose affected channels; authored style/contact judgment remains. | Masked artistic/contact fit `not-evaluated`. |
 | UC-SCOPE | minor | Sixteen currently advertised constituents are outside this evaluation; whole-collection coverage and value cannot be concluded. Guidance: not applicable. | unknown | Consult the explicit exclusion list and evaluate only needed missing gameplay capabilities. Residual scope limitation. | No tool can infer evidence for missing content. | `not-evaluated`; boundary, not vendor defect. |
 
 ## Engine status
 
 | Runtime | Evidence level | Technical result | Remaining gate |
 |---|---|---|---|
-| Unity 6000.5.8f1 | observed-engine | 26/26 bounded source checks: 13 samples, nine Basic/Sword & Shield-to-melee mixer schedules, four RM samples. Injured, Climbing and Campfire handoffs were not tested. Finite poses/fixed owner under explicit policy. | Visual/contact, actual controller, target character, compression, candidate output and build acceptance. |
+| Unity 6000.5.8f1 | observed-engine | 26/26 bounded source checks: 13 samples, nine Basic/Sword & Shield-to-melee mixer schedules, four root-motion samples. Injured, Climbing and Campfire handoffs were not tested. Finite poses/fixed owner under explicit policy. | Visual/contact, actual controller, target character, compression, candidate output and build acceptance. |
 | Unreal Engine | not-evaluated | No current import or playback run. | Import, retarget, graph, contact, and build tests. |
 | Godot | not-evaluated | No current conversion, import, or playback run. | Conversion/import, graph, contact, and export tests. |
 | Bevy | not-evaluated | No current conversion, addressability, or runtime run. | Conversion, target mapping, runtime, and performance tests. |
@@ -97,7 +97,7 @@ Severity is scoped to the intended combined controller. A missing test is an ado
 | Basic + Campfire | Stop at interaction anchor, then enter explicit posture sequence | Seat/fire placement, props, interrupt and return-to-ground behavior |
 | Protofactor + Mixamo | No approved cross-library handoff | Target rig, rest pose, scale, root convention, phase, style and attachment tests |
 
-Fresh Unity 6000.5.8f1 source tests passed 26/26 bounded checks: 13 individual Humanoid samples, nine named cross-pack mixer schedules and four RM samples. The nine mixers cover Basic idle/walk and Sword & Shield idle paired with 1-Handed Melee, 2-Handed Melee and Dual Swords; they do not cover Injured, Climbing or Campfire handoffs. For the nine mixers, five weights (0, 0.25, 0.5, 0.75, 1) produced finite sampled bone transforms with `applyRootMotion=false` and a fixed Animator owner. This supports technical feasibility of the named source combinations, not visually smooth handoffs or a finished kinematic controller.
+Fresh Unity 6000.5.8f1 source tests passed 26/26 bounded checks: 13 individual Humanoid samples, nine named cross-pack mixer schedules and four root-motion samples. The nine mixers cover Basic idle/walk and Sword & Shield idle paired with 1-Handed Melee, 2-Handed Melee and Dual Swords; they do not cover Injured, Climbing or Campfire handoffs. For the nine mixers, five weights (0, 0.25, 0.5, 0.75, 1) produced finite sampled bone transforms with `applyRootMotion=false` and a fixed Animator owner. This supports technical feasibility of the named source combinations, not visually smooth handoffs or a finished kinematic controller.
 
 The proposed state architecture remains `inferred`; this bounded feasibility evidence is not an accepted full-controller verdict. The reports are useful for selecting a prototype and assigning author/project work; they do not establish a universal game-ready controller.
 
@@ -109,7 +109,7 @@ AnimSmith 0.10.0 and earlier — superseded mechanical and remediation evidence.
 
 ## Evidence status
 
-Current conclusions are constituent-derived and explicitly scoped. Canonical collection taxonomy is unavailable; selected current scenarios are linked without claiming a recovered collection binding. No candidate is promoted. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) distinguish static, engine-execution and acceptance evidence.
+Current conclusions are constituent-derived and explicitly scoped. Canonical collection taxonomy is unavailable; selected current scenarios are linked without claiming a recovered collection binding. Transformed outputs still need gameplay and visual checks. The [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and [appendix](protofactor-ultimate-animation-collection-evidence.md) distinguish static, engine-execution and acceptance evidence.
 
 ## Sources
 

@@ -779,7 +779,7 @@ def _validate_runtime_sets(
     return errors
 
 
-def _validate_recipe(document: dict[str, Any]) -> list[str]:
+def _validate_recipe(document: dict[str, Any], *, editorial: bool = False) -> list[str]:
     paragraphs = _paragraphs(document, "Integration recipe")
     errors: list[str] = []
     positions: list[int] = []
@@ -797,6 +797,10 @@ def _validate_recipe(document: dict[str, Any]) -> list[str]:
             continue
         position, paragraph = matching[0]
         positions.append(position)
+        if editorial:
+            if not paragraph["text"].replace(f"{label}:", "", 1).strip():
+                errors.append(f"integration recipe step {index} needs a written {label} decision")
+            continue
         if not any(
             any(value.startswith(key + "=") and _ascii_slug(value.split("=", 1)[1]) for key in keys)
             for value in paragraph["code"]
@@ -835,7 +839,7 @@ def validate(
         errors.extend(_validate_set_summary(document))
     else:
         errors.extend(_validate_runtime_sets(document, set_types=set_types))
-    errors.extend(_validate_recipe(document))
+    errors.extend(_validate_recipe(document, editorial=expected_format == EDITORIAL_REPORT_FORMAT))
 
     verdict = _metadata(document, "Technical verdict")
     if verdict is None or len(verdict["strong"]) != 1:

@@ -3375,15 +3375,13 @@ class ReportValidatorTests(unittest.TestCase):
         self.assertEqual(len(protofactor_rows), 9)
         for row in protofactor_rows:
             status = row[3]["text"]
-            self.assertIn("current AnimSmith 0.14.0", status)
             if row[0]["text"] in {
                 "Protofactor Campfire", "Protofactor Climbing", "Protofactor Injured",
             }:
-                self.assertIn("no current engine", status)
+                self.assertIn("Not tested in an engine", status)
             else:
-                self.assertIn("source Unity", status)
-                self.assertIn("acceptance", status)
-            self.assertIn("unpromoted", status)
+                self.assertIn("Limited Unity source tests", status)
+                self.assertIn("still need in-game checks", status)
 
     def test_published_history_boundary_rejects_a_body_regression(self) -> None:
         repository = Path(__file__).resolve().parents[4]

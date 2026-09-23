@@ -2,7 +2,7 @@
 
 > Technical verdict: **Usable with conditions**
 >
-> Evaluation completeness: **partial** — all current file and contract checks ran; no current engine or visual acceptance ran.
+> Evaluation completeness: **partial** — all source files and declared checks were reviewed; engine playback and visual quality remain untested.
 >
 > Confidence: **medium**
 >
@@ -16,17 +16,17 @@
 
 ## Technical decision
 
-**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+**Prototype decision:** Try a separate style-local speed state for each injury style. Configure speed and healthy-state transitions; foot contacts and character fit remain unknown.
 
-The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+**Camera scope:** Full-body humanoid animations; appearance on your target character and camera is untested. Dedicated first-person arms/viewmodel use is unverified.
 
-**Content in evaluated inventory:** Seven idle/walk/run injury styles. Each A–G style has an evaluated three-file candidate; filenames do not establish a severity order or recovery path. This describes candidate content, not accepted gameplay behavior.
+This animset is one of eight locally evaluated parts of [Ultimate Animation Collection](protofactor-ultimate-animation-collection.md). The local asset revision is unknown; the collection report separates evaluated files from the dated vendor listing.
 
-**Adoption route:** Prototype a separate style-local speed state for each injury style. Configure speed and healthy-state transitions; foot contacts and character fit remain unknown.
+**Content in evaluated inventory:** Seven idle/walk/run injury styles. Each A–G style has an evaluated three-file candidate; filenames do not establish a severity order or recovery path. These are identified motions; gameplay behavior has not been approved.
 
 **Use as seven separate injury-style locomotion candidates.** Each proposed style has idle/walk/run members; there is no evidence that A–G are interchangeable directions or severity levels. Keep the selected style coherent, let the kinematic controller own motion, and check walk/run contact timing and transitions to healthy locomotion.
 
-`observed-animsmith`: the official 0.14.0 evaluator inspected and measured all 72 FBXs; 28/70 declared-contract files pass and 42 fail per output format. Conditions below distinguish source findings, evaluator policy and untested gameplay. No remediation candidate is promoted.
+`observed-animsmith`: the official 0.14.0 evaluator inspected and measured all 72 FBXs; 28/70 declared-contract files pass and 42 fail per output format. The findings below separate source problems, project settings and untested gameplay. Transformed outputs still need gameplay and visual checks.
 
 ## Capability coverage
 
@@ -44,25 +44,25 @@ Test style choice, speed calibration, planted-foot behavior, cross-style and hea
 
 ## Runtime sets and authored motion
 
-These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
+Use each row as a separate blend or sequence proposal. The linked appendix names its exact clips, timings and measurements; controller playback and contact quality still need testing.
 
 | Set | Controller use | Adoption decision | Exact members |
 |---|---|---|---|
-| Injury style A speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. RunInjuredA has loop seam findings; review true cycles and foot contacts before speed blending ([IN-LOOP](#technical-issue-register)). | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
-| Injury style B speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
-| Injury style C speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
-| Injury style D speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
-| Injury style E speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
-| Injury style F speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
-| Injury style G speed | Style-local idle/walk/run; controller travel | Source-only style-local prototype. Selected injury loops are mostly non-clean; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style A speed | Style-local idle/walk/run; controller travel | Style-local prototype. RunInjuredA has loop seam findings; review true cycles and foot contacts before speed blending ([IN-LOOP](#technical-issue-register)). | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style B speed | Style-local idle/walk/run; controller travel | Style-local prototype. Selected injury loops mostly fail their declared checks; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style C speed | Style-local idle/walk/run; controller travel | Style-local prototype. Selected injury loops mostly fail their declared checks; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style D speed | Style-local idle/walk/run; controller travel | Style-local prototype. Selected injury loops mostly fail their declared checks; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style E speed | Style-local idle/walk/run; controller travel | Style-local prototype. Selected injury loops mostly fail their declared checks; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style F speed | Style-local idle/walk/run; controller travel | Style-local prototype. Selected injury loops mostly fail their declared checks; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
+| Injury style G speed | Style-local idle/walk/run; controller travel | Style-local prototype. Selected injury loops mostly fail their declared checks; review this style’s loop intent and contacts before speed blending. | [3 exact members](protofactor-injured-evidence.md#exact-runtime-members) |
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=speed-blend`; create one idle/walk/run tree per chosen style A–G. Treat style changes as explicit state transitions; do not distribute injury letters around a direction tree.
-2. **Timing/synchronization:** `sync=not-evaluated`; establish intended cyclic playback and support-contact timing before choosing synchronization. walks measure 1.333 s; runs measure 0.700 or 0.800 s. Match support-foot timing between moving clips; an almost-stationary idle gait phase is not a useful contact anchor. `Humanoid@RunInjuredB.fbx` passes a non-looping declaration, which does not establish it as a clean repeating run.
-3. **State ownership:** `owner=controller`; selected non-RM roots are stationary. Tune speed thresholds to stride/contact behavior, not their measured zero root speed. Keep RM alternatives under a separate movement policy.
-4. **Composition constraints:** `composition=full-body`; preserve the limp and compensating torso pose. Upper-body masks can erase the injury expression; validate any weapon layer separately.
-5. **Acceptance gate:** `gate=engine-and-visual-review`; test start/stop, velocity changes, healthy-to-injured transitions and interruptions on the target character.
+1. **Members/topology:** Create one idle/walk/run tree per chosen style A–G. Treat style changes as explicit state transitions; do not distribute injury letters around a direction tree.
+2. **Timing/synchronization:** Establish intended cyclic playback and support-contact timing before choosing synchronization. Walks measure 1.333 s; runs measure 0.700 or 0.800 s. Match support-foot timing between moving clips; an almost-stationary idle gait phase is not a useful contact anchor. `Humanoid@RunInjuredB.fbx` passes a non-looping declaration, which does not establish it as a clean repeating run.
+3. **State ownership:** Selected in-place roots are stationary. Tune speed thresholds to stride/contact behavior, not their measured zero root speed. Keep root-motion alternatives under a separate movement policy.
+4. **Composition constraints:** Preserve the limp and compensating torso pose. Upper-body masks can erase the injury expression; validate any weapon layer separately.
+5. **Acceptance gate:** Test start/stop, velocity changes, healthy-to-injured transitions and interruptions on the target character.
 
 ## Technical issue register
 
@@ -72,7 +72,7 @@ Severity describes impact as delivered for the stated use. Residual status is ex
 |---|---|---|---|---|---|---|
 | IN-LOOP | major | Twenty of the 21 selected idle/walk/run members fail their declared contracts. `Humanoid@RunInjuredA.fbx` has loop-closure/seam findings; repeated playback and speed blending need review. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | artist-author | Correct intended loop endpoints and support-foot timing. Fourteen gait-anchor candidates were generated; thirteen still fail declared lint. Residual adoption remains unresolved; no candidates are promoted and thirteen retain contract findings. | Current anchoring changes phase; it is not proof of a clean seam or preserved limp. | Exact selected files, `Take 001`, current source/output lint; `observed-animsmith`. |
 | IN-STYLE | minor | Mixing lettered styles as if they were directions or scalar severity levels has no established semantic basis. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | engine-config | Choose a style and keep idle/walk/run coherent; explicitly review any style transition. Residual: project decision, not proven vendor defect. | Explicit set declarations make the choice reproducible. | Names and timing observed; artistic relationship `not-evaluated`. |
-| IN-TRACK | minor | Dense constant tracks may add storage without useful motion. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | animsmith-current-declared | One WalkInjuredA prune candidate was emitted, but its declared loop lint still fails. Residual: unresolved; validate channel and runtime equivalence before replacing sources. | Current pruning exists; performance gain remains unmeasured. | Fresh prune output and diff; `observed-animsmith`. |
+| IN-TRACK | minor | Dense constant tracks may add storage without useful motion. [Readiness guidance](../game-ready-clips.md#the-readiness-ladder). | animsmith-current-declared | Pruning reduced tracks in WalkInjuredA, but its loop check still fails. Compare required channels and engine playback before using that output. Unresolved. | Current pruning exists; performance gain remains unmeasured. | Fresh prune output and diff; `observed-animsmith`. |
 
 ## Engine status
 

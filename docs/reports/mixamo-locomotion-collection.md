@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-Developer decision: use the collection only as nine separately admitted source pools for bounded controller prototypes. The collection-level `hypothesis/full-body-unarmed-to-pistol` below is a new evaluator proposal for a full-body state handoff, not proof of compatibility. Do not merge blend trees, share retarget settings, layer weapons, or ship a combined controller until exact pairwise hierarchy/rest/scale checks plus target-engine transition, contact, deformation, and style review pass. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) governs adoption.
+Choose one of the nine evaluated pools for a bounded controller prototype. For a combined unarmed-to-pistol prototype, try a full-body state handoff with one controller owning movement. The proposed pair (`hypothesis/full-body-unarmed-to-pistol`) has no compatibility result yet: compare its exact skeletons, rest poses, and scale, then review the transition, feet, weapon hands, deformation, and style in the target engine before wider use.
 
 All 249 extracted FBX files loaded and completed current inspect, measure, and empty-baseline lint: 0 errors, 50 `duration-sanity` warnings, and 35405 `constant-track` notes. Current archive-level contracts produced 52 stationary-root errors. All sources resolve the Mixamo profile; 231 motion-named files have 66 bones and 18 `X Bot.fbx` reference files have 68.
 
@@ -32,17 +32,17 @@ This is a full-body humanoid controller hypothesis for visible characters. Third
 
 ### Content gaps and unknowns
 
-No authoritative 231-motion-to-249-file mapping or current vendor grouping was established. Shared names and measurements have not been checked for duplicate bytes or safe combined use.
+The legacy metadata has not been matched reliably to individual clips, and current vendor grouping is unverified. Shared names and measurements have not been checked for duplicate bytes or safe combined use.
 
 ### Evaluation still needed
 
-- Each constituent now has an exact, newly declared kinematic scenario; the rollup adds one conservative full-body cross-pack handoff hypothesis.
+- Each pool has a selected controller prototype; the proposed full-body handoff between pools still needs pairwise validation.
 - Across those nine constituent scenarios, AnimSmith measured gait phase for all 29 selected members. The constituent reports retain every member value and each set's normalized circular-range spread; synchronization and contact acceptance remain `not-evaluated`.
 - Cross-pool skeleton identity, retargeting, transition, visual/contact, performance and style acceptance remain open.
 
 ### Choosing a local pool
 
-These are nine locally evaluated source pools, not a verified vendor bundle. Choose a pool for its proposed controller shape, then inspect the [constituent report](mixamo-basic-locomotion.md) and the individual links below before adopting other named motions. All entries have filename-based content signals, unresolved loop/contact/visual acceptance, and per-file ownership work outside the selected set.
+These nine evaluated local pools have no verified current vendor-bundle membership. Choose a pool for its proposed controller shape, then inspect the [constituent report](mixamo-basic-locomotion.md) and the individual links below before adopting other named motions. All entries have filename-based content signals, unresolved loop/contact/visual acceptance, and per-file ownership work outside the selected set.
 
 | Pool | Candidate use from current files | Practical difference and open decision |
 |---|---|---|
@@ -64,24 +64,24 @@ Shared filenames, measurements, Mixamo role labels or bone counts do not prove d
 |---|---|---|---|
 | `hypothesis/full-body-unarmed-to-pistol` | Unarmed walk to pistol run full-body handoff; controller owns XZ translation, yaw and collision | Each constituent can be piloted separately with controller-owned movement. The cross-pool handoff remains an unaccepted proposal: check hierarchy, rest pose, scale, contact and style per exact pair. The 52 ownership findings concern other files across the pools. No AnimSmith remediation trial or accepted combined controller was reported. | [Member timings, coordinates and contracts](mixamo-locomotion-collection-evidence.md#exact-runtime-members) |
 
-This is a new evaluator hypothesis. It establishes neither semantic equivalence nor pairwise technical/artistic compatibility.
+The selected handoff is a proposal. Test the exact pair before treating its clips as compatible.
 
 The constituent gait-phase spreads range from `0.0312` to `0.2477` cycles, using normalized circular range (`1 - largest cyclic gap` across member phases on the unit cycle). Those measurements can guide target-engine tests but do not establish a shared phase policy, compatible support-foot events, or a defect in any source pack.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=full-body-state-handoff`; use only the namespaced unarmed and pistol members in the linked appendix in separate states.
-2. **Timing/synchronization:** `transition=unsynced-crossfade-hypothesis`; keep source timing, choose crossfade only in the target engine, and do not infer loop intent or cross-pack gait alignment from the measured constituent phases.
-3. **State ownership:** `owner=controller-xz-yaw-collision`; one kinematic controller owns movement and collision across the state boundary.
-4. **Composition constraints:** `composition=no-cross-pack-layering`; start full-body; no upper-body mask, additive, shared IK, socket, or retarget profile is established.
-5. **Acceptance gate:** `gate=pairwise-engine-artistic`; compare hierarchy/rest/scale, then test transition interruption, feet, weapon hands, target deformation, and style from the gameplay camera.
+1. **Members/topology:** Place the exact unarmed and pistol members from the linked appendix in separate full-body states.
+2. **Timing/synchronization:** Keep source timing. Set and review the crossfade in the target engine; loop intent and gait alignment across pools remain unverified.
+3. **State ownership:** Use one kinematic controller for XZ translation, yaw, and collision across the state change.
+4. **Composition constraints:** Start with a full-body handoff. Test any upper-body mask, additive motion, shared IK, socket, or retarget profile separately.
+5. **Acceptance gate:** For each proposed pair, compare hierarchy, rest pose, and scale; then inspect interrupted transitions, feet, weapon hands, target deformation, and style from the gameplay camera.
 
 ## Technical issue register
 
 | ID | Severity | Problem and impact | Primary owner | Current action | Future AnimSmith potential | Evidence/status |
 |---|---|---|---|---|---|---|
-| MIX-OWN-001 | moderate | Scope: 52 exact paths listed in the nine linked constituent issue rows; reproduce: archive-level animation-owned XZ lint; impact: a package-wide policy can leave intended movement stationary. Guidance: not applicable. | engine-config | Action: choose ownership per file and state; acceptance: declared lint and one target controller apply movement/yaw/collision exactly once for every admitted state; residual: unresolved. | Generic rewrite is not justified without intent. | `observed-animsmith`; 52 current findings. |
-| MIX-XPACK-001 | major | Scope: every proposed cross-pack state/layer boundary; reproduce: no current pairwise hierarchy/rest/scale or runtime transition test exists; impact: a shared controller may pop, deform, slide, misalign weapons, or change style. Guidance: not applicable. | unknown | Action: select exact pairs, compare skeleton/rest/scale, then run full-body target-engine transitions before considering layers; acceptance: technical, contact, deformation, and artistic gates pass per pair; residual: unresolved. | Deterministic comparison can support evidence but cannot decide artistic compatibility. | `not-evaluated`; current source mechanics only. |
+| MIX-OWN-001 | moderate | Scope: 52 exact paths listed in the nine linked constituent issue rows; reproduce: archive-level animation-owned XZ lint; impact: a package-wide policy can leave intended movement stationary. Guidance: not applicable. | engine-config | Choose ownership per file and state. Accept when declared lint and one target controller apply movement/yaw/collision exactly once for every admitted state. | Generic rewrite is not justified without intent. | `observed-animsmith`; 52 current findings; unresolved. |
+| MIX-XPACK-001 | major | Scope: every proposed cross-pack state/layer boundary; reproduce: no current pairwise hierarchy/rest/scale or runtime transition test exists; impact: a shared controller may pop, deform, slide, misalign weapons, or change style. Guidance: not applicable. | unknown | Select exact pairs, compare skeleton/rest/scale, then run full-body target-engine transitions before considering layers. Accept when technical, contact, deformation, and artistic gates pass per pair. | Deterministic comparison can support evidence but cannot decide artistic compatibility. | `not-evaluated`; current source mechanics only; unresolved. |
 
 ## Engine status
 
@@ -100,13 +100,13 @@ The nine constituent reports are authoritative for their fresh source findings a
 
 ## Changes between AnimSmith versions
 
-AnimSmith 0.14.0 — Fresh source-only matrix ran 996 commands over 249 FBXs, preserved identical before/after inventory, and added explicit new constituent/controller and cross-pack hypotheses without claiming old membership authority.
+AnimSmith 0.14.0 — The current evaluation reran 996 commands across 249 FBXs and revalidated that the source inventory stayed unchanged. It proposed constituent controller sets and one cross-pool handoff; clip mapping remains unverified.
 
 AnimSmith 0.10.0 — Retained historical finding totals agree but supply no current collection semantics or engine acceptance. AnimSmith 0.7.0 collection conclusions remain superseded.
 
 ## Evidence status
 
-Current evidence covers nine constituents, 249 physical FBXs, and 119,754,377 bytes under evaluator revision `e8321ad40be5ef6f162b31f085819c039175c3c9`. Legacy metadata says 231 motions but does not provide an authoritative 231-to-249 mapping. Source inventory, ledger, summary, and report-data digests are in the appendix; licensed data remains external. See the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder).
+The current tests covered nine constituents, 249 FBX files, and 119,754,377 source bytes. Legacy metadata lists 231 motions, but its clip-to-file mapping is unverified. The [evidence appendix](mixamo-locomotion-collection-evidence.md) records source integrity, evaluator revision, command results, and digests; licensed data remains external. See the [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder).
 
 ## Sources
 
