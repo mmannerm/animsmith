@@ -10,11 +10,19 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Protofactor Sword and Shield Animset evidence appendix](protofactor-sword-and-shield-evidence.md)
 
 ## Technical decision
+
+**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+
+The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+
+**Content in evaluated inventory:** Armed walk, run, crouch and equipment/actions. Evaluated filenames include combat actions and equipment transitions; airborne and additive aim are not established. This describes candidate content, not accepted gameplay behavior.
+
+**Adoption route:** Prototype one in-place or root-motion variant per gait. Correct loop declarations for one-shots; continuous gait seams need source or loop-policy correction. The two-bone crouch RM file is a source structure blocker.
 
 AnimSmith 0.14.0 reads all 136 delivered FBX candidates. The untouched baseline has no errors; it reports 17078 constant-track notes, one animated-scale warning. The retained per-file declarations are stricter: 17/132 motion files pass and 115 fail, chiefly because loop treatment is unresolved. Named one-shots must be re-declared before their seam failures are attributed to the source. Intended continuous gait files still need source or loop-policy correction. One combined-take file also carries animated scale, and the malformed 2-bone crouch RM file blocks that blend set.
 
@@ -22,33 +30,32 @@ All 28 fresh transform candidates were produced outside the repository and passe
 
 ## Capability coverage
 
-### Complete core
+### Content present
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+Filename-classified walk, run and crouch combat gaits have separate in-place and root-motion candidates. Equipment transitions and attack/reaction content also appear in the evaluated inventory.
 
-### Partial supporting gameplay
+### Content gaps and unknowns
 
-- Directional IP/RM gait families, equipment transitions, and attacks are present; current set membership is a fresh evaluator-defined hypothesis and every named gait set remains contract-non-clean.
-- Airborne content is absent; additive aim, paired interactions, and first-person use are not established.
+The evaluated role inventory has no airborne class. Additive aim, paired interaction and dedicated viewmodel content have no established classification. The two-bone crouch RM source cannot join its proposed blend.
 
-### Absent
+### Evaluation still needed
 
-- Unity 6000.5.8f1 has bounded source/controller feasibility for `IdleCombatS&S` and the named Playables transitions; visual/contact, authored-controller, deformation, player-build, retarget, mask/layer, performance, network movement, and artistic evaluation remain absent.
+Redeclare one-shots, obtain clean intended continuous gait contracts, then test full blend coordinates, root ownership, grip, foot contact and target-character playback. Bounded Unity execution is not visual acceptance.
 
 ## Runtime sets and authored motion
 
-These current hypotheses use exact source identities and fresh 0.14.0 measurements. They do not restore any unavailable historical membership authority.
+These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| `walk-combat-8-way-in-place` | eight-way directional gait | `Humanoid@WalkForwardS&S.fbx`; `Humanoid@WalkForwardLeftS&S.fbx`; `Humanoid@WalkLeftS&S.fbx`; `Humanoid@WalkBackwardsLeftS&S.fbx`; `Humanoid@WalkBackwardsS&S.fbx`; `Humanoid@WalkBackwardsRightS&S.fbx`; `Humanoid@WalkRightS&S.fbx`; `Humanoid@WalkForwardRightS&S.fbx` | variant=in-place | duration=1.333 s | loop=true; sync=not-evaluated |
-| `walk-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@WalkForwardS&S_RM.fbx`; `Humanoid@WalkForwardLeftS&S_RM.fbx`; `Humanoid@WalkLeftS&S_RM.fbx`; `Humanoid@WalkBackwardsLeftS&S_RM.fbx`; `Humanoid@WalkBackwardsS&S_RM.fbx`; `Humanoid@WalkBackwardsRightS&S_RM.fbx`; `Humanoid@WalkRightS&S_RM.fbx`; `Humanoid@WalkForwardRightS&S_RM.fbx` | variant=root-motion | duration=1.333 s; rm_speed=0.750 m/s | loop=true; sync=not-evaluated |
-| `run-combat-8-way-in-place` | eight-way directional gait | `Humanoid@RunForwardS&S.fbx`; `Humanoid@RunForwardLeftS&S.fbx`; `Humanoid@RunLeftS&S.fbx`; `Humanoid@RunBackwardsLeftS&S.fbx`; `Humanoid@RunBackwardsS&S.fbx`; `Humanoid@RunBackwardsRightS&S.fbx`; `Humanoid@RunRightS&S.fbx`; `Humanoid@RunForwardRightS&S.fbx` | variant=in-place | duration=0.600 s | loop=true; sync=not-evaluated |
-| `run-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@RunForwardS&S_RM.fbx`; `Humanoid@RunForwardLeftS&S_RM.fbx`; `Humanoid@RunLeftS&S_RM.fbx`; `Humanoid@RunBackwardsLeftS&S_RM.fbx`; `Humanoid@RunBackwardsS&S_RM.fbx`; `Humanoid@RunBackwardsRightS&S_RM.fbx`; `Humanoid@RunRightS&S_RM.fbx`; `Humanoid@RunForwardRightS&S_RM.fbx` | variant=root-motion | duration=0.600 s; rm_speed=2.793 m/s | loop=true; sync=not-evaluated |
-| `crouch-combat-8-way-in-place` | eight-way directional gait | `Humanoid@CrouchForwardS&S.fbx`; `Humanoid@CrouchForwardLeftS&S.fbx`; `Humanoid@CrouchLeftS&S.fbx`; `Humanoid@CrouchBackwardsLeftS&S.fbx`; `Humanoid@CrouchBackwardsS&S.fbx`; `Humanoid@CrouchBackwardsRightS&S.fbx`; `Humanoid@CrouchRightS&S.fbx`; `Humanoid@CrouchForwardRightS&S.fbx` | variant=in-place | duration=1.667 s | loop=true; sync=not-evaluated |
-| `crouch-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@CrouchForwardS&S_RM.fbx`; `Humanoid@CrouchForwardLeftS&S_RM.fbx`; `Humanoid@CrouchLeftS&S_RM.fbx`; `Humanoid@CrouchBackwardsLeftS&S_RM.fbx`; `Humanoid@CrouchBackwardsS&S_RM.fbx`; `Humanoid@CrouchBackwardsRightS&S_RM.fbx`; `Humanoid@CrouchRightS&S_RM.fbx`; `Humanoid@CrouchForwardRightS&S_RM.fbx` | variant=root-motion | duration=1.667 s; rm_speed=0.701 m/s | loop=true; sync=not-evaluated |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| `walk-combat-8-way-in-place` | Walk eight directions; controller travel | Source-only walk prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
+| `walk-combat-8-way-root-motion` | Walk eight directions; animation travel; measured RM 0.750–1.107 m/s | Source-only walk prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
+| `run-combat-8-way-in-place` | Run eight directions; controller travel | Source-only run prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
+| `run-combat-8-way-root-motion` | Run eight directions; animation travel; measured RM 2.793–3.189 m/s | Source-only run prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
+| `crouch-combat-8-way-in-place` | Crouch eight directions; controller travel | Source-only crouch prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
+| `crouch-combat-8-way-root-motion` | Crouch eight directions; animation travel; measured RM 0.701–0.789 m/s | Blocked: the two-bone RM crouch member needs source replacement before this eight-way set can be admitted; other gait loops also remain non-clean. | [8 exact members](protofactor-sword-and-shield-evidence.md#exact-runtime-members) |
 
-Measured RM speed spans are walk 0.750–1.107 m/s (ratio 0.677); run 2.793–3.189 m/s (ratio 0.876); crouch 0.701–0.789 m/s (ratio 0.889). Preserve authored variation unless the project declares a normalization policy; diagonals and cardinals require the full blend test. Measured source in-place phase spreads (cycles, eight measured members each) are `walk-combat-8-way-in-place` 0.7231; `run-combat-8-way-in-place` 0.6605; `crouch-combat-8-way-in-place` 0.6974. Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. Keep `sync=not-evaluated` until the selected synchronization and contact policy is tested. The current catalog also measures paired normal/fast speed hypotheses, four death/downed/recovery chains, and two draw/combat/put-away chains. The transition chains are mechanically stronger than the gait sets, but still lack engine and visual acceptance.
+The appendix retains the measured duration, RM speed and in-place phase ranges. Use the in-place and RM rows as alternatives; neither variant has accepted contact synchronization.
 
 ## Integration recipe
 
@@ -89,7 +96,7 @@ AnimSmith 0.14.0 — revalidated the unchanged retained source inventory, per-fi
 
 ## Evidence status
 
-Current evidence covers 136 physical FBXs and 132 logical individual-motion files with official AnimSmith 0.14.0, report format 2, and the retained evaluation-manifest schema. A bounded Unity source/controller probe is current; visual/artistic, contact, retarget, authored-controller, and player-build gates remain open. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and the [evidence appendix](protofactor-sword-and-shield-evidence.md). Licensed source and generated candidates remain outside Git.
+Current evidence covers 136 physical FBXs and 132 logical individual-motion files with official AnimSmith 0.14.0 and the retained evaluation-manifest schema, now presented in editorial report format 3. A bounded Unity source/controller probe is current; visual/artistic, contact, retarget, authored-controller, and player-build gates remain open. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and the [evidence appendix](protofactor-sword-and-shield-evidence.md). Licensed source and generated candidates remain outside Git.
 
 ## Sources
 

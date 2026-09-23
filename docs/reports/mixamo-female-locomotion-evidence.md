@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix contains scrubbed facts only. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative. The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; it is retained as opaque historical classification input, not current source-to-vendor mapping authority.
 
@@ -60,6 +60,15 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | `emote-cinematic` | 0 | 0 | Not authoritatively classified |
 | `other-unknown` | 18 | 18 | One opaque current source unit per delivered FBX |
 | **Total** | **18** | **18** | Current exact source paths; no vendor mapping inferred |
+
+### Exact runtime members
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `hypothesis/kinematic-speed` | walk | `Female_Locomotion_Pack_-_in-place/walking.fbx` | variant=in-place | duration=0.967 s; frames=30 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-speed` | run | `Female_Locomotion_Pack_-_in-place/running.fbx` | variant=in-place | duration=0.700 s; frames=22 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+
+The table above preserves the measured member detail from the companion report; its proposed controller still requires target-engine acceptance.
 
 ### Runtime-set inventory
 

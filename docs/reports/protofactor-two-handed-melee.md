@@ -10,11 +10,19 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Protofactor Two-Handed Melee Animset evidence appendix](protofactor-two-handed-melee-evidence.md)
 
 ## Technical decision
+
+**Use and evidence boundary:** Full-body humanoid content for a third-person prototype context. Target-character and gameplay-camera appearance have not been accepted; dedicated first-person arms/viewmodel suitability is not established.
+
+The 2026-09-17 vendor listing places this animset in Ultimate Animation Collection, which advertises 24 animsets. This report evaluates one of eight locally evaluated constituents; sixteen advertised constituents, including Female Basic Locomotion, were not evaluated. The local asset revision is unknown, so current listing membership is a scope reference, not proof of local contents.
+
+**Content in evaluated inventory:** Armed walk, run, crouch and equipment/actions. Evaluated filenames include airborne, attacks and reactions; these have no accepted controller topology here. This describes candidate content, not accepted gameplay behavior.
+
+**Adoption route:** Prototype one motion-owner variant per gait after loop-policy review. Continuous gait defects require artist or source correction if confirmed. Two 56-bone block states need isolated retarget/import checks.
 
 AnimSmith 0.14.0 reads all 123 delivered FBX candidates. The untouched baseline has no errors; it reports 17010 constant-track notes, one duration warning. The retained per-file declarations are stricter: 13/120 motion files pass and 107 fail, chiefly because loop treatment is unresolved. Named one-shots must be re-declared before their seam failures are attributed to the source. Intended continuous gait files still need source or loop-policy correction. One heavy-hit RM file has unequal channel end times.
 
@@ -22,34 +30,36 @@ All 25 fresh transform candidates were produced outside the repository and passe
 
 ## Capability coverage
 
-### Complete core
+### Content present
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+Filename-classified walk, run and crouch combat gaits have separate in-place and root-motion candidates. The evaluated role inventory also includes airborne, actions and reactions.
 
-### Partial supporting gameplay
+### Content gaps and unknowns
 
-- Directional IP/RM gait families, equipment transitions, and attacks are present; current set membership is a fresh evaluator-defined hypothesis and every named gait set remains contract-non-clean.
-- Airborne content is present but incomplete for a full traversal graph; additive aim, paired interactions, and first-person use are not established.
+Additive aim, paired interactions and dedicated viewmodel content have no established classification. The 56-bone `Blocked2HandMelee` and `IdleBlock2HandMelee` states differ from the common 58-bone family.
 
-### Absent
+### Evaluation still needed
 
-- Unity 6000.5.8f1 has bounded source/controller feasibility for `IdleCombatA2HandMelee`, `WalkForwardCombat2HandMelee`, and `WalkForwardCombat2HandMelee_RM` and the named Playables transitions; visual/contact, authored-controller, deformation, player-build, retarget, mask/layer, performance, network movement, and artistic evaluation remain absent.
+Redeclare one-shots, resolve continuous gait contracts, and test those block-state imports, blend coordinates, root ownership, weapon/foot contact and target-character playback.
 
 ## Runtime sets and authored motion
 
-These current hypotheses use exact source identities and fresh 0.14.0 measurements. They do not restore any unavailable historical membership authority.
+These are evaluator-selected source candidates, not accepted controller states. Follow a single row for each blend or chain; the appendix preserves file names, coordinates, timings and measurements.
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| `crouch-combat-8-way` | eight-way directional gait | `Humanoid@CrouchForward2HandMelee.fbx`; `Humanoid@CrouchForward2HandMelee_RM.fbx`; `Humanoid@CrouchForwardLeft2HandMelee.fbx`; `Humanoid@CrouchForwardLeft2HandMelee_RM.fbx`; `Humanoid@CrouchLeft2HandMelee.fbx`; `Humanoid@CrouchLeft2HandMelee_RM.fbx`; `Humanoid@CrouchBackwardsLeft2HandMelee.fbx`; `Humanoid@CrouchBackwardsLeft2HandMelee_RM.fbx`; `Humanoid@CrouchBackwards2HandMelee.fbx`; `Humanoid@CrouchBackwards2HandMelee_RM.fbx`; `Humanoid@CrouchBackwardsRight2HandMelee.fbx`; `Humanoid@CrouchBackwardsRight2HandMelee_RM.fbx`; `Humanoid@CrouchRight2HandMelee.fbx`; `Humanoid@CrouchRight2HandMelee_RM.fbx`; `Humanoid@CrouchForwardRight2HandMelee.fbx`; `Humanoid@CrouchForwardRight2HandMelee_RM.fbx` | set_type=directional-blend | duration=1.667 s; rm_speed=0.642 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
-| `run-combat-8-way` | eight-way directional gait | `Humanoid@RunForwardCombat2HandMelee.fbx`; `Humanoid@RunForwardCombat2HandMelee_RM.fbx`; `Humanoid@RunForwardLeftCombat2HandMelee.fbx`; `Humanoid@RunForwardLeftCombat2HandMelee_RM.fbx`; `Humanoid@RunLeftCombat2HandMelee.fbx`; `Humanoid@RunLeftCombat2HandMelee_RM.fbx`; `Humanoid@RunBackwardsLeftCombat2HandMelee.fbx`; `Humanoid@RunBackwardsLeftCombat2HandMelee_RM.fbx`; `Humanoid@RunBackwardsCombat2HandMelee.fbx`; `Humanoid@RunBackwardsCombat2HandMelee_RM.fbx`; `Humanoid@RunBackwardsRightCombat2HandMelee.fbx`; `Humanoid@RunBackwardsRightCombat2HandMelee_RM.fbx`; `Humanoid@RunRightCombat2HandMelee.fbx`; `Humanoid@RunRightCombat2HandMelee_RM.fbx`; `Humanoid@RunForwardRightCombat2HandMelee.fbx`; `Humanoid@RunForwardRightCombat2HandMelee_RM.fbx` | set_type=directional-blend | duration=0.533 s; rm_speed=2.202 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
-| `walk-combat-8-way` | eight-way directional gait | `Humanoid@WalkForwardCombat2HandMelee.fbx`; `Humanoid@WalkForwardCombat2HandMelee_RM.fbx`; `Humanoid@WalkForwardLeftCombat2HandMelee.fbx`; `Humanoid@WalkForwardLeftCombat2HandMelee_RM.fbx`; `Humanoid@WalkLeftCombat2HandMelee.fbx`; `Humanoid@WalkLeftCombat2HandMelee_RM.fbx`; `Humanoid@WalkBackwardsLeftCombat2HandMelee.fbx`; `Humanoid@WalkBackwardsLeftCombat2HandMelee_RM.fbx`; `Humanoid@WalkBackwardsCombat2HandMelee.fbx`; `Humanoid@WalkBackwardsCombat2HandMelee_RM.fbx`; `Humanoid@WalkBackwardsRightCombat2HandMelee.fbx`; `Humanoid@WalkBackwardsRightCombat2HandMelee_RM.fbx`; `Humanoid@WalkRightCombat2HandMelee.fbx`; `Humanoid@WalkRightCombat2HandMelee_RM.fbx`; `Humanoid@WalkForwardRightCombat2HandMelee.fbx`; `Humanoid@WalkForwardRightCombat2HandMelee_RM.fbx` | set_type=directional-blend | duration=1.333 s; rm_speed=0.810 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| `crouch-combat-8-way-in-place` | Crouch eight directions; controller travel | Source-only crouch prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
+| `crouch-combat-8-way-root-motion` | Crouch eight directions; animation travel; measured RM 0.642–0.835 m/s | Source-only crouch prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
+| `run-combat-8-way-in-place` | Run eight directions; controller travel | Source-only run prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
+| `run-combat-8-way-root-motion` | Run eight directions; animation travel; measured RM 2.202–2.690 m/s | Source-only run prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
+| `walk-combat-8-way-in-place` | Walk eight directions; controller travel | Source-only walk prototype with controller travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
+| `walk-combat-8-way-root-motion` | Walk eight directions; animation travel; measured RM 0.810–1.092 m/s | Source-only walk prototype with animation travel. No named gait set is contract-clean; confirm loop intent, then correct genuine continuous seams and test contacts. | [8 exact members](protofactor-two-handed-melee-evidence.md#exact-runtime-members) |
 
-The grouped table gives minimum duration and RM speed. Run durations span 0.533–0.567 s. Measured RM speed spans are `crouch-combat-8-way` 0.642–0.835 m/s (ratio 0.769); `run-combat-8-way` 2.202–2.690 m/s (ratio 0.819); `walk-combat-8-way` 0.810–1.092 m/s (ratio 0.742). Preserve authored variation unless the project declares a normalization policy; diagonals and cardinals require the full blend test. Measured source in-place phase spreads (cycles, eight measured members each) are `crouch-combat-8-way` 0.5774; `run-combat-8-way` 0.6024; `walk-combat-8-way` 0.7112. Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. Keep `sync=not-evaluated` until the selected synchronization and contact policy is tested. The current catalog also measures `normal-forward-speed`, `draw-combat-put-away`, `dodge-forward-back`, and `parry-3-way` as evaluator-defined hypotheses; they remain candidate groupings.
+The appendix retains measured duration, RM speed and in-place phase ranges. Both eight-file `run-combat-8-way` alternatives span 0.533–0.567 s; the detailed table reports each variant’s minimum. Use IP and RM as separate motion-owner choices; neither variant has accepted contact synchronization.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=eight-way-cartesian`; use only the exact members in one named gait row and map forward/cardinal/diagonal coordinates explicitly.
+1. **Members/topology:** `topology=eight-way-cartesian`; select one eight-member in-place or root-motion row from the appendix and map forward/cardinal/diagonal coordinates explicitly.
 2. **Timing/synchronization:** `sync=not-evaluated`; loop only confirmed continuous states, keep named one-shots at `loop=false`, and require phase/contact review before synchronized blending.
 3. **State ownership:** `owner=project-controller`; choose IP controller translation or RM animation translation per state, with one owner for translation, yaw, and collision.
 4. **Composition constraints:** `composition=full-body-handoff`; keep weapon combat states namespaced to this pack and require separate mask/socket/IK evidence before layering.
@@ -85,7 +95,7 @@ AnimSmith 0.14.0 — revalidated the unchanged retained source inventory, per-fi
 
 ## Evidence status
 
-Current evidence covers 123 physical FBXs and 120 logical individual-motion files with official AnimSmith 0.14.0, report format 2, and the retained evaluation-manifest schema. A bounded Unity source/controller probe is current; visual/artistic, contact, retarget, authored-controller, and player-build gates remain open. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and the [evidence appendix](protofactor-two-handed-melee-evidence.md). Licensed source and generated candidates remain outside Git.
+Current evidence covers 123 physical FBXs and 120 logical individual-motion files with official AnimSmith 0.14.0 and the retained evaluation-manifest schema, now presented in editorial report format 3. A bounded Unity source/controller probe is current; visual/artistic, contact, retarget, authored-controller, and player-build gates remain open. See the [readiness ladder](../game-ready-clips.md#the-readiness-ladder) and the [evidence appendix](protofactor-two-handed-melee-evidence.md). Licensed source and generated candidates remain outside Git.
 
 ## Sources
 

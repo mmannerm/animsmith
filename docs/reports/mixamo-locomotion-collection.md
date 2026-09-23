@@ -10,38 +10,59 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Evidence appendix](mixamo-locomotion-collection-evidence.md)
 
 ## Technical decision
 
-All 249 extracted FBX files loaded and completed current inspect, measure, and empty-baseline lint: 0 errors, 50 `duration-sanity` warnings, and 35405 `constant-track` notes. Current archive-level contracts produced 52 stationary-root errors. All sources resolve the Mixamo profile; 231 motion-named files have 66 bones and 18 `X Bot.fbx` reference files have 68.
-
 Developer decision: use the collection only as nine separately admitted source pools for bounded controller prototypes. The collection-level `hypothesis/full-body-unarmed-to-pistol` below is a new evaluator proposal for a full-body state handoff, not proof of compatibility. Do not merge blend trees, share retarget settings, layer weapons, or ship a combined controller until exact pairwise hierarchy/rest/scale checks plus target-engine transition, contact, deformation, and style review pass. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) governs adoption.
+
+All 249 extracted FBX files loaded and completed current inspect, measure, and empty-baseline lint: 0 errors, 50 `duration-sanity` warnings, and 35405 `constant-track` notes. Current archive-level contracts produced 52 stationary-root errors. All sources resolve the Mixamo profile; 231 motion-named files have 66 bones and 18 `X Bot.fbx` reference files have 68.
 
 ## Capability coverage
 
-### Complete core
+This is a full-body humanoid controller hypothesis for visible characters. Third-person gameplay-camera appearance and target-character deformation remain visually untested. Dedicated first-person arms/viewmodel content and close-camera suitability were not established. These nine locally evaluated pools are not a verified current vendor bundle or complete Mixamo catalog.
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+### Content present
 
-### Partial supporting gameplay
+| Candidate ingredients in the evaluated files | Current use boundary |
+|---|---|
+| Nine local pools offer different filename-based controller ingredients; one cross-pool unarmed-to-pistol handoff is proposed. Shared names do not establish duplicate files. | Filename-based candidates and current measurements; these do not establish a complete accepted gameplay controller. |
+
+### Content gaps and unknowns
+
+No authoritative 231-motion-to-249-file mapping or current vendor grouping was established. Shared names and measurements have not been checked for duplicate bytes or safe combined use.
+
+### Evaluation still needed
 
 - Each constituent now has an exact, newly declared kinematic scenario; the rollup adds one conservative full-body cross-pack handoff hypothesis.
 - Across those nine constituent scenarios, AnimSmith measured gait phase for all 29 selected members. The constituent reports retain every member value and each set's normalized circular-range spread; synchronization and contact acceptance remain `not-evaluated`.
-- Archive-level variant declarations ran, but 52 files need per-file movement ownership and none has collection-level runtime acceptance.
+- Cross-pool skeleton identity, retargeting, transition, visual/contact, performance and style acceptance remain open.
 
-### Absent
+### Choosing a local pool
 
-- No authoritative 231-motion-to-249-file mapping, current collection binding, loop/phase contract, cross-pack skeleton identity, engine graph, retarget, visual/contact, performance, or artistic-style acceptance exists.
+These are nine locally evaluated source pools, not a verified vendor bundle. Choose a pool for its proposed controller shape, then inspect the [constituent report](mixamo-basic-locomotion.md) and the individual links below before adopting other named motions. All entries have filename-based content signals, unresolved loop/contact/visual acceptance, and per-file ownership work outside the selected set.
+
+| Pool | Candidate use from current files | Practical difference and open decision |
+|---|---|---|
+| [Basic](mixamo-basic-locomotion.md) | Unarmed forward/left/right walk | Directional walking pilot; no selected run or complete gameplay core. |
+| [Female Basic](mixamo-female-basic-locomotion.md) | Walk/run speed pair | Includes more delivered files than Female Locomotion; extra gameplay roles and value are unclassified. |
+| [Female Locomotion](mixamo-female-locomotion.md) | Walk/run speed pair | Selected walk/run names, timings and phases match Female Basic in these reports; byte identity and interchangeable use were not checked. |
+| [Locomotion](mixamo-locomotion.md) | Walk/run speed pair | Another unarmed speed pilot with a different reported run phase; practical overlap with the female and male pools is unresolved. |
+| [Longbow](mixamo-longbow-locomotion.md) | Four-direction full-body run | Bow-themed run pose; duration and contact alignment need review. |
+| [Magic](mixamo-magic-locomotion.md) | Four-direction full-body run | Magic-themed run pose; duration and contact alignment need review. |
+| [Male](mixamo-male-locomotion.md) | Walk/standard-run speed pair | Another unarmed speed pilot; the label does not prove target body proportions or retarget suitability. |
+| [Pistol-Handgun](mixamo-pistol-handgun-locomotion.md) | Forward/back full-body pistol run | Two-direction armed pilot, with a larger measured phase spread. |
+| [Rifle 8-Way](mixamo-rifle-8-way-locomotion.md) | Eight-direction full-body rifle run | Widest selected run topology; aiming, crouch, jump and death filenames are candidate content, not accepted states. |
+
+Shared filenames, measurements, Mixamo role labels or bone counts do not prove duplicate assets, safe co-installation, one retarget profile, or compatible style. Compare exact source bytes and the target character before replacing one pool with another or combining them.
 
 ## Runtime sets and authored motion
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| `hypothesis/full-body-unarmed-to-pistol` | source-state | `mixamo-basic-locomotion::Basic_Locomotion_Pack_-_in-place/walking.fbx` | set_type=transition-chain | duration=1.033 s; frames=32 frames | loop=unknown; transition=full-body; movement=controller-xz-yaw; state=unarmed |
-| `hypothesis/full-body-unarmed-to-pistol` | destination-state | `mixamo-pistol-handgun-locomotion::Pistol-Handgun_Locomotion_Pack_-_in-place/pistol run.fbx` | set_type=transition-chain | duration=0.500 s; frames=16 frames | loop=unknown; transition=full-body; movement=controller-xz-yaw; state=pistol |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| `hypothesis/full-body-unarmed-to-pistol` | Unarmed walk to pistol run full-body handoff; controller owns XZ translation, yaw and collision | Each constituent can be piloted separately with controller-owned movement. The cross-pool handoff remains an unaccepted proposal: check hierarchy, rest pose, scale, contact and style per exact pair. The 52 ownership findings concern other files across the pools. No AnimSmith remediation trial or accepted combined controller was reported. | [Member timings, coordinates and contracts](mixamo-locomotion-collection-evidence.md#exact-runtime-members) |
 
 This is a new evaluator hypothesis. It establishes neither semantic equivalence nor pairwise technical/artistic compatibility.
 
@@ -49,7 +70,7 @@ The constituent gait-phase spreads range from `0.0312` to `0.2477` cycles, using
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=full-body-state-handoff`; use only the namespaced unarmed and pistol members above in separate states.
+1. **Members/topology:** `topology=full-body-state-handoff`; use only the namespaced unarmed and pistol members in the linked appendix in separate states.
 2. **Timing/synchronization:** `transition=unsynced-crossfade-hypothesis`; keep source timing, choose crossfade only in the target engine, and do not infer loop intent or cross-pack gait alignment from the measured constituent phases.
 3. **State ownership:** `owner=controller-xz-yaw-collision`; one kinematic controller owns movement and collision across the state boundary.
 4. **Composition constraints:** `composition=no-cross-pack-layering`; start full-body; no upper-body mask, additive, shared IK, socket, or retarget profile is established.

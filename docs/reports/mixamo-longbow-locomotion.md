@@ -10,45 +10,46 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 >
 > Detailed evidence: [Evidence appendix](mixamo-longbow-locomotion-evidence.md)
 
 ## Technical decision
 
-All 22 delivered FBX files loaded under AnimSmith 0.14.0 and the untouched baseline produced 0 errors, 3 `duration-sanity` warnings, and 3126 non-gating `constant-track` notes. The current archive-level contracts produced 3 errors where files in the root-motion directory remain effectively stationary. That is a movement-ownership decision for the consuming project, not proof of defective animation. Two `X Bot.fbx` files use a 68-bone reference skeleton; the other 20 files use 66 bones, and every file resolves the nine-role Mixamo profile.
-
 Developer decision: admit this pack only to an isolated full-body longbow locomotion prototyping pilot. Use the explicitly new `hypothesis/kinematic-run-4way` proposal with a kinematic controller owning XZ translation, yaw, and collision; selected members measured at no more than 0.000003 m/s root speed. Do not promote the proposal, loops, phase policy, root-motion use, or shipment until the issue acceptance gates and target-engine blend/contact review pass. No source bytes were changed. [The readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains the boundary.
+
+All 22 delivered FBX files loaded under AnimSmith 0.14.0 and the untouched baseline produced 0 errors, 3 `duration-sanity` warnings, and 3126 non-gating `constant-track` notes. The current archive-level contracts produced 3 errors where files in the root-motion directory remain effectively stationary. That is a movement-ownership decision for the consuming project, not proof of defective animation. Two `X Bot.fbx` files use a 68-bone reference skeleton; the other 20 files use 66 bones, and every file resolves the nine-role Mixamo profile.
 
 ## Capability coverage
 
-### Complete core
+This is a full-body humanoid controller hypothesis for visible characters. Third-person gameplay-camera appearance, target-character deformation, and close-camera grip remain visually untested. Dedicated first-person arms/viewmodel content and first-person weapon framing were not established; the pistol/rifle/bow names do not establish them.
 
-- No complete gameplay core has been validated on a target game controller. Candidate content and integration scope are listed below; completed file checks do not establish gameplay completeness.
+### Content present
 
-### Partial supporting gameplay
+| Candidate ingredients in the evaluated files | Current use boundary |
+|---|---|
+| Four standing run directions are named and measured. Standing idle, turn and forward-stop files appear by filename; their controller roles are unclassified and untested. | Filename-based candidates and current measurements; these do not establish a complete accepted gameplay controller. |
+
+### Content gaps and unknowns
+
+No authoritative 20-motion-to-22-file mapping was established. The remaining motion-named files have no accepted canonical role classification; this does not show that gameplay content is absent.
+
+### Evaluation still needed
 
 - `hypothesis/kinematic-run-4way` is a new evaluator-selected controller hypothesis over exact current files and measurements. It is not vendor intent, a recovered historical set, or runtime evidence.
-- Archive-level in-place/root-motion declarations ran on 9 and 13 files respectively; 3 files need per-file movement ownership.
-
-### Absent
-
-- No authoritative 20-motion-to-22-file mapping, loop/phase declarations, target-engine graph, visual/contact review, retarget proof, performance result, or cross-pack acceptance was established.
+- Loop/phase policy, target-engine graph, contact and visual review, target-character retargeting, performance and cross-pack acceptance remain open.
 
 ## Runtime sets and authored motion
 
-| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
-|---|---|---|---|---|---|
-| `hypothesis/kinematic-run-4way` | forward=(0,1) | `Longbow_Locomotion_Pack_-_in-place/standing run forward.fbx` | variant=in-place | duration=0.867 s; frames=27 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
-| `hypothesis/kinematic-run-4way` | back=(0,-1) | `Longbow_Locomotion_Pack_-_in-place/standing run back.fbx` | variant=in-place | duration=0.667 s; frames=21 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
-| `hypothesis/kinematic-run-4way` | left=(-1,0) | `Longbow_Locomotion_Pack_-_in-place/standing run left.fbx` | variant=in-place | duration=0.667 s; frames=21 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
-| `hypothesis/kinematic-run-4way` | right=(1,0) | `Longbow_Locomotion_Pack_-_in-place/standing run right.fbx` | variant=in-place | duration=0.767 s; frames=24 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| Set | Controller use | Adoption decision | Exact members |
+|---|---|---|---|
+| `hypothesis/kinematic-run-4way` | Four-direction full-body bow run; controller owns XZ translation, yaw and collision | The four selected runs support a controller-owned movement prototype. Duration and phase differ between directions; inspect contacts before blending. Three idle/turn files need per-file ownership; the forward-stop file has an endpoint warning. No AnimSmith remediation trial or accepted AnimSmith-only controller was reported. | [Member timings, coordinates and contracts](mixamo-longbow-locomotion-evidence.md#exact-runtime-members) |
 
 This set is a current evaluator hypothesis based on exact filenames plus measurements. AnimSmith measured phase (cycles) as forward `0.4578`, back `0.5651`, left `0.6134`, and right `0.4589`; their normalized circular-range spread is `0.1557` cycles (`1 - largest cyclic gap` across member phases on the unit cycle). This is mechanical evidence, not a synchronization verdict: loop intent, foot-contact correspondence, phase acceptance, and gameplay use remain `not-evaluated`; `sync=not-evaluated`.
 
 ## Integration recipe
 
-1. **Members/topology:** `topology=directional-blend`; use only the exact `hypothesis/kinematic-run-4way` members and coordinates above; do not infer missing directions or IP/RM pairs.
+1. **Members/topology:** `topology=directional-blend`; use only the exact `hypothesis/kinematic-run-4way` members and coordinates in the linked appendix; do not infer missing directions or IP/RM pairs.
 2. **Timing/synchronization:** `sync=not-evaluated`; keep each measured duration and phase as evidence, leave loop flags unknown, and test normalized phase plus foot contacts before enabling continuous blends.
 3. **State ownership:** `owner=controller-xz-yaw-collision`; animation supplies pose while the kinematic controller applies translation, yaw, and collision once.
 4. **Composition constraints:** `composition=full-body-only`; use full-body states and transitions; no mask, additive, IK, socket, or layered result is established.

@@ -1,9 +1,48 @@
 # Animation-pack evaluation reports
 
+[Latest evaluations](https://mmannerm.github.io/animsmith/evaluations/) always
+opens the current main report index; release snapshots retain their original evidence.
+
 These reports apply the repository's versioned animation-pack evaluation skill
 to delivered game-animation assets. Each report is a dated technical snapshot,
 not a vendor guarantee, license opinion, or substitute for testing in the
 target game.
+
+## Browse by collection
+
+Start with a collection overview to choose a gameplay family, then open the
+linked constituent report for its exact candidate sets, integration decisions,
+and issue owners. Each report links to a separate evidence appendix. These are
+dated evaluations of locally held material, not complete vendor catalogs or
+accepted game controllers. This table is the source of truth for the site's
+collection and constituent navigation.
+
+| Collection overview | Evaluated constituents |
+|---|---|
+| [Protofactor Ultimate Animation Collection](protofactor-ultimate-animation-collection.md) | [Basic Locomotion](protofactor-basic-locomotion.md), [Sword & Shield](protofactor-sword-and-shield.md), [Campfire](protofactor-campfire.md), [Climbing](protofactor-climbing.md), [Injured](protofactor-injured.md), [1-Handed Melee](protofactor-one-handed-melee.md), [2-Handed Melee](protofactor-two-handed-melee.md), [Dual Swords](protofactor-dual-swords.md) |
+| [Mixamo Locomotion Collection](mixamo-locomotion-collection.md) | [Basic Locomotion](mixamo-basic-locomotion.md), [Female Basic Locomotion](mixamo-female-basic-locomotion.md), [Female Locomotion](mixamo-female-locomotion.md), [Locomotion](mixamo-locomotion.md), [Longbow Locomotion](mixamo-longbow-locomotion.md), [Magic Locomotion](mixamo-magic-locomotion.md), [Male Locomotion](mixamo-male-locomotion.md), [Pistol-Handgun Locomotion](mixamo-pistol-handgun-locomotion.md), [Rifle 8-Way Locomotion](mixamo-rifle-8-way-locomotion.md) |
+
+## Choose an evaluation route
+
+| Route | What the evaluated content supports investigating | Decision boundary |
+|---|---|---|
+| [Protofactor Ultimate](protofactor-ultimate-animation-collection.md) | Ground locomotion, shield and melee families, climbing, injured styles, and campfire interactions across eight evaluated constituents. | As of the 2026-09-17 vendor listing, 24 animsets were advertised; 8 were evaluated here and 16 were not. The held revision's complete membership is unverified. Source and bounded Unity checks do not establish visual or gameplay acceptance. |
+| [Mixamo Locomotion](mixamo-locomotion-collection.md) | Nine locally evaluated locomotion and equipment-themed source pools for separate controller prototypes. | These nine pools are not a verified current vendor bundle or complete catalog. Cross-pack binding, engine, contact, retarget, and visual acceptance remain open. |
+
+The evaluations concern full-body humanoid content for visible characters.
+Third-person gameplay-camera appearance and target-character deformation are
+untested. Dedicated first-person arms, viewmodel framing, and close-camera
+suitability are not established. Read a collection's [Technical decision](protofactor-ultimate-animation-collection.md#technical-decision) and its
+constituent decisions before selecting an integration path.
+
+## How to read a report pair
+
+The concise technical report gives the decision, candidate runtime sets,
+integration conditions, issue ownership, and remaining acceptance gates. Its
+evidence appendix retains scope, provenance, exact members, measurements, and
+reproduction details. Current reader-facing pairs use report format 3. The
+[versioned evaluation skill](../../.agents/skills/evaluate-animation-packs/SKILL.md)
+owns the authoring and validation procedure.
 
 ## Scorecard
 
@@ -35,55 +74,6 @@ and evaluation status of every pair.
 | [Mixamo Pistol-Handgun Locomotion](mixamo-pistol-handgun-locomotion.md) | Restricted use | partial | medium | 2026-09-16 | AnimSmith 0.14.0 |
 | [Mixamo Rifle 8-Way Locomotion](mixamo-rifle-8-way-locomotion.md) | Restricted use | partial | medium | 2026-09-16 | AnimSmith 0.14.0 |
 | [Mixamo Locomotion Collection](mixamo-locomotion-collection.md) | Restricted use | partial | medium | 2026-09-16 | AnimSmith 0.14.0 |
-
-## Report organization
-
-Keep one linked report pair per constituent animation pack:
-
-- a concise technical report for the decision, capability tiers, important
-  runtime sets, integration recipe, issue ownership, engine status, and fit;
-- an evidence appendix for source identity, canonical roles, pipeline stages,
-  readiness evidence, validation profiles, commands, digests, and detailed
-  engine/compatibility procedures.
-
-This keeps the reader-facing decision short and reevaluation bounded when one
-pack, engine, or evaluator version changes.
-
-The current linked-pair layout is report format version 2. Both documents name
-one current AnimSmith evaluator and present ordinary sections as current state
-for a game developer. Prior evaluator behavior, superseded evidence, and
-version comparisons belong only in `Changes between AnimSmith versions`.
-Report-format version 1 remains an immutable historical/generated contract.
-
-Add a collection-level report pair after multiple constituent packs have been
-evaluated, even while the rollup is partial. Name evaluated and missing
-constituents. Its concise report should link rather than duplicate the
-constituent reports and own only collection-wide conclusions:
-
-- evaluated and missing constituent packs;
-- combined gameplay/content coverage and meaningful duplicates;
-- cross-pack skeleton, scale, root-motion, timing, style, and retarget paths;
-- cross-pack blend, transition, mask, interaction, and motion-database sets;
-- gaps that one constituent pack fills for another;
-- collection-level value, adoption conditions, and confidence boundaries.
-
-Build the rollup manifest by namespacing validated constituent manifests.
-Digest-compare every overlapping logical package path before claiming safe
-co-installation. Treat skeleton identity, engine graph execution, visual blend
-quality, masking/contact behavior, and target-character acceptance as separate
-claims. For unarmed/armed combinations, use a full-body state handoff as the
-default; promote masks only with member-specific pelvis/root/contact evidence.
-
-Reference cross-pack runtime-set members with stable namespaced motion ids such
-as `protofactor-basic-locomotion:walk-forward-unarmed`. Never imply
-compatibility merely because two pack reports use the same canonical primary
-role. Cross-pack sets require their own grouping evidence and validation.
-
-Use flat, stable filenames for each pair:
-
-- `<vendor>-<pack>.md` and `<vendor>-<pack>-evidence.md` for a constituent pack;
-- `<vendor>-<collection>.md` and `<vendor>-<collection>-evidence.md` for a
-  collection rollup.
 
 ## Current reports
 

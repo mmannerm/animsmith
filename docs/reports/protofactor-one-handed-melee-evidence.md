@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -71,8 +71,43 @@ Current evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluati
 | `hold-forward-speed` | speed-blend | 6 exact files; 3 IP, 3 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/6 files pass the retained declaration; engine and visual gates not evaluated |
 | `draw-combat-put-away` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; engine and visual gates not evaluated |
 | `heavy-hit-4-way` | other | 8 exact files; 4 IP, 4 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/8 files pass the retained declaration; engine and visual gates not evaluated |
+| `crouch-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `crouch-combat-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `run-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `run-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `run-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `run-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `walk-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `walk-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
+| `walk-combat-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `walk-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
 
-The primary [runtime-set table](protofactor-one-handed-melee.md#runtime-sets-and-authored-motion) records exact members and fresh timing/motion for the decision-driving gait sets. No historical membership is promoted solely from prose or filenames.
+The [exact runtime members](#exact-runtime-members) below record source members and fresh timing/motion for the decision-driving gait sets. No unavailable membership authority is inferred from prose or filenames.
+
+### Grouped gait measurements (retained)
+
+Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
+
+For these multi-member gait rows, duration and RM speed cells are set minima, not per-clip values. The ranges below retain authored variation; individual speed assignments are not reproduced here.
+
+The original grouped gait rows below mix eight in-place and eight root-motion files. The selectable eight-member variants follow this retained source table.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `crouch-combat-8-way` | eight-way directional gait | `Humanoid@CrouchForward1hMelee.fbx`; `Humanoid@CrouchForward1hMelee_RM.fbx`; `Humanoid@CrouchForwardLeft1hMelee.fbx`; `Humanoid@CrouchForwardLeft1hMelee_RM.fbx`; `Humanoid@CrouchLeft1hMelee.fbx`; `Humanoid@CrouchLeft1hMelee_RM.fbx`; `Humanoid@CrouchBackwardsLeft1hMelee.fbx`; `Humanoid@CrouchBackwardsLeft1hMelee_RM.fbx`; `Humanoid@CrouchBackwards1hMelee.fbx`; `Humanoid@CrouchBackwards1hMelee_RM.fbx`; `Humanoid@CrouchBackwardsRight1hMelee.fbx`; `Humanoid@CrouchBackwardsRight1hMelee_RM.fbx`; `Humanoid@CrouchRight1hMelee.fbx`; `Humanoid@CrouchRight1hMelee_RM.fbx`; `Humanoid@CrouchForwardRight1hMelee.fbx`; `Humanoid@CrouchForwardRight1hMelee_RM.fbx` | set_type=directional-blend | duration=1.667 s; rm_speed=0.480 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+| `run-8-way` | eight-way directional gait | `Humanoid@RunForward1hMelee.fbx`; `Humanoid@RunForward1hMelee_RM.fbx`; `Humanoid@RunForwardLeft1hMelee.fbx`; `Humanoid@RunForwardLeft1hMelee_RM.fbx`; `Humanoid@RunLeft1hMelee.fbx`; `Humanoid@RunLeft1hMelee_RM.fbx`; `Humanoid@RunBackwardsLeft1hMelee.fbx`; `Humanoid@RunBackwardsLeft1hMelee_RM.fbx`; `Humanoid@RunBackwards1hMelee.fbx`; `Humanoid@RunBackwards1hMelee_RM.fbx`; `Humanoid@RunBackwardsRight1hMelee.fbx`; `Humanoid@RunBackwardsRight1hMelee_RM.fbx`; `Humanoid@RunRight1hMelee.fbx`; `Humanoid@RunRight1hMelee_RM.fbx`; `Humanoid@RunForwardRight1hMelee.fbx`; `Humanoid@RunForwardRight1hMelee_RM.fbx` | set_type=directional-blend | duration=0.600 s; rm_speed=1.905 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+| `walk-combat-8-way` | eight-way directional gait | `Humanoid@WalkForwardCombat1hMelee.fbx`; `Humanoid@WalkForwardCombat1hMelee_RM.fbx`; `Humanoid@WalkForwardLeftCombat1hMelee.fbx`; `Humanoid@WalkForwardLeftCombat1hMelee_RM.fbx`; `Humanoid@WalkLeftCombat1hMelee.fbx`; `Humanoid@WalkLeftCombat1hMelee_RM.fbx`; `Humanoid@WalkBackwardsLeftCombat1hMelee.fbx`; `Humanoid@WalkBackwardsLeftCombat1hMelee_RM.fbx`; `Humanoid@WalkBackwardsCombat1hMelee.fbx`; `Humanoid@WalkBackwardsCombat1hMelee_RM.fbx`; `Humanoid@WalkBackwardsRightCombat1hMelee.fbx`; `Humanoid@WalkBackwardsRightCombat1hMelee_RM.fbx`; `Humanoid@WalkRightCombat1hMelee.fbx`; `Humanoid@WalkRightCombat1hMelee_RM.fbx`; `Humanoid@WalkForwardRightCombat1hMelee.fbx`; `Humanoid@WalkForwardRightCombat1hMelee_RM.fbx` | set_type=directional-blend | duration=1.333 s; rm_speed=0.491 m/s | loop_ip=true; loop_rm=true; sync=not-evaluated |
+
+The grouped table gives minimum duration and RM speed. Run durations span 0.600–0.667 s. Measured RM speed spans are `crouch-combat-8-way` 0.480–0.730 m/s (ratio 0.657); `run-8-way` 1.905–2.117 m/s (ratio 0.900); `walk-combat-8-way` 0.491–0.951 m/s (ratio 0.516). Preserve authored variation unless the project declares a normalization policy; diagonals and cardinals require the full blend test. Measured source in-place phase spreads (cycles, eight measured members each) are `crouch-combat-8-way` 0.7136; `run-8-way` 0.7342; `walk-combat-8-way` 0.5538. Phase spread here is the minimum covering arc in cycles: sort phases in `[0,1)`, include the wraparound gap, then subtract the largest gap from 1. It is not `max_circular_deviation_from_mean`; neither measure alone proves support-foot or visual compatibility. Keep `sync=not-evaluated` until the selected synchronization and contact policy is tested. The current catalog also measures `hold-forward-speed`, `draw-combat-put-away`, and `heavy-hit-4-way` as evaluator-defined hypotheses; they remain candidate groupings.
+
+### Exact runtime members
+
+Each row is one selectable eight-member variant. Numeric duration and RM-speed table values are the measured minima, not a uniform value for every member. The retained current clip catalog measures both `run-8-way-in-place` and `run-8-way-root-motion` at 0.600–0.667 s across their respective eight files; their combined group has the same duration range. RM-speed ranges remain in the grouped measurement paragraph above. Continuous-loop declarations remain unaccepted.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `crouch-combat-8-way-in-place` | eight-way directional gait | `Humanoid@CrouchForward1hMelee.fbx`; `Humanoid@CrouchForwardLeft1hMelee.fbx`; `Humanoid@CrouchLeft1hMelee.fbx`; `Humanoid@CrouchBackwardsLeft1hMelee.fbx`; `Humanoid@CrouchBackwards1hMelee.fbx`; `Humanoid@CrouchBackwardsRight1hMelee.fbx`; `Humanoid@CrouchRight1hMelee.fbx`; `Humanoid@CrouchForwardRight1hMelee.fbx` | variant=in-place | duration=1.667 s | loop=true; sync=not-evaluated |
+| `crouch-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@CrouchForward1hMelee_RM.fbx`; `Humanoid@CrouchForwardLeft1hMelee_RM.fbx`; `Humanoid@CrouchLeft1hMelee_RM.fbx`; `Humanoid@CrouchBackwardsLeft1hMelee_RM.fbx`; `Humanoid@CrouchBackwards1hMelee_RM.fbx`; `Humanoid@CrouchBackwardsRight1hMelee_RM.fbx`; `Humanoid@CrouchRight1hMelee_RM.fbx`; `Humanoid@CrouchForwardRight1hMelee_RM.fbx` | variant=root-motion | duration=1.667 s; rm_speed=0.480 m/s | loop=true; sync=not-evaluated |
+| `run-8-way-in-place` | eight-way directional gait | `Humanoid@RunForward1hMelee.fbx`; `Humanoid@RunForwardLeft1hMelee.fbx`; `Humanoid@RunLeft1hMelee.fbx`; `Humanoid@RunBackwardsLeft1hMelee.fbx`; `Humanoid@RunBackwards1hMelee.fbx`; `Humanoid@RunBackwardsRight1hMelee.fbx`; `Humanoid@RunRight1hMelee.fbx`; `Humanoid@RunForwardRight1hMelee.fbx` | variant=in-place | duration=0.600 s | loop=true; sync=not-evaluated |
+| `run-8-way-root-motion` | eight-way directional gait | `Humanoid@RunForward1hMelee_RM.fbx`; `Humanoid@RunForwardLeft1hMelee_RM.fbx`; `Humanoid@RunLeft1hMelee_RM.fbx`; `Humanoid@RunBackwardsLeft1hMelee_RM.fbx`; `Humanoid@RunBackwards1hMelee_RM.fbx`; `Humanoid@RunBackwardsRight1hMelee_RM.fbx`; `Humanoid@RunRight1hMelee_RM.fbx`; `Humanoid@RunForwardRight1hMelee_RM.fbx` | variant=root-motion | duration=0.600 s; rm_speed=1.905 m/s | loop=true; sync=not-evaluated |
+| `walk-combat-8-way-in-place` | eight-way directional gait | `Humanoid@WalkForwardCombat1hMelee.fbx`; `Humanoid@WalkForwardLeftCombat1hMelee.fbx`; `Humanoid@WalkLeftCombat1hMelee.fbx`; `Humanoid@WalkBackwardsLeftCombat1hMelee.fbx`; `Humanoid@WalkBackwardsCombat1hMelee.fbx`; `Humanoid@WalkBackwardsRightCombat1hMelee.fbx`; `Humanoid@WalkRightCombat1hMelee.fbx`; `Humanoid@WalkForwardRightCombat1hMelee.fbx` | variant=in-place | duration=1.333 s | loop=true; sync=not-evaluated |
+| `walk-combat-8-way-root-motion` | eight-way directional gait | `Humanoid@WalkForwardCombat1hMelee_RM.fbx`; `Humanoid@WalkForwardLeftCombat1hMelee_RM.fbx`; `Humanoid@WalkLeftCombat1hMelee_RM.fbx`; `Humanoid@WalkBackwardsLeftCombat1hMelee_RM.fbx`; `Humanoid@WalkBackwardsCombat1hMelee_RM.fbx`; `Humanoid@WalkBackwardsRightCombat1hMelee_RM.fbx`; `Humanoid@WalkRightCombat1hMelee_RM.fbx`; `Humanoid@WalkForwardRightCombat1hMelee_RM.fbx` | variant=root-motion | duration=1.333 s; rm_speed=0.491 m/s | loop=true; sync=not-evaluated |
 
 ### Pipeline-stage coverage
 

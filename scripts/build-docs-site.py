@@ -35,6 +35,12 @@ from hashlib import sha256
 from typing import NamedTuple
 from urllib.parse import quote, unquote, urlsplit
 
+# The report index's collection navigation is parsed with the same pinned
+# pulldown-cmark AST as report validation.  Keep its parser in the skill's
+# existing module rather than recognizing Markdown table syntax here.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".agents/skills/evaluate-animation-packs/scripts"))
+from validate_report import parse_markdown  # noqa: E402
+
 
 INDEX = Path("docs/README.md")
 REPORT_INDEX = Path("docs/reports/README.md")
@@ -136,29 +142,79 @@ def markdown_link(cell: str, context: str) -> tuple[str, str]:
 
 
 def report_rows(index: Path) -> list[tuple[str, str, str]]:
-    """Read the canonical technical-report/evidence pairs for nested navigation."""
-    lines = index.read_text(encoding="utf-8").splitlines()
-    header = "| Technical report | Evidence appendix | Scope | Evaluation status |"
-    try:
-        start = lines.index(header) + 2
-    except ValueError as error:
-        raise ValueError(f"{index} must have the canonical current-reports table") from error
-
-    rows = []
-    for line in lines[start:]:
-        if not line.startswith("|"):
-            break
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if len(cells) != 4:
-            raise ValueError(f"{index}: malformed current-reports row: {line}")
-        technical_label, technical_destination = markdown_link(
-            cells[0], f"{index}: Technical report cell"
-        )
-        _, evidence_destination = markdown_link(cells[1], f"{index}: Evidence appendix cell")
-        rows.append((technical_label, technical_destination, evidence_destination))
-    if not rows:
+    """Read canonical report/evidence links from the parsed Markdown table."""
+    document = parse_markdown(index.read_text(encoding="utf-8"))
+    header = ["Technical report", "Evidence appendix", "Scope", "Evaluation status"]
+    tables = [table for table in document["tables"]
+              if [cell["text"] for cell in table["header"]] == header
+              and not table["blockquote"] and table["list_depth"] == 0]
+    if len(tables) != 1:
+        raise ValueError(f"{index} must have one canonical current-reports table")
+    if not tables[0]["rows"]:
         raise ValueError(f"{index}: canonical current-reports table has no rows")
+    rows = []
+    for row in tables[0]["rows"]:
+        if len(row) != 4 or any(not cell["text"].strip() for cell in row):
+            raise ValueError(f"{index}: malformed current-reports row")
+        links = []
+        for cell in row[:2]:
+            if len(cell["links"]) != 1 or cell["text"] != cell["links"][0]["text"]:
+                raise ValueError(f"{index}: report and evidence cells must contain one link")
+            link = cell["links"][0]
+            validate_text(link["text"], "label")
+            validate_text(link["destination"], "destination")
+            links.append(link)
+        rows.append((links[0]["text"], links[0]["destination"], links[1]["destination"]))
     return rows
+
+
+def collection_rows(
+    index: Path, reports: list[tuple[str, str, str]]
+) -> list[tuple[str, list[str]]] | None:
+    """Read the optional collection map; old report indexes remain flat."""
+    document = parse_markdown(index.read_text(encoding="utf-8"))
+    expected = ["Collection overview", "Evaluated constituents"]
+    has_section = any(
+        heading["level"] == 2 and heading["text"] == "Browse by collection"
+        for heading in document["headings"]
+    )
+    if not has_section:
+        return None
+    tables = [table for table in document["tables"] if table["section"] == "Browse by collection"]
+    if (len(tables) != 1
+            or [cell["text"].strip() for cell in tables[0]["header"]] != expected
+            or not tables[0]["rows"]):
+        raise ValueError(f"{index}: collection membership table must be unique, nonempty, and canonical")
+    by_destination = {report: label for label, report, _ in reports}
+    if len(by_destination) != len(reports):
+        raise ValueError(f"{index}: duplicate technical-report destinations")
+    seen: set[str] = set()
+    groups = []
+    for row in tables[0]["rows"]:
+        if len(row) != 2 or len(row[0]["links"]) != 1 or not row[1]["links"]:
+            raise ValueError(f"{index}: collection row needs one overview and linked constituents")
+        overview = row[0]["links"][0]["destination"]
+        if overview not in by_destination:
+            raise ValueError(f"{index}: unknown collection overview: {overview}")
+        if row[0]["text"].strip() != row[0]["links"][0]["text"].strip():
+            raise ValueError(f"{index}: collection overview must be one link")
+        if overview in seen:
+            raise ValueError(f"{index}: duplicate collection membership: {overview}")
+        seen.add(overview)
+        members = []
+        for link in row[1]["links"]:
+            destination = link["destination"]
+            if destination not in by_destination:
+                raise ValueError(f"{index}: unknown collection constituent: {destination}")
+            if destination in seen:
+                raise ValueError(f"{index}: duplicate collection membership: {destination}")
+            seen.add(destination)
+            members.append(destination)
+        groups.append((overview, members))
+    missing = set(by_destination) - seen
+    if missing:
+        raise ValueError(f"{index}: missing collection membership: {', '.join(sorted(missing))}")
+    return groups
 
 
 def markdown_text(value: str) -> str:
@@ -368,16 +424,27 @@ def chapter(depth: int, label: str, destination: str) -> str:
     return f"{'  ' * depth}- [{markdown_text(label)}]({destination})"
 
 
-def report_chapters(depth: int, destination: str, reports: list[tuple[str, str, str]]) -> list[str]:
+def report_chapters(
+    depth: int, destination: str, reports: list[tuple[str, str, str]],
+    collections: list[tuple[str, list[str]]] | None = None,
+) -> list[str]:
     """Nest the canonical report/evidence pairs under the reports index chapter."""
     if destination != REPORT_INDEX.as_posix():
         return []
     base = REPORT_INDEX.parent.as_posix()
     lines = []
-    for label, report, evidence in reports:
-        lines.append(chapter(depth, label, local_summary_destination(report, base)))
+    if collections is None:
+        ordered = [(row, depth) for row in reports]
+    else:
+        by_destination = {row[1]: row for row in reports}
+        ordered = [
+            (by_destination[report], depth if report == overview else depth + 1)
+            for overview, members in collections for report in [overview, *members]
+        ]
+    for (label, report, evidence), level in ordered:
+        lines.append(chapter(level, label, local_summary_destination(report, base)))
         lines.append(
-            chapter(depth + 1, f"{label} evidence", local_summary_destination(evidence, base))
+            chapter(level + 1, f"{label} evidence", local_summary_destination(evidence, base))
         )
     return lines
 
@@ -400,7 +467,8 @@ def write_group_page(source: Path, group: Group, destinations: list[str]) -> str
 
 
 def summary_markdown(
-    source: Path, parts: list[Part], reports: list[tuple[str, str, str]]
+    source: Path, parts: list[Part], reports: list[tuple[str, str, str]],
+    collections: list[tuple[str, list[str]]] | None = None,
 ) -> str:
     """Render SUMMARY.md, publishing every page the navigation generates.
 
@@ -421,7 +489,7 @@ def summary_markdown(
                 depth = 1
             for row, destination in zip(group.rows, destinations):
                 summary.append(chapter(depth, row.label, destination))
-                summary.extend(report_chapters(depth + 1, destination, reports))
+                summary.extend(report_chapters(depth + 1, destination, reports, collections))
     return "\n".join(summary) + "\n"
 
 
@@ -632,8 +700,10 @@ def stage(source: Path, destination: Path, site_url: str) -> None:
             if any(row.destination == REPORT_INDEX_ROW for row in rows)
             else []
         )
+        collections = collection_rows(source / REPORT_INDEX, reports) if reports else None
         (staged_source / "SUMMARY.md").write_text(
-            summary_markdown(staged_source, navigation(rows), reports), encoding="utf-8", newline="\n"
+            summary_markdown(staged_source, navigation(rows), reports, collections),
+            encoding="utf-8", newline="\n"
         )
         (temporary / "book.toml").write_text(
             book_toml(

@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -69,6 +69,23 @@ New evaluator-selected generic scenarios: current source bytes establish the exa
 |---|---|---|---|---|
 | Wall eight directions | `directional-blend` | `Humanoid@WallClimbUp.fbx`, `Humanoid@WallClimbUpLeft.fbx`, `Humanoid@WallClimbLeft.fbx`, `Humanoid@WallClimbDownLeft.fbx`, `Humanoid@WallClimbDown.fbx`, `Humanoid@WallClimbDownRight.fbx`, `Humanoid@WallClimbRight.fbx`, `Humanoid@WallClimbUpRight.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 | Ladder up and down | `directional-blend` | `Humanoid@ClimbUpLadder.fbx`, `Humanoid@ClimbDownLadder.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
+
+### Exact runtime members
+
+Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Wall eight directions | Proposed up (0,1) | `Humanoid@WallClimbUp.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Wall eight directions | Proposed up-left (-1,1) | `Humanoid@WallClimbUpLeft.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Wall eight directions | Proposed left (-1,0) | `Humanoid@WallClimbLeft.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Wall eight directions | Proposed down-left (-1,-1) | `Humanoid@WallClimbDownLeft.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Wall eight directions | Proposed down (0,-1) | `Humanoid@WallClimbDown.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Wall eight directions | Proposed down-right (1,-1) | `Humanoid@WallClimbDownRight.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Wall eight directions | Proposed right (1,0) | `Humanoid@WallClimbRight.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Wall eight directions | Proposed up-right (1,1) | `Humanoid@WallClimbUpRight.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Ladder up and down | Proposed up (0,1) | `Humanoid@ClimbUpLadder.fbx::Take 001` | set_type=directional-blend | duration=1.200 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Ladder up and down | Proposed down | `Humanoid@ClimbDownLadder.fbx::Take 001` | set_type=directional-blend | duration=1.200 s | loop=unknown; movement=controller; contact=not-evaluated |
 
 ### Pipeline-stage coverage
 

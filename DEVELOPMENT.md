@@ -293,8 +293,12 @@ listing its member rows with their `Use it to…` text. Staging fails when a par
 or a group is split by another one, when the same group name appears under two
 parts, when two group names collapse to one slug, or when a group name has no
 slug characters, so the sidebar always follows the table's order. The row
-pointing at `docs/reports/README.md` nests the report and evidence pairs from
-that table below itself. Chapters with children start collapsed
+pointing at `docs/reports/README.md` nests its report and evidence pairs below
+itself. That index’s `Current reports` table is the canonical pair catalog;
+its optional `Browse by collection` table groups those pairs into collection
+chapters. When present, collection membership must cover the catalog exactly:
+unknown, duplicate, or missing members fail staging. Without that section,
+staging keeps a flat list of report pairs. Chapters with children start collapsed
 (`[output.html.fold]` at level 0).
 
 Staging also resolves the media a page embeds: an `<img>` naming a tracked

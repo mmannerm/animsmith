@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix preserves current constituent evidence. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -21,7 +21,7 @@ Evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluation-manif
 | Pack/edition | Protofactor Ultimate Animation Collection; partial evaluation of eight constituents |
 | Vendor/source | [Protofactor Ultimate Animation Collection](https://protofactor.biz/product/ultimate-animation-collection/) |
 | Included scope | Basic Locomotion, Sword & Shield, Campfire, Climbing, Injured, 1-Handed Melee, 2-Handed Melee, and Dual Swords |
-| Excluded scope | Fifteen named constituents; no current inventory, classification, compatibility, or readiness conclusion for them |
+| Excluded scope | Sixteen currently advertised constituents; no current inventory, classification, compatibility, or readiness conclusion for them |
 | Delivered scope | Authorized local commercial deliveries; 918 source candidates, including 895 individual motion-labelled inputs |
 | Target use | Engine-neutral, mechanically scoped collection intake |
 | Target engines | Unity 6000.5.8f1 bounded source probes; other engines not evaluated |
@@ -71,6 +71,28 @@ Current rollup candidates reuse exact current constituent scenarios; they are ne
 | Walk eight directions | `directional-blend` | Exact members in [primary report](protofactor-ultimate-animation-collection.md#runtime-sets-and-authored-motion) | Current constituent byte-bound generic scenario; semantic role inferred | No collection graph or gameplay acceptance |
 | Injury style A speed | `speed-blend` | Exact members in [primary report](protofactor-ultimate-animation-collection.md#runtime-sets-and-authored-motion) | Current constituent byte-bound generic scenario; semantic role inferred | No collection graph or gameplay acceptance |
 | Kneel and sit sequence | `transition-chain` | Exact members in [primary report](protofactor-ultimate-animation-collection.md#runtime-sets-and-authored-motion) | Current constituent byte-bound generic scenario; semantic role inferred | No collection graph or gameplay acceptance |
+
+### Exact runtime members
+
+Retained selected sample: these 15 rows cover Basic walk, Injured A and Campfire kneel/sit only. They are not an exhaustive collection inventory; the other five evaluated constituents are linked in the primary report.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Walk eight directions | Candidate 1; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkForwardUnarmed2.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 2; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkForwardLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 3; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 4; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkBackwardsLeftUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 5; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkBackwardsUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 6; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkBackwardsRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 7; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Walk eight directions | Candidate 8; [basic-locomotion](protofactor-basic-locomotion.md) | `Humanoid@WalkForwardRightUnarmed.fbx::Take 001` | set_type=directional-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Candidate 1; [injured](protofactor-injured.md) | `Humanoid@IdleInjuredA.fbx::Take 001` | set_type=speed-blend | duration=2.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Candidate 2; [injured](protofactor-injured.md) | `Humanoid@WalkInjuredA.fbx::Take 001` | set_type=speed-blend | duration=1.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Injury style A speed | Candidate 3; [injured](protofactor-injured.md) | `Humanoid@RunInjuredA.fbx::Take 001` | set_type=speed-blend | duration=0.800 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 1; [campfire](protofactor-campfire.md) | `Humanoid@StandToKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 2; [campfire](protofactor-campfire.md) | `Humanoid@IdleKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.167 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 3; [campfire](protofactor-campfire.md) | `Humanoid@KneelToSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate 4; [campfire](protofactor-campfire.md) | `Humanoid@IdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
 
 ### Pipeline-stage coverage
 
@@ -125,7 +147,7 @@ Current rollup candidates reuse exact current constituent scenarios; they are ne
 | Dual Swords | 189 | 186 | baseline, declared contracts, and 25 external transform candidates |
 | **Total** | **918** | **895** | Current evidence is constituent-derived |
 
-Names and packaging are not current semantic role proof. The fifteen excluded constituents are outside this inventory and were not used to infer collection capability.
+Names and packaging are not current semantic role proof. The sixteen currently advertised unevaluated constituents are outside this inventory and were not used to infer collection capability.
 
 ## Mechanical baseline
 
@@ -181,7 +203,7 @@ External evidence: `external:animsmith-0.14.0-report-refresh/unity-eight-pack-cr
 
 ## Limitations and unknowns
 
-- The report evaluates exactly eight constituents, not the full collection, and does not assess the fifteen excluded constituents.
+- The report evaluates exactly eight constituents, not the full collection, and does not assess the sixteen currently advertised unevaluated constituents.
 - Canonical collection roles/logical-motion totals and collection-wide remedial outputs remain unavailable; named current constituent scenarios are not a recovered historical collection binding.
 - Current Unity source import and finite-pose/root tests are bounded to the named members. No visual, target-character retarget, contact, actual controller, compression, build or performance acceptance exists.
 - Current external candidates do not establish source modification, promotion, derivative delivery, license rights, or artistic acceptance.

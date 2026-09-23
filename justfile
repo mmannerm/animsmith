@@ -97,6 +97,7 @@ docs-stage:
 docs-check:
     python3 scripts/build-docs-site.py --stage "{{docs_stage}}" --build
     python3 scripts/test_build_docs_site.py
+    python3 scripts/test_compose_pages_site.py
     cargo test -p animsmith --test docs_pages
 
 # Serve the same staged Pages book locally at http://localhost:3000.
@@ -155,6 +156,7 @@ release-cli:
 animation-pack-skill:
     cargo build -p animsmith --bin animsmith
     ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/evaluate-animation-packs/scripts/test_validators.py
+    PYTHONDONTWRITEBYTECODE=1 python3 .agents/skills/evaluate-animation-packs/scripts/test_editorial_reports.py
 
 report-browser:
     #!/usr/bin/env bash
@@ -193,6 +195,7 @@ report-browser:
     # The documentation site's theme bridge drives those same viewers through
     # their fragment, so its rewrite rule is executed in the same harness step.
     node scripts/test-theme-bridge.js
+    node scripts/test-site-tables.js
 
 # Full local PR gate, matching CI (includes release builds — expect
 # minutes, not seconds). The GitHub workflow also verifies package

@@ -3494,17 +3494,14 @@ class RegenerationContractTests(unittest.TestCase):
         self.assertIn("representative-format admission", appendix_template)
         self.assertIn("logical preflight-evidence locator", appendix_template)
 
-    def test_templates_preserve_primary_evidence_without_duplication(self) -> None:
-        skill = self.rendered_paragraph_text("SKILL.md")
-        report_template = self.rendered_paragraph_text("assets/report-template.md")
-        appendix_template = self.rendered_paragraph_text(
-            "assets/evidence-appendix-template.md"
-        )
-
-        self.assertIn("appendix must link directly to that evidence", skill)
-        self.assertIn("Treat this table as decision evidence", report_template)
-        self.assertIn("link to that table here", appendix_template)
-        self.assertIn("without duplicating", appendix_template)
+    def test_editorial_templates_separate_summary_from_exact_evidence(self) -> None:
+        report = report_validator.parse_markdown(self.read("assets/report-template.md"))
+        appendix = report_validator.parse_markdown(self.read("assets/evidence-appendix-template.md"))
+        primary_headers = [tuple(cell["text"] for cell in table["header"]) for table in report["tables"]]
+        detailed_headers = [tuple(cell["text"] for cell in table["header"]) for table in appendix["tables"] if table["subsection"] == "Exact runtime members"]
+        self.assertIn(report_validator.SET_SUMMARY_HEADER, primary_headers)
+        self.assertNotIn(report_validator.RUNTIME_SET_HEADER, primary_headers)
+        self.assertEqual(detailed_headers, [report_validator.RUNTIME_SET_HEADER])
 
     def test_exact_source_typos_stay_narrow_and_root_motion_stays_safe(self) -> None:
         skill = self.rendered_paragraph_text("SKILL.md")

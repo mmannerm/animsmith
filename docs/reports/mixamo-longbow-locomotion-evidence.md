@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 This appendix contains scrubbed facts only. The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative. The evaluation manifest schema is `urn:animsmith:skill:animation-pack-evaluation-manifest:1`; it is retained as opaque historical classification input, not current source-to-vendor mapping authority.
 
@@ -60,6 +60,17 @@ Consequential claims are `observed-file`, `observed-animsmith`, `inferred`, or `
 | `emote-cinematic` | 0 | 0 | Not authoritatively classified |
 | `other-unknown` | 22 | 22 | One opaque current source unit per delivered FBX |
 | **Total** | **22** | **22** | Current exact source paths; no vendor mapping inferred |
+
+### Exact runtime members
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| `hypothesis/kinematic-run-4way` | forward=(0,1) | `Longbow_Locomotion_Pack_-_in-place/standing run forward.fbx` | variant=in-place | duration=0.867 s; frames=27 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-4way` | back=(0,-1) | `Longbow_Locomotion_Pack_-_in-place/standing run back.fbx` | variant=in-place | duration=0.667 s; frames=21 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-4way` | left=(-1,0) | `Longbow_Locomotion_Pack_-_in-place/standing run left.fbx` | variant=in-place | duration=0.667 s; frames=21 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+| `hypothesis/kinematic-run-4way` | right=(1,0) | `Longbow_Locomotion_Pack_-_in-place/standing run right.fbx` | variant=in-place | duration=0.767 s; frames=24 frames | loop=unknown; sync=not-evaluated; movement=controller-xz-yaw; playback=project-defined |
+
+The table above preserves the measured member detail from the companion report; its proposed controller still requires target-engine acceptance.
 
 ### Runtime-set inventory
 

@@ -553,6 +553,74 @@ class ExternalProxyContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "has no rows"):
                 BUILD_DOCS_SITE.report_rows(index)
 
+    def test_collection_membership_nests_reports_and_rejects_incomplete_maps(self) -> None:
+        reports = [
+            ("Collection A", "a.md", "a-evidence.md"),
+            ("Member A", "a-one.md", "a-one-evidence.md"),
+            ("Collection B", "b.md", "b-evidence.md"),
+            ("Member B", "b-one.md", "b-one-evidence.md"),
+        ]
+        header = (
+            "# Reports\n\n## Browse by collection\n\n"
+            "| Collection overview | Evaluated constituents |\n"
+            "|---|---|\n"
+        )
+        first = "| [Collection A](a.md) | [Member A](a-one.md) |\n"
+        second = "| [Collection B](b.md) | [Member B](b-one.md) |\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            index = Path(temporary) / "README.md"
+            index.write_text(header + first + second, encoding="utf-8")
+            groups = BUILD_DOCS_SITE.collection_rows(index, reports)
+            self.assertEqual(groups, [("a.md", ["a-one.md"]), ("b.md", ["b-one.md"])])
+            self.assertEqual(
+                BUILD_DOCS_SITE.report_chapters(1, "docs/reports/README.md", reports, groups),
+                [
+                    "  - [Collection A](docs/reports/a.md)",
+                    "    - [Collection A evidence](docs/reports/a-evidence.md)",
+                    "    - [Member A](docs/reports/a-one.md)",
+                    "      - [Member A evidence](docs/reports/a-one-evidence.md)",
+                    "  - [Collection B](docs/reports/b.md)",
+                    "    - [Collection B evidence](docs/reports/b-evidence.md)",
+                    "    - [Member B](docs/reports/b-one.md)",
+                    "      - [Member B evidence](docs/reports/b-one-evidence.md)",
+                ],
+            )
+            index.write_text(header + first, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "missing collection membership"):
+                BUILD_DOCS_SITE.collection_rows(index, reports)
+            index.write_text(header + first + second.replace("b-one.md", "a-one.md"), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate collection membership"):
+                BUILD_DOCS_SITE.collection_rows(index, reports)
+            index.write_text(header + first + second.replace("b-one.md", "unknown.md"), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unknown collection constituent"):
+                BUILD_DOCS_SITE.collection_rows(index, reports)
+            index.write_text(header.replace("Evaluated constituents", "Members") + first + second, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "collection membership table must be unique"):
+                BUILD_DOCS_SITE.collection_rows(index, reports)
+
+    def test_old_report_index_without_collection_table_keeps_flat_navigation(self) -> None:
+        reports = [("One", "one.md", "one-evidence.md")]
+        with tempfile.TemporaryDirectory() as temporary:
+            index = Path(temporary) / "README.md"
+            index.write_text(
+                "# Reports\n\n```markdown\n"
+                "| Collection overview | Evaluated constituents |\n"
+                "|---|---|\n| [Fake](fake.md) | [Fake](fake-one.md) |\n"
+                "```\n\n"
+                "| Technical report | Evidence appendix | Scope | Evaluation status |\n"
+                "|---|---|---|---|\n"
+                "| [One](one.md) | [Evidence](one-evidence.md) | Fixture | Current |\n",
+                encoding="utf-8",
+            )
+            self.assertIsNone(BUILD_DOCS_SITE.collection_rows(index, reports))
+            self.assertEqual(
+                BUILD_DOCS_SITE.report_chapters(1, "docs/reports/README.md", reports),
+                [
+                    "  - [One](docs/reports/one.md)",
+                    "    - [One evidence](docs/reports/one-evidence.md)",
+                ],
+            )
+
     def test_source_ref_guard_rejects_empty_controls_whitespace_and_oversize(self) -> None:
         cases = [
             ("", "required"),

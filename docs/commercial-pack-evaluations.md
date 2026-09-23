@@ -7,21 +7,24 @@ advice, a license opinion, or approval for a different target game.
 
 ## Who these reports are for
 
-The pairs exist to prove the tool on real deliveries: every claim in them comes
-from running AnimSmith over a pack as a developer actually receives it. A
-developer deciding whether to buy a pack should read the
-[scorecard](reports/README.md#scorecard) first, which gives every maintained
-pack its verdict, completeness, and confidence in one row, and then read the
-**Technical decision** and **Technical issue register** of the single pair that
-matters. The reports assess delivered files, not a purchase: no per-pack
-buyer's note exists, and none is implied.
+The reports help developers choose a bounded prototype and identify work for
+engine, tool, or artist owners. Start with the
+[collection overview](reports/README.md#browse-by-collection) to find Ultimate
+and its evaluated constituents, or compare the nine Mixamo source pools. Then
+read the selected report's **Technical decision**, set-level **Adoption
+decision**, and **Technical issue register**. Measured results, inferred
+integration advice, and untested behavior are labeled separately.
+
+These are full-body humanoid evaluations. Third-person camera appearance is
+untested; dedicated first-person arms/viewmodel suitability is not established.
+They do not provide a blanket buying recommendation or controller certification.
 
 ## Read a pair in order
 
 1. Read the **Technical decision** for the scoped verdict and its conditions.
 2. Read **Capability coverage** and **Runtime sets and authored motion** to
-   learn which logical clips, blend/transition/mask/contact sets, and gaps were
-   actually evaluated.
+   separate available content from content gaps and missing tests, then choose
+   a blend or state-machine set. Follow **Exact members** for per-clip details.
 3. Read **Engine status** as bounded evidence for the named engine procedure;
    it is not a transfer of proof to another engine, version, character, graph,
    or project.
@@ -29,7 +32,8 @@ buyer's note exists, and none is implied.
    in the selected technical report to identify whether a source/vendor,
    DCC, engine, gameplay, or visual owner must act.
 5. Open the paired **Detailed evidence** appendix for input identity,
-   evaluator/version, commands, digests, coverage, and repeatable procedure.
+   evaluator/version, exact members, measurements, commands, digests, coverage,
+   and repeatable procedure.
 
 The report index mechanically links every maintained report to its appendix.
 Use the pair rather than an isolated headline when deciding whether a pack is

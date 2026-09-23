@@ -8,7 +8,7 @@
 >
 > Current evaluator: **AnimSmith 0.14.0**
 >
-> Report format: **2**
+> Report format: **3**
 
 The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) remains authoritative.
 
@@ -70,6 +70,25 @@ New evaluator-selected generic scenarios: current source bytes establish the exa
 | Kneel and sit sequence | `transition-chain` | `Humanoid@StandToKneelCampfire.fbx`, `Humanoid@IdleKneelCampfire.fbx`, `Humanoid@KneelToSitCampfire.fbx`, `Humanoid@IdleSitCampfire.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 | Sit and lie sequence | `transition-chain` | `Humanoid@IdleSitCampfire.fbx`, `Humanoid@IdleSitToIdleLayDownCampfire.fbx`, `Humanoid@IdleLayDownCampfire.fbx`, `Humanoid@IdleLayDownToIdleSitCampfire.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
 | Grill interaction sequence | `transition-chain` | `Humanoid@IdleKneelCampfire.fbx`, `Humanoid@IdleKneelToIdleGrillSkewerCampfire.fbx`, `Humanoid@IdleGrillSkewerCampfire.fbx`, `Humanoid@KneelEatSkewerCampfire.fbx`; `Take 001` | New evaluator-selected scenario; observed bytes/timing, inferred gameplay roles | Mechanical measurements current; set/engine/visual acceptance open |
+
+### Exact runtime members
+
+Current source members and measurements for the selected runtime scenarios. Selection is an evaluator hypothesis; source identity and measured values are retained below.
+
+| Set/profile | Role or coordinate | Exact members | Variant/type | Timing or motion | Runtime contract |
+|---|---|---|---|---|---|
+| Kneel and sit sequence | Candidate member 1 | `Humanoid@StandToKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.500 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate member 2 | `Humanoid@IdleKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.167 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate member 3 | `Humanoid@KneelToSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Kneel and sit sequence | Candidate member 4 | `Humanoid@IdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Sit and lie sequence | Candidate member 1 | `Humanoid@IdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Sit and lie sequence | Candidate member 2 | `Humanoid@IdleSitToIdleLayDownCampfire.fbx::Take 001` | set_type=transition-chain | duration=4.000 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Sit and lie sequence | Candidate member 3 | `Humanoid@IdleLayDownCampfire.fbx::Take 001` | set_type=transition-chain | duration=1.967 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Sit and lie sequence | Candidate member 4 | `Humanoid@IdleLayDownToIdleSitCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Grill interaction sequence | Candidate member 1 | `Humanoid@IdleKneelCampfire.fbx::Take 001` | set_type=transition-chain | duration=2.167 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Grill interaction sequence | Candidate member 2 | `Humanoid@IdleKneelToIdleGrillSkewerCampfire.fbx::Take 001` | set_type=transition-chain | duration=3.667 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Grill interaction sequence | Candidate member 3 | `Humanoid@IdleGrillSkewerCampfire.fbx::Take 001` | set_type=transition-chain | duration=3.333 s | loop=unknown; movement=controller; contact=not-evaluated |
+| Grill interaction sequence | Candidate member 4 | `Humanoid@KneelEatSkewerCampfire.fbx::Take 001` | set_type=transition-chain | duration=11.667 s | loop=unknown; movement=controller; contact=not-evaluated |
 
 ### Pipeline-stage coverage
 

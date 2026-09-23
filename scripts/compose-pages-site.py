@@ -3,12 +3,15 @@
 
 Each snapshot is built by its own checkout's tooling: the release root uses the
 build script and mdBook pinned at the release tag, so publishing a new site
-shape never has to rewrite an already released documentation tree.
+shape preserves released chapter content. Composition adds only version
+navigation notices to released report pages and a stable latest-report route.
 """
 
 from __future__ import annotations
 
 import argparse
+import posixpath
+from html.parser import HTMLParser
 import shutil
 import subprocess
 import sys
@@ -96,6 +99,52 @@ def preflight_paths(
     ))
 
 
+class MainStart(HTMLParser):
+    """Locate the first main element without rewriting released HTML content."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        # HTMLParser counts only LF as a line break.
+        self.lines = text.split("\n")
+        self.insertion_offset: int | None = None
+        self.feed(text)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "main" and self.insertion_offset is None:
+            line, column = self.getpos()
+            self.insertion_offset = sum(len(value) + 1 for value in self.lines[:line - 1]) + column + len(self.get_starttag_text())
+
+
+def link_latest_evaluations(output: Path) -> None:
+    """Add navigation chrome to old report snapshots and a stable latest route."""
+    target = Path("dev/docs/reports/index.html")
+    if not (output / target).is_file():
+        raise ValueError("latest evaluations require the development report index")
+    latest = output / "evaluations"
+    if latest.exists() or latest.is_symlink():
+        raise ValueError(f"reserved latest-evaluations route already exists: {latest}")
+    for page in sorted((output / "docs/reports").glob("*.html")):
+        text = page.read_text(encoding="utf-8")
+        offset = MainStart(text).insertion_offset
+        if offset is None:  # Redirect aliases contain no chapter content.
+            continue
+        href = posixpath.relpath(target.as_posix(), page.relative_to(output).parent.as_posix())
+        banner = ('\n<aside class="warning" aria-label="Report version">'
+                  'This is a release snapshot. '
+                  f'<a href="{href}">Read the latest pack evaluations</a> '
+                  '(current main).</aside>\n')
+        page.write_text(text[:offset] + banner + text[offset:], encoding="utf-8")
+    latest.mkdir()
+    (latest / "index.html").write_text(
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<title>Latest animation-pack evaluations</title>'
+        '<meta http-equiv="refresh" content="0; url=../dev/docs/reports/index.html">'
+        '</head><body><a href="../dev/docs/reports/index.html">'
+        'Read the latest animation-pack evaluations</a></body></html>\n',
+        encoding="utf-8",
+    )
+
+
 def compose(
     release_builder: Path | None,
     development_builder: Path,
@@ -144,6 +193,7 @@ def compose(
         shutil.rmtree(output)
     copy_tree(release_stage / "book", output)
     copy_tree(development_stage / "book", output / "dev")
+    link_latest_evaluations(output)
     (output / "BUILD-INFO.txt").write_text(
         f"Release root: {release_tag}\nDevelopment subtree: main\n",
         encoding="utf-8", newline="\n",

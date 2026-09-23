@@ -1,4 +1,4 @@
-// The two things the published book needs that mdBook's own templates do
+// The additions the published book needs that mdBook's own templates do
 // not do, kept in one tracked script so no page ever carries an inline one.
 //
 // 1. A way back to the front door. The site's home is a hand-authored page
@@ -16,7 +16,9 @@
 // `hashchange`, so this script only has to keep that one fragment key in step
 // with mdBook's theme class on <html>.
 //
-// It is deliberately small and self-contained: no external resource, no
+// 3. Readable report cards and visible, keyboard-accessible table overflow.
+//
+// It is self-contained: no external resource, no
 // storage, and no read of an embedded frame's document — it writes one link
 // into the page's own chrome and the parent's own `src` attribute, which
 // stays allowed for a file:// preview and for the published origin alike.
@@ -135,9 +137,152 @@
     }
   }
 
+  // -- report tables -------------------------------------------------
+
+  var ISSUE_HEADERS = [
+    "ID", "Severity", "Problem and impact", "Primary owner", "Current action",
+    "Future AnimSmith potential", "Evidence/status",
+  ];
+  var SET_HEADERS = ["Set", "Controller use", "Adoption decision", "Exact members"];
+
+  function copyContents(from, to) {
+    var copy = from.cloneNode(true);
+    while (copy.firstChild) to.appendChild(copy.firstChild);
+  }
+
+  function hasHeaders(table, expected) {
+    if (!table || !table.tHead || !table.tBodies.length) return false;
+    var headers = table.tHead.rows[0] && table.tHead.rows[0].cells;
+    if (!headers || headers.length !== expected.length) return false;
+    for (var i = 0; i < headers.length; i += 1) {
+      if (headers[i].textContent.trim() !== expected[i]) return false;
+    }
+    var rows = table.tBodies[0].rows;
+    if (!rows.length) return false;
+    for (var j = 0; j < rows.length; j += 1) {
+      if (rows[j].cells.length !== expected.length) return false;
+    }
+    return true;
+  }
+
+  function renderCards(table, headers, kind, label) {
+    var cards = document.createElement("div");
+    cards.className = "as-" + kind + "-cards";
+    cards.setAttribute("role", "group");
+    cards.setAttribute("aria-label", label);
+    var rows = table.tBodies[0].rows;
+    for (var r = 0; r < rows.length; r += 1) {
+      var card = document.createElement("article");
+      card.className = "as-" + kind + "-card";
+      var title = document.createElement("h3");
+      copyContents(rows[r].cells[0], title);
+      card.appendChild(title);
+      var details = document.createElement("dl");
+      for (var c = 1; c < headers.length; c += 1) {
+        var term = document.createElement("dt");
+        term.textContent = headers[c];
+        var value = document.createElement("dd");
+        copyContents(rows[r].cells[c], value);
+        details.appendChild(term);
+        details.appendChild(value);
+      }
+      card.appendChild(details);
+      cards.appendChild(card);
+    }
+    return cards;
+  }
+
+  function issueCards() {
+    var heading = document.getElementById && document.getElementById("technical-issue-register");
+    if (!heading || heading.tagName !== "H2") return;
+    for (var node = heading.nextElementSibling; node && node.tagName !== "H2"; node = node.nextElementSibling) {
+      if (!node.querySelector) continue;
+      var table = node.classList && node.classList.contains("table-wrapper")
+        ? node.querySelector("table") : null;
+      if (!hasHeaders(table, ISSUE_HEADERS) || table.getAttribute("data-as-cards")) continue;
+      var cards = renderCards(table, ISSUE_HEADERS, "issue", "Technical issue register");
+      node.parentNode.insertBefore(cards, node.nextSibling);
+      table.setAttribute("data-as-cards", "true");
+      node.hidden = true;
+    }
+  }
+
+  function setSummaryCards() {
+    var heading = document.getElementById && document.getElementById("runtime-sets-and-authored-motion");
+    if (!heading || heading.tagName !== "H2") return;
+    for (var node = heading.nextElementSibling; node && node.tagName !== "H2"; node = node.nextElementSibling) {
+      var table = node.classList && node.classList.contains("table-wrapper")
+        ? node.querySelector("table") : null;
+      if (!hasHeaders(table, SET_HEADERS) || table.getAttribute("data-as-set-cards")) continue;
+      var cards = renderCards(table, SET_HEADERS, "set", "Runtime set decisions");
+      node.parentNode.insertBefore(cards, node.nextSibling);
+      node.className += " as-set-summary-source";
+      table.setAttribute("data-as-set-cards", "true");
+    }
+  }
+
+  function tableLabel(wrapper) {
+    var previous = wrapper.previousElementSibling;
+    while (previous && !/^H[1-6]$/.test(previous.tagName)) previous = previous.previousElementSibling;
+    return (previous ? previous.textContent.trim() : "Data") + " table";
+  }
+
+  function updateOverflow(wrapper, hint) {
+    var overflow = wrapper.scrollWidth > wrapper.clientWidth + 1;
+    hint.hidden = !overflow;
+    if (overflow) {
+      wrapper.setAttribute("tabindex", "0");
+      wrapper.setAttribute("role", "region");
+      wrapper.setAttribute("aria-label", tableLabel(wrapper) + ", scroll horizontally");
+    } else {
+      wrapper.removeAttribute("tabindex");
+      wrapper.removeAttribute("role");
+      wrapper.removeAttribute("aria-label");
+    }
+  }
+
+  function enhanceTables() {
+    issueCards();
+    setSummaryCards();
+    if (!document.querySelectorAll) return;
+    var wrappers = document.querySelectorAll(".content .table-wrapper");
+    for (var i = 0; i < wrappers.length; i += 1) {
+      var wrapper = wrappers[i];
+      if (wrapper.hidden || wrapper.getAttribute("data-as-overflow")) continue;
+      var hint = document.createElement("p");
+      hint.className = "as-table-hint";
+      if (wrapper.classList.contains("as-set-summary-source")) hint.className += " as-set-table-hint";
+      hint.textContent = "Scroll horizontally to see the rest of this table. Focus the table and use the arrow keys.";
+      wrapper.parentNode.insertBefore(hint, wrapper);
+      wrapper.setAttribute("data-as-overflow", "true");
+      wrapper.addEventListener("keydown", function (event) {
+        if (event.target !== this || (event.key !== "ArrowRight" && event.key !== "ArrowLeft")
+            || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+            || this.scrollWidth <= this.clientWidth + 1) return;
+        // mdBook uses these keys for chapter navigation at document level.
+        // Handle them here so a focused table can move without leaving it.
+        event.preventDefault();
+        event.stopPropagation();
+        var step = Math.max(40, Math.floor(this.clientWidth / 4));
+        this.scrollLeft += event.key === "ArrowRight" ? step : -step;
+      });
+      updateOverflow(wrapper, hint);
+      if (typeof ResizeObserver === "function") {
+        new ResizeObserver((function (region, cue) {
+          return function () { updateOverflow(region, cue); };
+        })(wrapper, hint)).observe(wrapper);
+      } else if (typeof window !== "undefined") {
+        window.addEventListener("resize", (function (region, cue) {
+          return function () { updateOverflow(region, cue); };
+        })(wrapper, hint));
+      }
+    }
+  }
+
   function start() {
     addHome();
     apply();
+    enhanceTables();
     if (typeof MutationObserver !== "function") return;
     new MutationObserver(apply).observe(document.documentElement, {
       attributes: true,

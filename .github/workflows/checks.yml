@@ -64,6 +64,8 @@ jobs:
         run: cargo build -p animsmith --bin animsmith
       - name: Validate animation-pack skill and published reports
         run: ANIMSMITH_TEST_BINARY=target/debug/animsmith PYTHONDONTWRITEBYTECODE=1 python .agents/skills/evaluate-animation-packs/scripts/test_validators.py
+      - name: Validate editorial report pairs and evidence links
+        run: PYTHONDONTWRITEBYTECODE=1 python .agents/skills/evaluate-animation-packs/scripts/test_editorial_reports.py
 
   report-browser:
     name: generated report browser contract
