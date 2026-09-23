@@ -48,11 +48,11 @@ The selected files are grouped by name and measurement. AnimSmith measured phase
 
 ## Integration recipe
 
-1. **Members/topology:** Use the exact members and coordinates for `hypothesis/kinematic-speed` in the linked appendix as a proposed directional blend. Add other directions or in-place/root-motion alternatives only after checking their own files.
+1. **Members/topology:** Build a walk/run speed blend from the two linked clips. Set walk and run thresholds from your controller speeds and visible stride matching; stationary roots do not provide those thresholds. Treat other directions and root-motion alternatives as separate, untested sets.
 2. **Timing/synchronization:** Keep source timing and leave loop settings undecided. Compare normalized phase and visible foot contacts in the target engine before enabling a continuous blend.
 3. **State ownership:** These selected in-place files supply pose; one kinematic controller supplies XZ translation, yaw, and collision. Root-motion use, where animation supplies travel, requires separate per-file checks.
 4. **Composition constraints:** Begin with full-body states and transitions. Masks, additive motion, IK, sockets, and layering need separate tests.
-5. **Acceptance gate:** In the chosen engine, test the selected blend at center and axes, rapid input changes, starts and stops, foot contacts, interrupted transitions, and target-character deformation.
+5. **Acceptance gate:** In the chosen engine, sweep the walk/run speed range in both directions and test rapid speed changes, starts and stops, foot contacts, interrupted transitions, and target-character deformation.
 
 ## Technical issue register
 
