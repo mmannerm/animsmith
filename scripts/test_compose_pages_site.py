@@ -38,14 +38,14 @@ class LatestEvaluationsTests(unittest.TestCase):
                 reports_dir / 'second-pack.html': '<html><main class="chapter"><h1>Second report</h1><p>Different release findings.</p></main></html>',
             }
             for report, before in originals.items():
-                report.write_text(before)
+                report.write_text(before, encoding="utf-8")
             alias = reports_dir / 'README.html'
             alias.write_text('<a href="index.html">Old index alias</a>')
             unrelated = root / 'index.html'
             unrelated.write_text('<main>Released landing</main>')
             composer.link_latest_evaluations(root)
             for report, before in originals.items():
-                after = report.read_text()
+                after = report.read_text(encoding="utf-8")
                 self.assertEqual(after.count('<aside class="warning"'), 1)
                 self.assertIn('This is a release snapshot.', after)
                 self.assertIn('>\n<aside class="warning"', after)
