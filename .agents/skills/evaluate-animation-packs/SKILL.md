@@ -627,6 +627,8 @@ and an observed gap. Compare library-only, custom authoring, and a library
 plus custom route only as far as evidence supports; name the first controlled
 pilot and the concrete unknowns that could change the choice. Do not rank
 vendor quality or labor from unlike lint totals or scoped verdict labels.
+Keep an illustrative game brief on that shared comparison; constituent reports
+retain their declared target use rather than silently inheriting the example.
 Record comparable effort only after like-for-like target-character trials;
 until then name the work drivers and leave effort unknown.
 

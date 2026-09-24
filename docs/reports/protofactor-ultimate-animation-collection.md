@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-**Prototype decision:** For a third-person controller-driven action pilot, start with unchanged Basic in-place walk/run sources on the target character, then add one full-body melee state. The first test is direction and speed sweeps plus the armed idle/walk handoff, checking foot slide, grip, pose pop and collision. Resolve intended loops and contacts before controller admission. Measured AnimSmith outputs are optional trials that still need those checks; source correction is required where a confirmed seam or malformed hierarchy blocks the selected set. In-place clips leave travel to the controller; root-motion clips carry authored travel.
+**Prototype decision:** For a controller-driven (kinematic) pilot, start with unchanged Basic in-place walk/run sources on the target character, then add one full-body melee state. The first test is direction and speed sweeps plus the armed idle/walk handoff, checking foot slide, grip, pose pop and collision. Resolve intended loops and contacts before controller admission. Measured AnimSmith outputs are optional trials that still need those checks; source correction is required where a confirmed seam or malformed hierarchy blocks the selected set. In-place clips leave travel to the controller; root-motion clips carry authored travel.
 
 **Camera scope:** Full-body humanoid animations; appearance on your target character and camera is untested. Dedicated first-person arms/viewmodel use is unverified.
 

@@ -63,15 +63,19 @@ Current evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluati
 
 ### Runtime-set inventory
 
+The untested acceptance below applies to each complete set. [Named Unity source
+samples and mixers](#engine-procedures-and-evidence) ran for a smaller subset;
+they do not establish full-set playback or visual quality.
+
 | Runtime set | Type | Members/variants | Grouping evidence | Validation status |
 |---|---|---|---|---|
-| `crouch-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; engine and visual gates not evaluated |
-| `run-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; engine and visual gates not evaluated |
-| `walk-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; engine and visual gates not evaluated |
-| `forward-speed-alternatives` | speed-blend | 10 exact files; 5 IP, 5 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/10 files pass the retained declaration; engine and visual gates not evaluated |
-| `draw-combat-put-away` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; engine and visual gates not evaluated |
-| `combo-alternatives` | other | 38 exact files; 19 IP, 19 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 1/38 files pass the retained declaration; engine and visual gates not evaluated |
-| `single-attack-alternatives` | other | 22 exact files; 11 IP, 11 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/22 files pass the retained declaration; engine and visual gates not evaluated |
+| `crouch-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `run-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `walk-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `forward-speed-alternatives` | speed-blend | 10 exact files; 5 IP, 5 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/10 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `draw-combat-put-away` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `combo-alternatives` | other | 38 exact files; 19 IP, 19 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 1/38 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `single-attack-alternatives` | other | 22 exact files; 11 IP, 11 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/22 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
 | `crouch-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
 | `crouch-combat-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
 | `run-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `run-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |

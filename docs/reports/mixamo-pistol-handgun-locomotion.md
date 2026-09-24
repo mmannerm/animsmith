@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-For a third-person, controller-driven action prototype, start with forward/back full-body pistol running using the [selected members](#runtime-sets-and-authored-motion). Their source mechanics were measured, but the proposed blend has no accepted loop, foot-contact, transition, target-character, or target-engine result. Use one controller for movement and yaw; decide ownership separately for any additional root-motion-directory state.
+For a controller-driven (kinematic) prototype, start with forward/back full-body pistol running using the [selected members](#runtime-sets-and-authored-motion). Their source mechanics were measured, but the proposed blend has no accepted loop, foot-contact, transition, target-character, or target-engine result. Use one controller for movement and yaw; decide ownership separately for any additional root-motion-directory state.
 
 **First experiment:** Import the selected in-place files on the target character, play them individually, then test their blend through speed or direction changes, starts, stops, and interrupted transitions. Review any endpoint warning on other named files before admission: retain an intentional hold after visual review, or request source repair when the intended endpoint differs. The [evidence appendix](mixamo-pistol-handgun-locomotion-evidence.md#mechanical-baseline) retains the exact source counts, warning totals, skeleton counts, and profile results. The [adoption guide](../commercial-pack-evaluations.md) compares this limited pilot with broader library and authoring routes.
 

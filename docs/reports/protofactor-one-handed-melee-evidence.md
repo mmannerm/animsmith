@@ -63,14 +63,18 @@ Current evaluation manifest schema: `urn:animsmith:skill:animation-pack-evaluati
 
 ### Runtime-set inventory
 
+The untested acceptance below applies to each complete set. [Named Unity source
+samples and mixers](#engine-procedures-and-evidence) ran for a smaller subset;
+they do not establish full-set playback or visual quality.
+
 | Runtime set | Type | Members/variants | Grouping evidence | Validation status |
 |---|---|---|---|---|
-| `crouch-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; engine and visual gates not evaluated |
-| `run-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; engine and visual gates not evaluated |
-| `walk-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; engine and visual gates not evaluated |
-| `hold-forward-speed` | speed-blend | 6 exact files; 3 IP, 3 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/6 files pass the retained declaration; engine and visual gates not evaluated |
-| `draw-combat-put-away` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; engine and visual gates not evaluated |
-| `heavy-hit-4-way` | other | 8 exact files; 4 IP, 4 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/8 files pass the retained declaration; engine and visual gates not evaluated |
+| `crouch-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `run-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `walk-combat-8-way` | directional-blend | 16 exact files; 8 IP, 8 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/16 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `hold-forward-speed` | speed-blend | 6 exact files; 3 IP, 3 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/6 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `draw-combat-put-away` | transition-chain | 3 exact files; 3 IP, 0 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 2/3 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
+| `heavy-hit-4-way` | other | 8 exact files; 4 IP, 4 RM | Current exact-file measurements; grouping is an evaluator-defined hypothesis seeded by retained catalog declarations | 0/8 files pass the retained declaration; whole-set engine and visual acceptance not evaluated |
 | `crouch-combat-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
 | `crouch-combat-8-way-root-motion` | directional-blend | 8 exact RM files | Selectable variant of the measured `crouch-combat-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
 | `run-8-way-in-place` | directional-blend | 8 exact IP files | Selectable variant of the measured `run-8-way` source family | Retained gait contracts non-clean; contact/engine acceptance open |
