@@ -22,17 +22,19 @@
 
 This animset is one of eight locally evaluated parts of [Ultimate Animation Collection](protofactor-ultimate-animation-collection.md). The local asset revision is unknown; the collection report separates evaluated files from the dated vendor listing.
 
-**Content in evaluated inventory:** Armed walk, run, crouch and equipment/actions. Evaluated filenames include airborne, attacks and reactions; these have no accepted controller topology here. These are identified motions; gameplay behavior has not been approved.
+**Content in evaluated inventory:** Armed walk, run, crouch and equipment/actions. The evaluated role inventory includes armed gaits, actions and reactions; no airborne motion was classified in it. These have no accepted controller topology here. These are identified motions; gameplay behavior has not been approved.
 
 AnimSmith 0.14.0 reads all 189 delivered FBX candidates. The untouched baseline has no errors; it reports 25426 constant-track notes. With the per-file settings used in this evaluation, 24/186 motion files pass and 162 fail, mainly because loop settings need review. These loop and movement settings still need confirmation from the project or vendor; their failures are not all source defects. Set confirmed one-time actions to play once before treating their wrap seams as source defects. For intended repeating gaits, review the loop policy and correct actual source seams.
 
-All 25 transform trials passed file inspection and measurement. All transformed outputs still fail their declared checks. For a target-engine pilot, first correct the one-shot loop settings and secure one gait set that passes its intended checks. Production use still requires blending, foot-contact, movement and visual approval.
+All 25 transform trials passed file inspection and measurement. All transformed outputs still fail their declared checks. A target-engine diagnostic can play unchanged sources now to reveal seams and contact problems. Before admitting a selected gait to the proposed controller, correct confirmed one-shot settings, establish one gait set that passes its intended checks, and review its full blend, foot contacts, movement and visuals. The transform outputs have not been accepted as replacements.
 
 ## Capability coverage
 
 ### Content present
 
-Filename-classified walk, run and crouch combat gaits have separate in-place and root-motion candidates. The evaluated role inventory also includes airborne, actions and reactions.
+Filename-classified walk, run and crouch combat gaits have separate in-place and root-motion candidates. The evaluated role inventory includes actions and reactions, but records zero airborne motions; that classification does not establish absence from every delivered file.
+
+**Action candidates to inspect:** The retained [runtime-set inventory](protofactor-dual-swords-evidence.md#runtime-set-inventory) groups `combo-alternatives` (38 files; 19 in-place, 19 root-motion; 1/38 passes the retained declaration), `single-attack-alternatives` (22 files; 11 of each variant; 0/22), and `draw-combat-put-away` (3 in-place; 2/3). These are candidate groups, not an accepted combo or equip system. Individual action filenames, timing, contacts and interruption rules are not bound by the public grouping rows; inspect source members before implementing them.
 
 ### Content gaps and unknowns
 

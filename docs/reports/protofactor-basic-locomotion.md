@@ -34,6 +34,8 @@ Keep cover, jumps, throws and turns outside the three gait blends; each needs it
 
 Filename-classified candidates include three complete eight-direction in-place walk, run and crouch rings. The wider evaluated inventory also names cover, turn, jump and throw motions; these are not members of the three selected gait rings.
 
+**Other source motions worth inspecting:** The measured inventory includes `Humanoid@SprintForwardUnarmed.FBX`, `Humanoid@SprintForwardLeftUnarmed.fbx`, `Humanoid@SprintForwardRightUnarmed.fbx`, `Humanoid@RunFastForwardUnarmed.fbx`, `Humanoid@RunFastTurnLeftUnarmed.fbx`, `Humanoid@RunFastTurnRightUnarmed.fbx`, `Humanoid@RunUTurnLeftUnarmed.fbx`, `Humanoid@RunUTurnRightUnarmed.fbx`, and `Humanoid@Turn90LeftUnarmed.fbx` / `Humanoid@Turn90RightUnarmed.fbx` / `Humanoid@Turn180LeftUnarmed.fbx` / `Humanoid@Turn180RightUnarmed.fbx` (plus listed root-motion variants). These are [filename candidates in the retained baseline](protofactor-basic-locomotion-evidence.md#mechanical-baseline), outside the three selected gait rings. Sprint speed, planted turns, start/stop bindings and controller behavior remain unclassified and untested.
+
 ### Content gaps and unknowns
 
 Start/stop sequences and foot-contact markers are not classified into accepted runtime sets here. Their status is an evaluation gap, not a claim that the delivered pack lacks them.

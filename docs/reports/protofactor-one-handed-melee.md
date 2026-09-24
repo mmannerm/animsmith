@@ -26,7 +26,7 @@ This animset is one of eight locally evaluated parts of [Ultimate Animation Coll
 
 AnimSmith 0.14.0 reads all 113 delivered FBX candidates. The untouched baseline has no errors; it reports 13629 constant-track notes. With the per-file settings used in this evaluation, 23/110 motion files pass and 87 fail, mainly because loop settings need review. These loop and movement settings still need confirmation from the project or vendor; their failures are not all source defects. Set confirmed one-time actions to play once before treating their wrap seams as source defects. For intended repeating gaits, review the loop policy and correct actual source seams.
 
-All 25 transform trials passed file inspection and measurement. All transformed outputs still fail their declared checks. For a target-engine pilot, first correct the one-shot loop settings and secure one gait set that passes its intended checks. Production use still requires blending, foot-contact, movement and visual approval.
+All 25 transform trials passed file inspection and measurement. All transformed outputs still fail their declared checks. A target-engine diagnostic can play unchanged sources now to reveal seams and contact problems. Before admitting a selected gait to the proposed controller, correct confirmed one-shot settings, establish one gait set that passes its intended checks, and review its full blend, foot contacts, movement and visuals. The transform outputs have not been accepted as replacements.
 
 ## Capability coverage
 

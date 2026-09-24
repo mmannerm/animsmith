@@ -26,13 +26,15 @@ This animset is one of eight locally evaluated parts of [Ultimate Animation Coll
 
 AnimSmith 0.14.0 reads all 123 delivered FBX candidates. The untouched baseline has no errors; it reports 17010 constant-track notes, one duration warning. With the per-file settings used in this evaluation, 13/120 motion files pass and 107 fail, mainly because loop settings need review. These loop and movement settings still need confirmation from the project or vendor; their failures are not all source defects. Set confirmed one-time actions to play once before treating their wrap seams as source defects. For intended repeating gaits, review the loop policy and correct actual source seams. One heavy-hit root-motion file has unequal channel end times.
 
-All 25 transform trials passed file inspection and measurement. All transformed outputs still fail their declared checks. For a target-engine pilot, first correct the one-shot loop settings and secure one gait set that passes its intended checks. Production use still requires blending, foot-contact, movement and visual approval.
+All 25 transform trials passed file inspection and measurement. All transformed outputs still fail their declared checks. A target-engine diagnostic can play unchanged sources now to reveal seams and contact problems. Before admitting a selected gait to the proposed controller, correct confirmed one-shot settings, establish one gait set that passes its intended checks, and review its full blend, foot contacts, movement and visuals. The transform outputs have not been accepted as replacements.
 
 ## Capability coverage
 
 ### Content present
 
 Filename-classified walk, run and crouch combat gaits have separate in-place and root-motion candidates. The evaluated role inventory also includes airborne, actions and reactions.
+
+**Action candidates to inspect:** The retained [runtime-set inventory](protofactor-two-handed-melee-evidence.md#runtime-set-inventory) groups `dodge-forward-back` (4 files; 2 in-place, 2 root-motion; 0/4 pass the retained declaration), `parry-3-way` (3 in-place; 0/3), and `draw-combat-put-away` (3 in-place; 2/3). These are grouping leads, not accepted dodge, parry or equip behavior. The public grouping rows do not bind their individual filenames, take times, interruption windows or contacts; inspect the source and test each transition before building a controller recipe.
 
 ### Content gaps and unknowns
 

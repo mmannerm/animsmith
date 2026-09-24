@@ -16,7 +16,7 @@
 
 ## Technical decision
 
-**Prototype decision:** Choose a ground state and add one full-body family at a time. Configure ownership and handoffs; trial outputs and source corrections are in the constituent reports. Collection-wide compatibility remains unknown. In-place clips leave travel to the controller; root-motion clips carry authored travel.
+**Prototype decision:** For a controller-driven (kinematic) pilot, start with unchanged Basic in-place walk/run sources on the target character, then add one full-body melee state. The first test is direction and speed sweeps plus the armed idle/walk handoff, checking foot slide, grip, pose pop and collision. Resolve intended loops and contacts before controller admission. Measured AnimSmith outputs are optional trials that still need those checks; source correction is required where a confirmed seam or malformed hierarchy blocks the selected set. In-place clips leave travel to the controller; root-motion clips carry authored travel.
 
 **Camera scope:** Full-body humanoid animations; appearance on your target character and camera is untested. Dedicated first-person arms/viewmodel use is unverified.
 
@@ -43,6 +43,19 @@ Sixteen animsets on the 2026-09-17 vendor listing were not locally evaluated, in
 ### Evaluation still needed
 
 Test one cross-pack state boundary at a time, then target-character blend, contact, root ownership, retarget, visual and build behavior. The partial source and Unity probes do not establish collection-wide controller acceptance.
+
+### Action-game inspection leads
+
+These [retained groupings](protofactor-ultimate-animation-collection-evidence.md#runtime-set-inventory) guide source inspection, not controller acceptance. The selected gait recipes below have exact members; the action-group rows generally do not publish member-level bindings or interruption contracts.
+
+| Need | Source lead and current status | Next check |
+|---|---|---|
+| Sprint and turns | [Basic filenames](protofactor-basic-locomotion.md#capability-coverage) include sprint, fast-run, U-turn and 90/180-degree turns outside the selected rings; candidate, untested | Bind takes, direction and root ownership; test stops/turns under player input |
+| Dodge and parry | [Two-Handed](protofactor-two-handed-melee-evidence.md#runtime-set-inventory) `dodge-forward-back` and `parry-3-way`; candidate groups, untested | Bind exact members, windows and contacts; check interruption and collision |
+| Attacks and combos | [Dual Swords](protofactor-dual-swords-evidence.md#runtime-set-inventory) `combo-alternatives` and `single-attack-alternatives`; candidate groups, untested | Bind attacks, timing, grip, hit events and cancel rules |
+| Equip and recovery | [Two-Handed](protofactor-two-handed-melee-evidence.md#runtime-set-inventory), [Dual Swords](protofactor-dual-swords-evidence.md#runtime-set-inventory), and [Sword & Shield](protofactor-sword-and-shield-evidence.md#runtime-set-inventory) hold draw/put-away groups; Sword & Shield also groups four death/downed/recovery chains. Candidate groups, untested | Bind source takes and test whole entry, interrupt and exit paths |
+
+Selected gaits and candidate actions answer different questions. A declaration pass or Unity source sample permits a diagnostic trial; controller admission needs intended contracts, target-character visuals, contacts and the actual state graph. For library, hybrid and custom-authoring choices across Protofactor and Mixamo, use the [shared evaluation guide](../commercial-pack-evaluations.md). Comparable effort has not been measured.
 
 ## Runtime sets and authored motion
 

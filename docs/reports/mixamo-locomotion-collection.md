@@ -16,9 +16,11 @@
 
 ## Technical decision
 
-Choose one of the nine evaluated pools for a bounded controller prototype. For a combined unarmed-to-pistol prototype, try a full-body state handoff with one controller owning movement. The proposed pair (`hypothesis/full-body-unarmed-to-pistol`) has no compatibility result yet: compare its exact skeletons, rest poses, and scale, then review the transition, feet, weapon hands, deformation, and style in the target engine before wider use.
+For a controller-driven (kinematic) prototype, choose one local pool by the movement you need first: [Basic](mixamo-basic-locomotion.md) for three-direction unarmed walking, a [walk/run speed pair](mixamo-locomotion.md) for a small speed pilot, or [Rifle 8-Way](mixamo-rifle-8-way-locomotion.md) for a directional armed run. Their selected members are source-measured candidates, with gameplay contacts, blending, and visual acceptance still open. Start on the target character with one pool and one controller owning movement. The [adoption guide](../commercial-pack-evaluations.md) compares this route with broader library and custom-authoring pilots.
 
-All 249 extracted FBX files loaded and completed current inspect, measure, and empty-baseline lint: 0 errors, 50 `duration-sanity` warnings, and 35405 `constant-track` notes. Current archive-level contracts produced 52 stationary-root errors. All sources resolve the Mixamo profile; 231 motion-named files have 66 bones and 18 `X Bot.fbx` reference files have 68.
+The unarmed-walk-to-pistol-run pair below illustrates a possible full-body handoff, not a compatibility result. It changes weapon state and gait at once. To diagnose the result, first play each state alone, then test a same-gait speed change and a weapon-state change at a matched movement speed if suitable exact clips can be classified. Only then try the combined handoff; record feet, grip, rest pose, scale, deformation, style, and interruption behavior. If a controlled comparator is unavailable, leave the cause of any failure unknown.
+
+The [collection evidence](mixamo-locomotion-collection-evidence.md#mechanical-baseline) retains exact source and warning totals, skeleton counts, and profile results. The source-only checks do not establish pairwise compatibility or a shared movement policy.
 
 ## Capability coverage
 
@@ -64,17 +66,17 @@ Shared filenames, measurements, Mixamo role labels or bone counts do not prove d
 |---|---|---|---|
 | `hypothesis/full-body-unarmed-to-pistol` | Unarmed walk to pistol run full-body handoff; controller owns XZ translation, yaw and collision | Each constituent can be piloted separately with controller-owned movement. The cross-pool handoff remains an unaccepted proposal: check hierarchy, rest pose, scale, contact and style per exact pair. The 52 ownership findings concern other files across the pools. No AnimSmith remediation trial or accepted combined controller was reported. | [Member timings, coordinates and contracts](mixamo-locomotion-collection-evidence.md#exact-runtime-members) |
 
-The selected handoff is a proposal. Test the exact pair before treating its clips as compatible.
+The selected handoff is illustrative. A poor combined result alone cannot identify whether gait speed, weapon posture, or cross-pool rig/style caused it. Record the controlled comparisons described above before assigning a repair.
 
 The constituent gait-phase spreads range from `0.0312` to `0.2477` cycles, using normalized circular range (`1 - largest cyclic gap` across member phases on the unit cycle). Those measurements can guide target-engine tests but do not establish a shared phase policy, compatible support-foot events, or a defect in any source pack.
 
 ## Integration recipe
 
-1. **Members/topology:** Place the exact unarmed and pistol members from the linked appendix in separate full-body states.
+1. **Members/topology:** Place the exact unarmed and pistol members from the linked appendix in separate full-body states. Keep this pair as an illustrative two-variable trial.
 2. **Timing/synchronization:** Keep source timing. Set and review the crossfade in the target engine; loop intent and gait alignment across pools remain unverified.
 3. **State ownership:** Use one kinematic controller for XZ translation, yaw, and collision across the state change.
 4. **Composition constraints:** Start with a full-body handoff. Test any upper-body mask, additive motion, shared IK, socket, or retarget profile separately.
-5. **Acceptance gate:** For each proposed pair, compare hierarchy, rest pose, and scale; then inspect interrupted transitions, feet, weapon hands, target deformation, and style from the gameplay camera.
+5. **Acceptance gate:** First play each state alone; compare speed with weapon state held constant and weapon state at a comparable speed when matching clips exist. Then compare hierarchy, rest pose, and scale and inspect the combined interrupted transition, feet, weapon hands, target deformation, and style from the gameplay camera. Record unknown causes when no controlled comparison exists.
 
 ## Technical issue register
 

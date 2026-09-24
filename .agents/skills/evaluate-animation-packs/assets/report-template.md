@@ -54,6 +54,11 @@ developer choosing a controller or the artist repairing a clip. Explain
 internal evaluation terms in ordinary words; link detailed evidence instead of
 narrating the evaluation process.
 
+State the first diagnostic experiment and the separate evidence needed before
+the selected set enters a controller. A scoped verdict is not a provider
+ranking. When alternatives are compared for a stated game, link the one shared
+comparison near the report catalog; keep this page focused on its own pack.
+
 Write this section and every ordinary report section as the current evaluation
 against the declared current evaluator. Do not narrate earlier tool behavior,
 ticket history, superseded measurements, or the steps by which the current
@@ -79,6 +84,11 @@ visual/contact acceptance and must not by itself justify layered use.
 
 - {{CONTENT_NOT_FOUND_OR_UNCLASSIFIED_WITH_SCOPE}}
 
+Name useful filename or inventory candidates that were not classified into
+selected sets, especially requested sprint, turn, stop, action, or recovery
+motions. Link exact evidence and distinguish them from content absent in the
+inspected scope.
+
 ### Evaluation still needed
 
 - {{UNTESTED_RUNTIME_VISUAL_OR_CONTACT_BEHAVIOR}}
@@ -93,6 +103,11 @@ Summarize each coherent set once. An eight-direction gait ring is one set;
 in-place and root-motion rings are separate alternatives with separate owners.
 Collection summaries compare all evaluated constituents and link their evidence.
 Do not enumerate eight direction members as eight adoption decisions.
+Include material non-gait groups when the brief needs them. A declared chain
+or named hypothesis is a candidate until its gameplay timing and transitions
+are accepted. Link exact retained members when available; otherwise mention
+the retained group/count in prose with the missing member binding as the next
+inventory task, not as an implementable set recipe.
 
 | Set | Controller use | Adoption decision | Exact members |
 |---|---|---|---|
@@ -101,7 +116,10 @@ Do not enumerate eight direction members as eight adoption decisions.
 Use the same set name in the appendix's exact-member table and inventory.
 A collection may instead link a constituent's exact-member appendix; identify
 its scope without manufacturing a collection contract. Keep the adoption
-answer short and state what changed after a tool trial and what remains.
+answer short: whether unchanged source, project configuration, a measured tool
+candidate, or confirmed source work is the next route. State the residual
+status and acceptance evidence for material risks. Leave severity unresolved
+when acceptance evidence is missing.
 If no important sets exist, omit the table and write exactly:
 `No important runtime sets were identified.`
 
@@ -127,6 +145,11 @@ composition. A recipe may be a bounded project proposal when runtime evidence
 is unavailable, but it must state what is untested and
 name the engine, visual, or contact checks needed before use.
 
+For a proposed cross-pack handoff, name the gameplay question and choose
+comparable speed, gait, character, and pose endpoints where available. Record
+any extra changing variable and test pose pop, slide, grip/contact, deformation,
+and style before claiming compatibility.
+
 ## Technical issue register
 
 Keep one issue register in the primary report; the appendix supplies evidence
@@ -144,6 +167,8 @@ Apply the canonical [issue-severity](../references/assessment-taxonomy.md)
 and [ownership](../references/assessment-taxonomy.md) policies.
 Fill the separate severity/residual fields above, with available time/frame,
 bone, contact, or transition boundaries for artist/vendor work.
+When endpoint intent is unknown, ask for intent and playback review first;
+retain an intentional hold or request a bounded correction accordingly.
 
 ## Engine status
 
@@ -160,7 +185,8 @@ a runtime is not evaluated.
 
 Say whether an engine test proves import, sampling, actual playback, visual
 quality, full blend-space behavior, retargeting, build behavior, or only a
-smaller subset.
+smaller subset. Name that subset when present; an untested controller or visual
+result does not erase a measured import or sample.
 
 ## Fit and limitations
 
