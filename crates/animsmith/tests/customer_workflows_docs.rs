@@ -286,7 +286,7 @@ fn workflows_are_obvious_navigation_entry_points_with_canonical_routes() {
         ),
         ("Symptom index", "symptoms/README.md"),
         (
-            "Commercial-pack evaluation guide",
+            "Choose animations for your game",
             "commercial-pack-evaluations.md",
         ),
     ] {

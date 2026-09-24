@@ -138,8 +138,8 @@ procedure, continue to the [game-developer workflow](game-developer-intake-workf
 
 Read **Technical decision** for the first experiment, **Capability coverage**
 for other candidate motions, and **Runtime sets and authored motion** for each
-set's adoption path. Use **Technical issue register** for blockers and repair
-instructions. **Engine status** tells you which tests actually ran.
+set's adoption path. Use the [Technical issue register](reports/protofactor-basic-locomotion.md#technical-issue-register)
+in the selected report for blockers and repair instructions. **Engine status** tells you which tests actually ran.
 
 Open **Detailed evidence** for exact filenames, timings, grouping assumptions,
 commands and provenance. Historical evaluator results remain under **Changes
