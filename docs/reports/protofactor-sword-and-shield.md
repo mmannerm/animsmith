@@ -26,13 +26,15 @@ This animset is one of eight locally evaluated parts of [Ultimate Animation Coll
 
 AnimSmith 0.14.0 reads all 136 delivered FBX candidates. The untouched baseline has no errors; it reports 17078 constant-track notes, one animated-scale warning. With the per-file settings used in this evaluation, 17/132 motion files pass and 115 fail, mainly because loop settings need review. These loop and movement settings still need confirmation from the project or vendor; their failures are not all source defects. Set confirmed one-time actions to play once before treating their wrap seams as source defects. For intended repeating gaits, review the loop policy and correct actual source seams. One combined-take file also carries animated scale, and the malformed 2-bone root-motion crouch file blocks that blend set.
 
-All 28 transform trials passed file inspection and measurement. Only the combined-take pruning output passes its declared checks; the other 27 still fail. Before a target-engine pilot, correct one-shot loop settings, replace the two-bone crouch source if that set is needed, and secure one gait set that passes its intended checks. Production use still needs blending, foot-contact, movement and visual approval.
+All 28 transform trials passed file inspection and measurement. Only the combined-take pruning output passes its declared checks; the other 27 still fail. A target-engine diagnostic can play unchanged sources now to reveal seams and contact problems. The two-bone file cannot join the proposed root-motion crouch blend. Before admitting any selected gait to the controller, correct confirmed one-shot settings, replace that file if its set is needed, and establish a gait set that passes its intended checks, full blend, foot-contact, movement and visual review.
 
 ## Capability coverage
 
 ### Content present
 
 Filename-classified walk, run and crouch combat gaits have separate in-place and root-motion candidates. Equipment transitions and attack/reaction content also appear in the evaluated inventory.
+
+**Action candidates to inspect:** The retained [runtime-set inventory](protofactor-sword-and-shield-evidence.md#runtime-set-inventory) groups `death-downed-recover-front/back/left/right` (four separate three-file in-place chains, each 3/3 passing its retained declaration) and `draw-combat-put-away-1/2` (two three-file chains, each 2/3). Passing a declaration is a mechanical result, not tested recovery, interruption or equip behavior. The public grouping rows do not bind individual action filenames and event times; establish those bindings and play the whole chain in engine.
 
 ### Content gaps and unknowns
 

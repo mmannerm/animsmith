@@ -36,7 +36,7 @@ The [canonical readiness ladder](../game-ready-clips.md#the-readiness-ladder) re
 | Declared contracts | 120 | 120 | 13 pass, 107 fail in each format | Declaration intent needs project/vendor authority |
 | Offline visual reports | 0 | 0 | 0 | Not run |
 | Engine import/playback | 3 named Unity sources | 3 | Fresh Humanoid import and finite standalone sampling passed | Visual/contact, authored-controller, and player-build behavior not evaluated |
-| Blend/mask/retarget | Unknown | 0 | 0 | No target graph, rig, or visual review |
+| Blend/mask/retarget | Three named source Playables mixers | Three fixed-root schedules | Finite sampled poses for named cross-pack pairs | No full blend tree, mask, separate target-rig retarget, visual or contact acceptance |
 
 ### Claim legend
 
@@ -129,18 +129,18 @@ Each row is one selectable eight-member variant. Numeric duration and RM-speed t
 
 | Role or runtime set | File-ready / clip-ready | Set-ready / rig-use | Runtime / acceptance boundary |
 |---|---|---|---|
-| Individual motions | Current evaluator reads and measures exact files | Declaration-clean subset only | Engine and visual behavior not evaluated |
-| Directional gait hypotheses | Timing, speed, skeleton, and current errors recorded | 0 contract-clean members in each named gait set | Full blend, phase, root-owner, and contact gates open |
-| Transition/action hypotheses | Exact files measured | One-shot/loop intent requires authority | State graph, contact, and artistic gates open |
+| Individual motions | Current evaluator reads and measures exact files | Declaration-clean subset only | Named Unity source imports/samples ran; visual behavior not evaluated |
+| Directional gait hypotheses | Timing, speed, skeleton, and current errors recorded | 0 contract-clean members in each named gait set | Named source samples and mixers only; full blend, phase, controller, and contact gates open |
+| Transition/action hypotheses | Exact files measured | One-shot/loop intent requires authority | Named source Playables schedules ran; authored state graph, contact, and artistic gates open |
 
 ### Validation-profile status
 
 | Validation profile | Selection | Result / next evidence |
 |---|---|---|
 | Marketplace intake | `selected` — `vendor-intended` | Current source inventory and exhaustive mechanical intake complete. |
-| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Named gait hypotheses measured; contracts and full blend review remain open. |
-| Root-motion controller | `selected` — `observed-pack-capability` | RM variants measured; controller/collision ownership not evaluated. |
-| State-machine transitions | `selected` — `observed-pack-capability` | Transition candidates identified; engine playback not evaluated. |
+| Blended locomotion | `selected` — `evaluator-selected-generic-scenario` | Named gait hypotheses measured; selected source mixer schedules ran in Unity, while contracts and full blend review remain open. |
+| Root-motion controller | `selected` — `observed-pack-capability` | RM variants measured; named Unity source root samples ran where applicable, while controller/collision ownership remains untested. |
+| State-machine transitions | `selected` — `observed-pack-capability` | Transition candidates identified; named source Playables schedules ran, but authored state transitions and interruptions were not tested. |
 | Layered upper body/weapons | `not-selected` | No mask/socket/IK authority or test. |
 | Traversal/environment | `not-selected` | No target scene or traversal contacts. |
 | Contact actions/interactions | `selected` — `observed-pack-capability` | Combat files present; weapon/body contacts not evaluated. |
@@ -206,7 +206,7 @@ Fresh remediation ledger SHA-256 `0f15f4171bf799b5e4bef91251f94dbfaaed8d6f4341a5
 
 | Runtime | Version | Procedure | Observed result | Remaining gate |
 |---|---|---|---|---|
-| Unity | not evaluated | No current pack procedure executed in this report pair | `not-evaluated` | Import, sample, full blend, root, contact, and visual review |
+| Unity | 6000.5.8f1 | Fresh named Humanoid source import and standalone sampling: IdleCombatA2HandMelee, WalkForwardCombat2HandMelee, WalkForwardCombat2HandMelee_RM; named Playables mixers: basic-idle-to-twohand-idle, sword-shield-idle-to-twohand-idle, basic-walk-ip-to-twohand-walk-ip. See [collection source/controller probe](protofactor-ultimate-animation-collection-evidence.md#rig-masking-and-compatibility-evidence). | Bounded source/controller feasibility for listed sources only; the collection’s 26/26 is a shared aggregate, not this pack’s result | Rendered motion, contact, deformation, full blend, retargeting, authored AnimatorController, player build and performance remain untested |
 | Unreal Engine | not evaluated | No current procedure executed | `not-evaluated` | Import, retarget, root, blend, and visual review |
 | Godot | not evaluated | No current procedure executed | `not-evaluated` | Convert/import, graph, root, contact, and visual review |
 | Bevy | not evaluated | No current procedure executed | `not-evaluated` | Convert/load, graph, root, performance, and visual review |

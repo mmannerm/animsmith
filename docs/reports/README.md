@@ -8,6 +8,10 @@ whether that work belongs in your game, in AnimSmith, or with the artist.
 Each report distinguishes measured source problems from behavior that still
 needs testing on your character.
 
+**Choosing between Protofactor, Mixamo and custom authoring?** Start with the
+[feature comparison and first-pilot guide](../commercial-pack-evaluations.md).
+It explains what the evaluated content covers and which work remains unknown.
+
 ## Browse by collection
 
 Start with a collection to compare packs, or open a pack directly for its

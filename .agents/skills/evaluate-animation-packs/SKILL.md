@@ -165,6 +165,16 @@ missing. Treat earlier generated outputs as historical evidence. A new
 fail-closed refusal is a current result, but it is not a successful remediation
 and must not inherit the earlier version's post-transform claims.
 
+An editorial refresh from retained evidence is a different task. When the
+evaluator, source, configs, and retained results are unchanged, identify the
+exact report/appendix pair and evidence record being revised; preserve their
+measurements, counts, digests, evaluator identity, and provenance. Clarify
+scope, links, wording, and decisions from that evidence without implying a new
+run, new playback, or fresh acceptance. If a needed conclusion depends on
+missing or inconsistent evidence, state the boundary and the next test. A
+new evaluator, changed source/config/contract, or new mechanical conclusion
+requires the applicable new evaluation and preflight above.
+
 Write every ordinary report and appendix section as the current state against
 one explicitly declared current AnimSmith evaluator. The audience is a game
 developer, not the tool's implementation team: do not scatter prior evaluator
@@ -223,6 +233,12 @@ Build a coverage matrix before testing:
   must confirm it. Never reconstruct lost historical membership from an older
   report, prose, filenames, or superseded output; declare and test any new
   hypothesis as new;
+- surface non-gait groups that answer the stated gameplay brief, such as
+  start/stop, dodge, attack/combo, recovery, and interaction chains. Link exact
+  members when retained evidence has them; otherwise show the group/count and
+  the missing member binding as a concrete next inventory task. Keep a filename
+  candidate distinct from a tested runtime relationship. Do not bury a
+  meaningful group solely because the primary pilot is gait;
 - run inexpensive batch-safe checks on every AnimSmith-readable file when
   practical;
 - select representative clips for visual and engine tests by declared use,
@@ -498,6 +514,13 @@ tested. A headless mask graph that evaluates without exceptions proves graph
 execution only. Keep kicks, lunges, displacement-bearing actions, and other
 pelvis-driven motions full-body unless stronger evidence supports layering.
 
+Choose a cross-pack pilot to answer one gameplay question. Prefer comparable
+gait, speed, character, and state endpoints so a handoff isolates the pack
+boundary; if a chosen pair changes more than one of these, name the extra
+variable and what it prevents concluding. Record visible pose pop, foot slide,
+grip/contact, deformation, and style on the target character. An illustrative
+pair without playback remains a proposed experiment, not compatibility evidence.
+
 Explicitly analyze locomotion blends and sync, transitions, root-motion policy,
 upper/lower-body masks, additive and aim use, attachment and IK expectations,
 contact quality, and style mismatch when relevant to the target game. Do not
@@ -548,6 +571,12 @@ judgment, contact cleanup, deformation-aware retargeting, style matching,
 missing transitions, additive-base creation, or recovery of information that
 the file does not contain.
 
+For a measured endpoint, seam, or short keyed channel with unknown intent,
+first inspect the intended hold/transition and target playback. Retain and
+document an intentional hold; request a bounded source correction only when
+intent or observed behavior establishes the defect. Keep the measured warning
+even when source editing is conditional.
+
 Assign one owner using the canonical
 [remediation ownership taxonomy](references/assessment-taxonomy.md).
 Keep source defects, project-policy choices, and missing intent distinct.
@@ -589,6 +618,18 @@ Write the primary report in this reader order:
 5. an actionable issue register with affected sets/clips and residual status;
 6. engine status, best/poor fit, and remaining evidence boundaries.
 
+When the user asks which pack, authoring route, or combination to pursue,
+provide one short shared decision surface across the evaluated alternatives
+and stated game requirements. Put it where the reader starts, with links to
+constituent evidence. Distinguish a selected tested candidate, a named but
+untested candidate, content not yet classified, an unevaluated constituent,
+and an observed gap. Compare library-only, custom authoring, and a library
+plus custom route only as far as evidence supports; name the first controlled
+pilot and the concrete unknowns that could change the choice. Do not rank
+vendor quality or labor from unlike lint totals or scoped verdict labels.
+Record comparable effort only after like-for-like target-character trials;
+until then name the work drivers and leave effort unknown.
+
 Write to the developer or artist making a decision: name the usable set, the
 main blocker, who can address it, and the check needed before use. Use plain
 instructions in the integration recipe, without internal `key=value` tags.
@@ -597,6 +638,16 @@ do not make readers decode promotion, semantic-authority, or evaluator-policy
 language. Put audit machinery and long measurement derivations in the appendix.
 Keep uncertainty specific to the affected use rather than repeating a general
 disclaimer in every paragraph.
+
+For each selected set, show the quickest supported route through unchanged
+source inspection, project configuration, a measured AnimSmith candidate, or
+confirmed source work, followed by the residual gate and status under the
+existing severity taxonomy. Leave severity unresolved when acceptance evidence
+is missing. Distinguish diagnostic playback, which can expose a problem, from
+admission to a proposed controller, which needs its stated acceptance checks.
+Put current action and residual result before speculative future tooling. Link
+detailed machinery instead of repeating it or using internal contract language
+in reader prose.
 
 Use report format 3 for editorial reports. Exact members, coordinates, measured
 timing/speeds and runtime contracts live in the appendix's `Exact runtime
@@ -663,6 +714,20 @@ For a partial collection rollup, the pair must additionally make obvious:
 - whether the recommended integration uses a full-body state handoff, a mask,
   or both, and the acceptance level actually reached;
 - which gameplay gaps one constituent fills and which remain when combined.
+
+Read the rendered report, appendix, and entry page as a developer with the
+stated game brief, independently of the authoring notes. Check that the first
+pilot, remaining workload, and next acceptance test are visible without mining
+diagnostic tables. Trace each highlighted content claim and runtime group to
+its retained member evidence, or an explicit missing-member boundary.
+Cross-check scope and status in the primary coverage, appendix inventory,
+engine procedures, readiness rows,
+and any shared comparison: a tested subset must stay visible, while untested
+behavior must stay unaccepted. For compatibility claims, match each named pair
+to the actual tested members; separate tests against a common third pack do
+not establish a handoff between the other two. Resolve contradictions and broken links before
+delivery. This reading complements the mechanical validator; it does not
+create new evidence.
 
 Run:
 

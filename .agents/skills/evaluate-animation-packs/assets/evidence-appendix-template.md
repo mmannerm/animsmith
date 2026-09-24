@@ -77,6 +77,12 @@ Use the exact same set name as the primary report for every promoted set; the
 appendix may also retain additional candidate sets.
 The primary report contains the adoption summary; preserve detailed members
 and measurements below so they remain reachable without widening that summary.
+For a requested gameplay capability, include material non-gait hypotheses and
+chains already present in retained evidence, even when their validation status
+is only a declared-contract pass or filename candidate. Link exact members
+when retained; if only a group/count survives, state that member binding is
+missing and needs inventory before a recipe. Do not upgrade these to accepted
+playback.
 
 If no runtime sets exist, omit the table and write exactly: `No runtime sets
 were identified.` This is valid only when current structured evidence contains
@@ -223,6 +229,12 @@ output was actually produced. This section describes only the current result.
 | Runtime | Version | Procedure | Observed result | Remaining gate |
 |---|---|---|---|---|
 | {{ENGINE}} | {{VERSION}} | {{REPRODUCIBLE_STEPS}} | {{RESULT}} | {{GAP}} |
+
+Scope each result to the exact source subset and procedure. If import or
+sampling ran but controller, visual, retarget, or build checks did not, state
+both facts in the same row. Reconcile this table with the primary engine
+status, readiness, and coverage entries; do not use an absolute `not evaluated`
+for a runtime with retained current procedure evidence.
 
 ## Rig, masking, and compatibility evidence
 
