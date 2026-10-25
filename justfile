@@ -231,7 +231,7 @@ gates: require-cargo-deny require-typos
     # Last, so it judges the artifacts this whole run leaves behind.
     just release-cli
 
-# See .agent-instructions/shared.md for the required env var.
+# See DEVELOPMENT.md#golden-tests for the required env var.
 # Env-gated reference tests against licensed assets plus CI-visible FBX coverage.
 golden:
     cargo test -p animsmith-gltf --test golden -- --nocapture

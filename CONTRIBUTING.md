@@ -150,9 +150,10 @@ parent merges, retarget the PR to `main`, rebase onto current `origin/main`, and
 repeat this gate.
 
 Substantial agent-authored changes also require one reciprocal cross-model CLI
-audit: Codex invokes Claude, and Claude invokes Codex. The versioned
-[audit workflow](.claude/skills/audit-task/SKILL.md) owns reviewer selection,
-model/effort, session reuse, attribution, and exact-head evidence rules.
+audit: Codex invokes Claude, and Claude invokes Codex. The maintainer's
+`audit-task` agent skill owns reviewer selection, model/effort, session reuse,
+attribution, and exact-head evidence rules; this repository's audit inputs
+are under "Audit" in [AGENTS.md](AGENTS.md).
 
 The audit should check:
 

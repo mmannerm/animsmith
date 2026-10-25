@@ -2,7 +2,7 @@
 
 Coverage-guided fuzzing for the loader entry points that ingest untrusted
 files. This is the executable check on **invariant-1** (see
-`.claude/skills/audit-task/code-invariants.md`): `lint` / `inspect` /
+`.agents/audit-invariants.md`): `lint` / `inspect` /
 `measure` / `report` / `fix` run on arbitrary downloaded files, so a
 malformed input must produce a `LoadError` — never a panic, never an
 unbounded (length-field-driven) allocation.
