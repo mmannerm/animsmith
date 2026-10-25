@@ -85,7 +85,8 @@ Pull requests also receive one separate `checks / animation-pack` result from
 the reusable checks workflow. It runs the same animation-pack validator suite
 once on the exact pull-request head, equivalent to the local
 `just animation-pack-skill` recipe, covering the versioned skill validators and
-every maintained report/appendix pair. The check uses only repository-safe fixtures; licensed animation packs remain
+every maintained report/appendix pair. The check uses only repository-safe
+fixtures; licensed animation packs remain
 outside the repository and CI.
 
 ## no-default-features

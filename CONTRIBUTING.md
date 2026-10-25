@@ -26,7 +26,7 @@ Use this lifecycle for non-trivial changes:
 5. Open a draft PR with a description of the behavior change, the chosen
    design, verification performed, and known out-of-scope work.
 6. Address review findings, and review substantial changes as described
-   under [Audit Expectations](#audit-expectations).
+   under [Review Expectations](#review-expectations).
 7. Leave the PR for a maintainer merge decision.
 
 Trivial documentation-only changes can use a shorter path, but they
@@ -130,13 +130,12 @@ owns contributor process. [DEVELOPMENT.md](DEVELOPMENT.md) owns local
 setup and verification commands. Agent files may add agent-specific
 deltas, but should link back here for the shared process.
 
-## Audit Expectations
+## Review Expectations
 
 Substantial changes need a review before you ask for a merge: new checks,
 subcommands, measurement semantics, output contracts, dependency additions,
 write/fix path changes, or broad docs restructures. Use whatever review
-process or tools you like. Rebase onto current `main` first, so the review
-covers the final head.
+process or tools you like.
 
 The review should check:
 
@@ -168,6 +167,7 @@ maintainer chooses another milestone.
 
 ## Merge Policy
 
-Maintainers merge PRs after review and verification are complete. animsmith uses merge commits so every branch commit lands
+Maintainers merge PRs after review and verification are complete.
+animsmith uses merge commits so every branch commit lands
 on `main` with its own conventional subject; do not rely on squash merge
 to repair commit history after review.
