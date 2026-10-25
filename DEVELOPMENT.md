@@ -76,10 +76,6 @@ denied, no-default-features CLI tests and builds, the retained release CLI
 proof, package readiness checks, and the animation-pack skill's behavioral and
 published-report validation.
 
-This author-side pre-push gate is distinct from the later PR audit. Once the
-same commit is pushed, audit agents reuse the captured local result and the PR's
-required checks; they do not rerun `just gates` independently.
-
 The corresponding CI workflows also validate the same expectations on a
 clean checkout. Coverage and the security scanners (Scorecard, CodeQL)
 run only in CI and are informational, so they are not part of the local
@@ -89,9 +85,7 @@ Pull requests also receive one separate `checks / animation-pack` result from
 the reusable checks workflow. It runs the same animation-pack validator suite
 once on the exact pull-request head, equivalent to the local
 `just animation-pack-skill` recipe, covering the versioned skill validators and
-every maintained report/appendix pair. Audit agents should retain and reuse
-that exact-head result instead of rerunning the suite independently. The
-check uses only repository-safe fixtures; licensed animation packs remain
+every maintained report/appendix pair. The check uses only repository-safe fixtures; licensed animation packs remain
 outside the repository and CI.
 
 ## no-default-features

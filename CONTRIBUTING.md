@@ -25,8 +25,8 @@ Use this lifecycle for non-trivial changes:
 4. Run the required local gates from [DEVELOPMENT.md](DEVELOPMENT.md).
 5. Open a draft PR with a description of the behavior change, the chosen
    design, verification performed, and known out-of-scope work.
-6. Address review findings and run the project audit checklist for
-   substantial changes.
+6. Address review findings, and review substantial changes as described
+   under [Audit Expectations](#audit-expectations).
 7. Leave the PR for a maintainer merge decision.
 
 Trivial documentation-only changes can use a shorter path, but they
@@ -132,30 +132,13 @@ deltas, but should link back here for the shared process.
 
 ## Audit Expectations
 
-Run the project audit checklist before asking for a merge on substantial
-changes: new checks, subcommands, measurement semantics, output
-contracts, dependency additions, write/fix path changes, or broad docs
-restructures.
+Substantial changes need a review before you ask for a merge: new checks,
+subcommands, measurement semantics, output contracts, dependency additions,
+write/fix path changes, or broad docs restructures. Use whatever review
+process or tools you like. Rebase onto current `main` first, so the review
+covers the final head.
 
-### Current-base gate
-
-Immediately before final audit and readiness, fetch and record the review base:
-`origin/main` for a normal PR, or the declared parent branch for an explicitly
-approved stack while its parent is open. Record the candidate HEAD and fetched
-review-base SHA, then prove that base is an ancestor of HEAD. If the base has
-advanced, rebase onto it or otherwise integrate it, then repeat the final diff
-review, local gates, exact-head CI, and audits. Any change to HEAD or the
-recorded review-base SHA invalidates that readiness evidence. After a stacked
-parent merges, retarget the PR to `main`, rebase onto current `origin/main`, and
-repeat this gate.
-
-Substantial agent-authored changes also require one reciprocal cross-model CLI
-audit: Codex invokes Claude, and Claude invokes Codex. The maintainer's
-`audit-task` agent skill owns reviewer selection, model/effort, session reuse,
-attribution, and exact-head evidence rules; this repository's audit inputs
-are under "Audit" in [AGENTS.md](AGENTS.md).
-
-The audit should check:
+The review should check:
 
 - Simplicity: the design is scoped to the issue and avoids needless
   abstractions.
@@ -165,7 +148,7 @@ The audit should check:
   [DESIGN.md](DESIGN.md).
 - Documentation: README files, docs, and PR text stay fresh.
 
-Follow-up work found during audit should become GitHub issues rather
+Follow-up work found during review should become GitHub issues rather
 than TODO comments. Search existing issues first, then file a focused
 issue with the right `type:*` and `priority:*` labels.
 
@@ -185,7 +168,6 @@ maintainer chooses another milestone.
 
 ## Merge Policy
 
-Maintainers merge PRs after review, verification, and any required audit
-are complete. animsmith uses merge commits so every branch commit lands
+Maintainers merge PRs after review and verification are complete. animsmith uses merge commits so every branch commit lands
 on `main` with its own conventional subject; do not rely on squash merge
 to repair commit history after review.
