@@ -246,7 +246,9 @@ and proved once before the artifact/evidence pair can be published.
 `complete_tracks = true` fills absent TRS channels from the base rest pose for
 the union of selected skin joints and nodes targeted by any emitted clip.
 Per-clip `strip_bones` entries stay excluded. LINEAR/STEP rotation keys are
-unit-normalized and made hemisphere-consistent. CUBICSPLINE value keys must be
+unit-normalized in `f64` and made hemisphere-consistent. Every finite nonzero
+`f32` magnitude is supported, including subnormal keys; exactly zero and
+nonfinite keys are refused. CUBICSPLINE value keys must be
 finite, nonzero, and within the existing `quat-norm` tolerance of `1e-3` from
 unit length (checked in `f64`). Accepted cubic values and tangents retain every
 component exactly, including signs and exporter rounding: normalizing values

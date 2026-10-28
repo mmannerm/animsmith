@@ -8,6 +8,8 @@
 //! - `quat-norm`: normalize non-unit quaternion keys. Scaling a finite
 //!   non-zero quaternion back to unit length preserves the represented
 //!   rotation and avoids engine-dependent renormalization.
+//!   Magnitude and normalization use f64 to handle the full finite nonzero
+//!   f32 range, including subnormals; exactly zero keys remain skipped.
 //! - `quat-flip`: adjacent rotation keys with `dot < 0` make engines
 //!   without neighborhood correction slerp the long way around. Negating
 //!   a quaternion leaves the rotation it represents unchanged, so
@@ -25,11 +27,12 @@
 //! accessors and quantized (normalized-int) rotations are skipped.
 
 use crate::{FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path};
+use animsmith_core::QUAT_NORM_TOLERANCE;
+use glam::DQuat;
 use std::ops::Range;
 use std::path::Path;
 
 const ROTATION_ELEMENT_BYTES: usize = 16;
-const QUAT_NORM_TOLERANCE: f32 = 1e-3;
 
 /// One track's repair summary.
 #[derive(Debug, Clone)]
@@ -183,8 +186,8 @@ impl FixSession {
                     if !q.iter().all(|v| v.is_finite()) {
                         return false;
                     }
-                    let len = q.iter().map(|v| v * v).sum::<f32>().sqrt();
-                    len <= f32::EPSILON || (len - 1.0).abs() > QUAT_NORM_TOLERANCE
+                    let len = DQuat::from_array(q.map(f64::from)).length();
+                    (len - 1.0).abs() > f64::from(QUAT_NORM_TOLERANCE)
                 });
                 return (
                     0,
@@ -203,13 +206,21 @@ impl FixSession {
                     skipped = Some("non-finite rotation key");
                     continue;
                 }
-                let len = q.iter().map(|v| v * v).sum::<f32>().sqrt();
-                if len <= f32::EPSILON {
+                // Widen before squaring so every finite nonzero f32 key,
+                // including subnormals, has a finite positive magnitude.
+                let wide = DQuat::from_array(q.map(f64::from));
+                let len = wide.length();
+                if len == 0.0 {
                     skipped = Some("zero-length rotation key");
                     continue;
                 }
-                if (len - 1.0).abs() > QUAT_NORM_TOLERANCE {
-                    write_rotation(buffer, layout, value_element, q.map(|v| v / len));
+                if (len - 1.0).abs() > f64::from(QUAT_NORM_TOLERANCE) {
+                    write_rotation(
+                        buffer,
+                        layout,
+                        value_element,
+                        wide.normalize().as_quat().to_array(),
+                    );
                     fixed += 1;
                 }
             }

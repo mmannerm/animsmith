@@ -36,7 +36,7 @@ fn non_unit_doc() -> Document {
 }
 
 /// Rotation keys bracketing the fix's `QUAT_NORM_TOLERANCE` (1e-3 on
-/// `|len - 1|`, private to `fix.rs`) tightly: key 1 is `0.99e-3` off
+/// `|len - 1|`, shared with core) tightly: key 1 is `0.99e-3` off
 /// unit (just inside) and key 3 is `1.01e-3` off (just outside). The
 /// `1e-5` margin on each side pins the threshold to `1e-3 ± 1e-5`, so a
 /// materially wrong tolerance (e.g. `1.05e-3`) or a flipped comparison
@@ -192,6 +192,76 @@ fn fix_quat_norm_repairs_keys_losslessly_and_idempotently() {
         std::fs::read(&fixed).unwrap(),
         std::fs::read(&again).unwrap()
     );
+}
+
+#[test]
+fn fix_quat_norm_preserves_orientation_across_finite_f32_magnitudes() {
+    let dir = unique_temp_dir("quat-norm-finite-range");
+    let dirty = dir.path().join("dirty.glb");
+    let fixed = dir.path().join("fixed.glb");
+    let again = dir.path().join("again.glb");
+    // Squaring the largest finite component overflows f32; squaring the
+    // smallest positive subnormal underflows it. Both describe a 90-degree
+    // turn about Z, independently of their magnitude.
+    let values = [f32::MAX, f32::from_bits(1)]
+        .map(|magnitude| Quat::from_xyzw(0.0, 0.0, magnitude, magnitude));
+    animsmith_gltf::write::write(&doc_with_quats(values.to_vec()), &dirty).unwrap();
+    let before = std::fs::read(&dirty).unwrap();
+    let gltf = gltf::Gltf::from_slice(&before).unwrap();
+    let accessor = gltf
+        .animations()
+        .next()
+        .unwrap()
+        .samplers()
+        .next()
+        .unwrap()
+        .output();
+    let view = accessor.view().unwrap();
+    let bin_start = 28 + u32::from_le_bytes(before[12..16].try_into().unwrap()) as usize;
+    let rotation = bin_start + view.offset() + accessor.offset();
+    assert_eq!(accessor.count(), 2);
+    assert_eq!(view.stride().unwrap_or(16), 16);
+    let source_values = (0..2)
+        .map(|key| {
+            std::array::from_fn::<_, 4, _>(|component| {
+                let at = rotation + key * 16 + component * 4;
+                f32::from_le_bytes(before[at..at + 4].try_into().unwrap())
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(source_values, values.map(|value| value.to_array()));
+
+    let dry_run = FixSession::inspect(&dirty, Repair::QuatNorm).unwrap();
+    assert_eq!(dry_run.total_fixed(), 2);
+    assert!(dry_run.skipped.is_empty());
+    assert_eq!(std::fs::read(&dirty).unwrap(), before);
+    let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).unwrap();
+    assert_eq!(report.total_fixed(), 2);
+    assert!(report.skipped.is_empty());
+    let after = std::fs::read(&fixed).unwrap();
+    assert_eq!(before.len(), after.len());
+    assert_eq!(&before[..rotation], &after[..rotation]);
+    assert_eq!(&before[rotation + 32..], &after[rotation + 32..]);
+    for key in 0..2 {
+        let got: [f32; 4] = std::array::from_fn(|component| {
+            let at = rotation + key * 16 + component * 4;
+            f32::from_le_bytes(after[at..at + 4].try_into().unwrap())
+        });
+        assert_eq!(&got[..2], &[0.0, 0.0]);
+        for component in &got[2..] {
+            assert!((f64::from(*component) - std::f64::consts::FRAC_1_SQRT_2).abs() < 3e-8);
+        }
+        let norm_squared = got.map(f64::from).iter().map(|v| v * v).sum::<f64>();
+        assert!((norm_squared - 1.0).abs() < 1e-7);
+    }
+    assert_eq!(std::fs::read(&dirty).unwrap(), before);
+    assert_eq!(
+        FixSession::apply_to_path(&fixed, &again, Repair::QuatNorm)
+            .unwrap()
+            .total_fixed(),
+        0
+    );
+    assert_eq!(std::fs::read(again).unwrap(), after);
 }
 
 #[test]
