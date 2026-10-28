@@ -413,6 +413,17 @@ fn built_in_check_sections(markdown: &str) -> Vec<MarkdownSection> {
     sections
 }
 
+#[test]
+fn empty_wikilink_labels_do_not_duplicate_following_check_evidence() {
+    // RUSTSEC-2026-0414: this real docs reader enables wikilinks through
+    // Options::all(). Six links exercise the bug without large parser output.
+    let markdown = format!("### fixture\n\n{}sentinel", "[[a|]] ".repeat(6));
+    let sections = built_in_check_sections(&markdown);
+    assert_eq!(sections.len(), 1);
+    assert_eq!(sections[0].heading, "fixture");
+    assert_eq!(sections[0].body.matches("sentinel").count(), 1);
+}
+
 fn remove_check_section_heading(markdown: &str, target: &str) -> String {
     let mut heading: Option<(String, usize)> = None;
     for (event, range) in Parser::new_ext(markdown, Options::all()).into_offset_iter() {
