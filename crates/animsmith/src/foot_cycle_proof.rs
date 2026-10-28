@@ -48,6 +48,7 @@ pub(crate) enum FootCycleProofKind {
     ArtifactClosure,
     MetricWork,
     MetricUnavailable,
+    SamplingAllocation,
     ContactDetection,
     ContactTransform,
     Duration,
@@ -67,6 +68,16 @@ pub(crate) struct FootCycleProofError {
 }
 
 impl FootCycleProofError {
+    pub(crate) fn from_sampling(error: animsmith_core::SamplingError) -> Self {
+        let kind = match error {
+            animsmith_core::SamplingError::AllocationFailed { .. } => {
+                FootCycleProofKind::SamplingAllocation
+            }
+            _ => FootCycleProofKind::MetricUnavailable,
+        };
+        Self::new(kind)
+    }
+
     const fn new(kind: FootCycleProofKind) -> Self {
         Self { kind, member: None }
     }
@@ -84,7 +95,6 @@ impl FootCycleProofError {
         self
     }
 
-    #[cfg(test)]
     pub(crate) const fn kind(&self) -> FootCycleProofKind {
         self.kind
     }
@@ -296,7 +306,7 @@ impl FootCycleProofRuntime for ProductionFootCycleProofRuntime {
     ) -> Result<Rc<PoseGrid>, FootCycleProofError> {
         MetricGrids::new(document)
             .grid(clip_index)
-            .map_err(|_| FootCycleProofError::new(FootCycleProofKind::MetricUnavailable))?
+            .map_err(FootCycleProofError::from_sampling)?
             .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricUnavailable))
     }
 }

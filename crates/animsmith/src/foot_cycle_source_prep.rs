@@ -135,9 +135,7 @@ impl FootCyclePreparationRuntime for ProductionFootCyclePreparationRuntime {
     ) -> Result<Rc<PoseGrid>, FootCycleSourcePrepError> {
         MetricGrids::new(loaded.document())
             .grid(clip_index)
-            .map_err(|_| {
-                FootCycleSourcePrepError::new(FootCycleSourcePrepKind::RootEvidenceUnavailable)
-            })?
+            .map_err(FootCycleSourcePrepError::from_sampling)?
             .ok_or_else(|| {
                 FootCycleSourcePrepError::new(FootCycleSourcePrepKind::RootEvidenceUnavailable)
             })
@@ -183,6 +181,7 @@ pub(crate) enum FootCycleSourcePrepKind {
     ContactBudget,
     DurationMismatch,
     RootEvidenceUnavailable,
+    SamplingAllocation,
     PlanRefused,
     PlanBindingMismatch,
     ClipTransformRefused,
@@ -231,6 +230,7 @@ impl FootCycleSourcePrepKind {
             Self::ContactBudget => "contact-budget",
             Self::DurationMismatch => "duration-mismatch",
             Self::RootEvidenceUnavailable => "root-evidence-unavailable",
+            Self::SamplingAllocation => "sampling-allocation",
             Self::PlanRefused => "plan-refused",
             Self::PlanBindingMismatch => "plan-binding-mismatch",
             Self::ClipTransformRefused => "clip-transform-refused",
@@ -241,6 +241,16 @@ impl FootCycleSourcePrepKind {
 }
 
 impl FootCycleSourcePrepError {
+    pub(crate) fn from_sampling(error: animsmith_core::SamplingError) -> Self {
+        let kind = match error {
+            animsmith_core::SamplingError::AllocationFailed { .. } => {
+                FootCycleSourcePrepKind::SamplingAllocation
+            }
+            _ => FootCycleSourcePrepKind::RootEvidenceUnavailable,
+        };
+        Self::new(kind)
+    }
+
     const fn new(kind: FootCycleSourcePrepKind) -> Self {
         Self {
             kind,

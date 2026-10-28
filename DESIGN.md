@@ -688,9 +688,10 @@ findings and charts. This keeps source-only diagnostics visible without a second
 engine evaluator or historical-schema dispatcher in the report crate.
 
 The explicit comparison spelling is a separate presentation producer: it
-preflights named/indexed skeleton correspondence, selected metric-grid work,
-and input text before either side's checks run; writes atomically only to an
-output distinct from both inputs; and uses one shared coordinate/path scale.
+preflights named/indexed skeleton correspondence, selected embedded-pose output
+size, and input text before analysis. Shared sampling admission runs during
+that analysis, before each grid allocation. The report writes atomically only
+to an output distinct from both inputs and uses one shared coordinate/path scale.
 Both judged poses are drawn through that one camera: side by side by default,
 and at the reader's option overlaid in a single pane with the after skeleton
 dashed over the before one at the same two selected frames. The overlay is a

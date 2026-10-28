@@ -88,7 +88,8 @@ pub enum EngineImportAdviceRefusalReasonV1 {
     ClipIdentityUnavailable,
     /// Raw rows, normalized clips, measurements, or settings disagreed.
     ClipIdentityMismatch,
-    /// A required normalized measurement row was missing or malformed.
+    /// A required normalized measurement row was missing, malformed, or refused
+    /// by the fixed sampling admission limits.
     MeasurementUnavailable,
 }
 
@@ -447,6 +448,9 @@ pub struct EngineImportAdviceV1 {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum EngineImportAdviceError {
+    /// The environment could not allocate an admitted measurement grid.
+    #[error("{0}")]
+    SamplingAllocation(#[source] animsmith_core::SamplingError),
     /// The selected profile is outside Unity/Unreal/Godot V1 advice.
     #[error("generate import-advice requires an exact Unity, Unreal, or Godot V1 profile")]
     UnsupportedProfile,
@@ -587,7 +591,8 @@ impl EngineImportAdviceV1 {
     ///
     /// Returns [`EngineImportAdviceError`] for an unsupported profile,
     /// invalid same-load provenance, malformed materialized Unity settings,
-    /// or a contract invariant.
+    /// an environment allocation failure, or a contract invariant. Sampling
+    /// admission-limit refusals instead return typed refused advice.
     pub fn from_source(
         tool: ToolInfo,
         source: &LoadedSource,
@@ -621,8 +626,15 @@ impl EngineImportAdviceV1 {
                 let document = unity_document(profile, generic)?;
                 let roles = resolve_configured_roles(&source.document().skeleton, &config.rig);
                 let grids = MetricGrids::new(source.document());
-                let clips = animsmith_core::measure::measure_document(&grids, &roles, config)
-                    .map_err(|_| EngineImportAdviceRefusalReasonV1::MeasurementUnavailable)
+                let measurements =
+                    match animsmith_core::measure::measure_document(&grids, &roles, config) {
+                        Ok(measurements) => Ok(measurements),
+                        Err(error @ animsmith_core::SamplingError::AllocationFailed { .. }) => {
+                            return Err(EngineImportAdviceError::SamplingAllocation(error));
+                        }
+                        Err(_) => Err(EngineImportAdviceRefusalReasonV1::MeasurementUnavailable),
+                    };
+                let clips = measurements
                     .and_then(|measurements| build_clip_evidence(source, &measurements, config));
                 match clips {
                     Ok(clips) => match unity_clip_advice(profile, source.document(), &clips) {

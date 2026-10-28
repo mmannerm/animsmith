@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Format;
 use crate::foot_cycle_proof::{
-    FootCycleMemberProofFactsV1, FootCycleProofError, ProvedFootCycleCollectionV1,
-    serialize_and_prove_foot_cycle_v1,
+    FootCycleMemberProofFactsV1, FootCycleProofError, FootCycleProofKind,
+    ProvedFootCycleCollectionV1, serialize_and_prove_foot_cycle_v1,
 };
 use crate::foot_cycle_source_prep::{
     FootCycleSourcePrepError, FootCycleSourcePrepKind, PreparedFootCycleCollectionV1,
@@ -369,6 +369,7 @@ fn classify_preparation(error: FootCycleSourcePrepError) -> ProducerFailure {
         | K::UnsafePathSet
         | K::SourceUnavailable
         | K::SourceLoadOperator
+        | K::SamplingAllocation
         | K::SourceDigestMismatch
         | K::TakeMismatch
         | K::ContactRead
@@ -405,6 +406,9 @@ fn classify_preparation(error: FootCycleSourcePrepError) -> ProducerFailure {
 }
 
 fn classify_proof(error: FootCycleProofError) -> ProducerFailure {
+    if error.kind() == FootCycleProofKind::SamplingAllocation {
+        return ProducerFailure::Operator(error.to_string());
+    }
     ProducerFailure::Refusal(Rejection::new(
         Stage::Proof,
         Kind::ProofFailed,
@@ -1103,6 +1107,23 @@ mod tests {
                     assert_eq!(json["detail"], expected);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn sampling_allocation_is_an_operator_error_during_preparation_and_proof() {
+        let allocation = || animsmith_core::SamplingError::AllocationFailed {
+            buffer: "model poses",
+            elements: 3,
+        };
+        for failure in [
+            classify_preparation(FootCycleSourcePrepError::from_sampling(allocation())),
+            classify_proof(FootCycleProofError::from_sampling(allocation())),
+        ] {
+            let ProducerFailure::Operator(detail) = failure else {
+                panic!("environment allocation failure must not describe an asset refusal");
+            };
+            assert!(detail.to_ascii_lowercase().contains("sampling"));
         }
     }
 

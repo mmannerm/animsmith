@@ -201,3 +201,36 @@ fn an_admitted_grid_with_unaffordable_buffers_is_an_operator_error() {
     assert!(result.stdout.is_empty());
     assert!(String::from_utf8_lossy(&result.stderr).contains("sampling could not allocate"));
 }
+
+#[test]
+fn contact_producer_allocation_failure_preserves_prior_output_and_exits_two() {
+    let dir = tempfile::tempdir().unwrap();
+    // 999936 pose cells fit contact's stricter million-cell cap, but the
+    // three arrays cannot fit this child's 80 MiB address space.
+    let input = fixture(dir.path(), "contact-allocation", 512, 1953, 1);
+    let output = dir.path().join("contact.json");
+    std::fs::write(&output, b"previous contact").unwrap();
+    let result = run_with_memory(
+        &[
+            "generate",
+            "contact-fragment",
+            input.to_str().unwrap(),
+            "--clip",
+            "clip_0",
+            "--output",
+            output.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        "81920",
+    );
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("sampling could not allocate"));
+    assert_eq!(std::fs::read(output).unwrap(), b"previous contact");
+}

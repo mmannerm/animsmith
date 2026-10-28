@@ -409,7 +409,8 @@ pub enum ReportError {
     },
 }
 
-/// Validate explicit correspondence and all sampling work before evaluating checks.
+/// Validate explicit correspondence and report output bounds before analysis.
+/// Shared sampling admission occurs when analysis requests each metric grid.
 ///
 /// This boundary intentionally does not ask [`MetricGrids`] for either grid.
 /// Callers use it after loading the two immutable documents and before running

@@ -20,6 +20,14 @@ fn tool() -> ToolInfo {
 }
 
 fn source(coverage_complete: bool, names: &[(&str, &str)]) -> LoadedSource {
+    source_with_document(coverage_complete, names, |_| {})
+}
+
+fn source_with_document(
+    coverage_complete: bool,
+    names: &[(&str, &str)],
+    prepare: impl FnOnce(&mut Document),
+) -> LoadedSource {
     let primary = InputIdentity::from_bytes(b"engine import advice analytic source");
     let mut facts = RawSourceFactsBuilderV1::new(SourceFormatV1::Fbx, primary);
     let mut document = Document::default();
@@ -56,6 +64,7 @@ fn source(coverage_complete: bool, names: &[(&str, &str)]) -> LoadedSource {
     }
     facts.mark_complete(SourceFactDomainV1::Constructs);
     facts.mark_complete(SourceFactDomainV1::Resources);
+    prepare(&mut document);
     facts.finish(document).unwrap()
 }
 
@@ -323,6 +332,51 @@ fn unity_root_controls_and_movement_axes_are_independently_projected() {
             expected,
             "wrong Unity control projection when only {baked_setting} is baked"
         );
+    }
+}
+
+#[test]
+fn sampling_admission_refuses_advice_without_publishing_partial_clip_suggestions() {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::{Bone, Interpolation, Property, Track, TrackValues, Transform};
+    for bones in [1, 2048] {
+        let source = source_with_document(true, &[("Take 001", "walk")], |document| {
+            document.skeleton.bones = (0..bones)
+                .map(|index| Bone {
+                    name: format!("bone_{index}"),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                })
+                .collect();
+            document.clips[0].tracks.push(Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: (0..4096).map(|index| index as f32 / 4095.0).collect(),
+                values: TrackValues::Vec3s(vec![Vec3::ZERO; 4096]),
+            });
+        });
+        let profile = resolved(unity_declaration(true), &source);
+        let report =
+            EngineImportAdviceV1::from_source(tool(), &source, &profile, &config()).unwrap();
+        if bones == 1 {
+            assert_eq!(report.state(), EngineImportAdviceStateV1::Available);
+            assert_eq!(report.clips().len(), 1);
+        } else {
+            assert_eq!(report.state(), EngineImportAdviceStateV1::Refused);
+            assert_eq!(
+                report.refusal_reason(),
+                Some(EngineImportAdviceRefusalReasonV1::MeasurementUnavailable)
+            );
+            assert!(report.clips().is_empty());
+            assert!(report.payload().unity_clips().is_empty());
+        }
+        let bytes = serde_json::to_vec(&report).unwrap();
+        EngineImportAdviceInput::read_from(bytes.as_slice())
+            .unwrap()
+            .into_report()
+            .unwrap();
     }
 }
 
