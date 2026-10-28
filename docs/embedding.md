@@ -44,7 +44,7 @@ Rustdoc owns signatures, type invariants, lifetimes, and the `Errors` and
 `Panics` contracts. In particular, start at the `animsmith-core` crate root;
 it is the compact API map rather than another copy of this guide.
 
-The compiling end-to-end example is
+The compiling engine-neutral end-to-end example is
 [`crates/animsmith/examples/embed.rs`](../crates/animsmith/examples/embed.rs):
 
 ```console
@@ -129,82 +129,121 @@ cargo run -p animsmith --example embed
    even when an earlier source definition emits no normalized primitive. A
    shared FBX geometry remains one normalized definition with multiple compact
    node instances, so that stable identity stays unique in measurements.
-2. **Resolve an optional engine profile.** Construct an
-   `animsmith_engine::EngineDeclaration` with the exact family, profile
-   revision, engine version, importer, and typed document/selector settings.
-   `resolve_static` validates every declaration without file I/O; then call
-   `StaticResolution::resolve_input` with the loader-owned `SourceFormatV1`
-   and actual clip names. The result contains the immutable facts identity and
-   fully materialized settings identity. Pass that result and the same
-   `LoadedSource` to `project_prediction_provenance_v1`; do not reopen or
-   reconstruct either input. There is no generic/fallback profile,
-   caller-supplied source-unit override, or TOML type in this API. If the host
-   has no engine contract, omit projection and retain `None`; core measurements
-   and checks remain engine-neutral.
-3. **Compose one check catalog.** Start with `animsmith_core::all_checks()` and
-   append one borrowed
-   `animsmith_engine::EngineAddressabilityCheck::new(&source,
-   provenance.as_ref())?`. Pass `None` when no profile was resolved so the
-   stable engine-owned record remains not applicable. Validate selection
-   against the core ids plus `animsmith_engine::ENGINE_CHECK_IDS_V1` before
-   asset I/O, then call `evaluate_checks` exactly once for the combined
-   per-file catalog. The borrowed catalog intentionally cannot outlive its
-   same-load `LoadedSource` and provenance. `measure_document` does not consume
-   either and remains profile-neutral. V1 materializes at most 4,096 actual
-   clip-setting rows; an N+1 document is a typed bounds error rather than a
-   truncated prediction.
-4. **Resolve rig roles.** Use `resolve_configured_roles` to apply the same
-   named/auto profile plus inline-override policy as the CLI. Lower-level
-   `detect_profile`, `profile::resolve_named`, and
-   `ResolvedRoles::from_names` remain available when a host intentionally
-   owns a different policy. Checks consume roles, never project-specific bone
-   names.
-5. **Build `Config`.** The CLI's TOML is only one constructor. Deserialize
-   the types from your schema or build them programmatically. Deserialization
-   validates numeric check tolerances and per-clip loop caps immediately.
-   `MovementOwner` represents independent XZ, Y, and yaw intent in core;
-   `Config::expectations_for` returns canonical effective fields after
-   exact/glob layering, while `Config::loop_continuity_tolerances` resolves the
-   four effective loop pose and seam-velocity caps through the same per-clip,
-   check-setting, and built-in-default precedence used by the checks. The
-   legacy `in_place` input maps only to XZ and is cleared from that effective
-   result. A selector that declares both spellings is rejected by
-   `Config::validate`.
-   Programmatic callers must call `Config::validate` before passing a directly
-   constructed config to measurement-only APIs; `evaluate_checks` performs the
-   same validation before inspecting or running the check catalog and returns
-   invalid configuration as a typed `EvaluationError::InvalidConfiguration`.
-   `Config::runtime_nodes` is the shared attachment/socket/IK selector policy;
-   the legacy `rest-world-scale` check field is normalized into it only when
-   the shared field is absent. Supplying both is a typed conflict. This added
-   public field is an intentional pre-1.0 struct-literal break: exhaustive
-   literals must add `runtime_nodes` or use `..Config::default()`.
-6. **Create one `MetricGrids`.** Share it by reference with
-   `measure_document`, `CheckCtx::new`, `evaluate_checks`, and optional report
-   rendering so each clip is sampled once. `animsmith_report::render` takes
-   one `ReportInputs` carrying those grids, the roles, the exact `LoadedSource`,
-   validated current `LintFileReportV19` evidence, and the same `Config` the
-   checks ran under; the configuration is what lets it draw
-   a declared gait group's members against each other, since a coherent group
-   emits no finding naming them. Both renderers return `Result<String, ReportError>`;
-   source/grids pointer identity, primary evidence identity and any profiled
-   dependency closure must agree. The caller still establishes the association
-   with roles/configuration, including profile-free evidence.
+2. **Build `Config` and resolve rig roles.** The CLI's TOML is only one
+   constructor. Build the types programmatically or deserialize your schema,
+   then call `Config::validate` before measurements. Deserialization validates
+   numeric check tolerances and per-clip loop caps immediately;
+   `evaluate_checks_v2` also validates configuration before running checks.
+   `Config::expectations_for` resolves exact/glob layering, including independent
+   `movement_owner_xz`, `movement_owner_y`, and `movement_owner_yaw` intent.
+   Legacy `in_place` maps only to XZ; declaring both spellings on one selector
+   is an error. `Config::loop_continuity_tolerances` applies the per-clip,
+   check-setting, and built-in-default precedence for all four seam caps.
+   `Config::runtime_nodes` owns attachment/socket/IK selectors; the legacy
+   `rest-world-scale` field is used only when that shared field is absent,
+   and supplying both is a conflict.
+
+   Use `resolve_configured_roles(&document.skeleton, &config.rig)` for the
+   CLI's named/auto profile and inline overrides. `detect_profile`,
+   `profile::resolve_named`, and `ResolvedRoles::from_names` remain available
+   for hosts with their own role policy. Checks consume resolved roles, not
+   project-specific bone names.
+3. **Resolve one optional current engine profile.** Static validation and
+   check-id selection can run before step 1: validate selection against core
+   ids plus `animsmith_engine::ENGINE_CHECK_IDS_V2`. There is no fallback
+   profile, source-unit override, or TOML type in the engine API. After loading,
+   bind the exact loader-owned `SourceFormatV1` and normalized clip-name
+   iterator to the appropriate resolver:
+
+   | Exact profile vocabulary | Static and input resolution | Current provenance |
+   |---|---|---|
+   | Revision-1 profiles | `EngineDeclaration` → `resolve_static` → `StaticResolution::resolve_input_v2_iter` | `project_prediction_provenance_v3(&resolved, &source)` |
+   | Bevy revisions 2/3 | `EngineDeclarationV2` → `resolve_static_v2` → `StaticResolutionV2::resolve_input_with_clips_iter` | `project_prediction_provenance_v5(&resolved, &source, runtime_node_selectors)` |
+   | Unity Generic revision 2, FBX | The same V2 declaration/static/input APIs | `project_prediction_provenance_v6(&resolved, &source, runtime_node_selectors, root_motion_project_intent)` |
+
+   The iterator APIs retain at most 4,096 clip-setting rows and explicit N+1
+   coverage/work evidence. A partial prefix remains partial; never reconstruct
+   it as historical V1 complete settings. Runtime-node selectors are the full
+   alias-normalized declaration from `Config::runtime_node_selectors`.
+   V6 additionally needs `EngineRootMotionProjectIntentV1`, built with
+   `from_clips_with_root_and_unmapped`: retain each raw source clip's explicit
+   normalized mapping state, effective per-axis movement owners, the resolved
+   Root index, and declarations on unmapped clips. Use
+   `EngineRootMotionClipIntentInputV1::new` for those typed rows; absent or
+   unavailable mappings and undeclared owners must not become invented intent.
+   `project_prediction_provenance_v6` binds the same-load transform inventory;
+   it does not reopen the source. For CLI-equivalent Unity Generic revision-2
+   lint on non-FBX input, validate the static declaration but omit source-bound
+   provenance so root motion stays not applicable.
+
+   Retain exactly one of V3, V5 or V6 provenance, or none for an engine-neutral
+   host. All projections consume the same `LoadedSource` as the checks.
+4. **Measure through one `MetricGrids`.** Create it from `source.document()`
+   and share it with `measure_document_indexed`, `CheckCtx::new`, evaluation,
+   and optional report rendering. Keep the indexed measurements in normalized
+   document clip order: `EngineRootMotionCheck` consumes those exact rows.
+   For the named output map, pair those rows with the same document clip names.
+   `measure_document` is the convenient named-map form for hosts that do not
+   need indexed evidence; measurements remain profile-neutral.
+5. **Evaluate one current catalog.** Start with `animsmith_core::all_checks()`
+   and append the five borrowed engine checks from `animsmith-engine`:
+
+   - `EngineAddressabilityCheckV3::new(&source, provenance_v3.as_ref())?`
+   - `EngineClipBoundaryCheck::new(&source, provenance_v3.as_ref())?`
+   - `EngineUnitScaleCheck::new_v5(&source, provenance_v5.as_ref())?`
+   - `EngineTrackSupportCheck::new(&source, provenance_v5.as_ref())?`
+   - `EngineRootMotionCheck::new(&source, provenance_v6.as_ref(), &roles, &indexed_measurements)?`
+
+   Unused provenance variants are `None`, keeping inactive engine lifecycle
+   rows in the catalog. Build `CheckCtx::new(&grids, &roles, &config)` and call
+   `evaluate_checks_v2(&ctx, &checks, CheckSelection::All)` (or the validated
+   selection) once. The borrowed catalog cannot outlive its source,
+   provenance, roles or measurements. Each `CheckEvaluation` preserves
+   disabled, unselected, not-applicable, partial and not-evaluated states.
+   `CoverageGap::code` and `EvaluationScope::code` are machine fields; never
+   recover coverage by parsing messages or treating gaps as findings.
+6. **Package current evidence and render.** Construct
+   `RigInfo::from_resolved(source.document(), &roles)` and
+   `MeasurementContract::new(named_measurements, measure_assets(source.document()))`.
+   Supply those values, the display path, exact
+   `source.source_facts().primary_identity().clone()`, and the evaluations to
+   the constructor matching the same provenance choice:
+
+   | Evidence | Current file constructor |
+   |---|---|
+   | V3 provenance or engine-neutral `None` | `LintFileReportV19::new` |
+   | V5 provenance | `LintFileReportV19::new_v5` |
+   | V6 provenance | `LintFileReportV19::new_v6` |
+
+   Every constructor takes `(path, input, rig, provenance, checks, measurements)`
+   and validates the complete correlated evidence. V1, V2 and V4 prediction
+   attachments cannot be inserted into V19. For current CLI JSON, wrap the
+   file records with `LintEnvelopeV19::new(tool, files)`.
+
+   For HTML, pass `ReportInputs::new(&grids, &roles, &source, &evidence, &config)`
+   to `animsmith_report::render`. Comparison uses two `ComparisonSide` values
+   with the same source/evidence/configuration association and explicit clip
+   names. Both renderers return `Result<String, ReportError>`. Source/grids
+   pointer identity, primary evidence identity and any profiled dependency
+   closure must agree; the caller also establishes the association with roles
+   and configuration, including profile-free evidence. The configuration lets
+   the report draw declared gait groups even when they emit no finding.
 7. **Map results into the host.** `Finding` carries a stable check id,
    severity, optional clip/bone/time, measured and expected values, and a
-   message. The host decides whether warnings fail its gate.
-
-Call `evaluate_checks` with the full catalog and a `CheckSelection`. It
-returns one `CheckEvaluation` per
-catalog check, including disabled, unselected, not-applicable, partial, and
-not-evaluated work. `CoverageGap::code` and `EvaluationScope::code` are the
-machine fields; never reconstruct coverage by parsing a message. Content
-findings are nested under their owning check and coverage gaps are never
-encoded as findings.
+   message. The host decides whether warnings fail its gate. Use
+   `evaluation::lint_requires_failure` when following CLI lint policy: required
+   unavailable engine evidence must not disappear merely because it emitted
+   no content finding. Successful HTML generation itself still exits 0.
 
 Role resolution remains an explicit frontend step. Use
 `resolve_configured_roles`, `CheckCtx`, and `Config::rig` rustdocs for the
 exact profile, override, and unresolved-role contracts.
+
+The current report API intentionally replaces the earlier independent `checks`
+and `prediction_provenance` inputs with validated V19 `evidence` plus `source`.
+`render` now returns a `Result`, and the shared error type is `ReportError`
+(formerly `ComparisonError`). Update these callers together; no historical
+attachment conversion or compatibility alias is provided.
 
 ## Compose the outputs you need
 
@@ -235,8 +274,8 @@ byte-detected container and decoded color/channel data; unavailable images
 carry a reason instead of decoded metadata.
 
 When the host needs to exchange the same JSON as the CLI, construct
-`MeasurementContract`, `MeasureFileReport`/`LintFileReport`, and
-`MeasureEnvelope`/`LintEnvelope` from `animsmith-core::contract`. That module
+`MeasurementContract`, `MeasureFileReport`/`LintFileReportV19`, and
+`MeasureEnvelope`/`LintEnvelopeV19` from `animsmith-core::contract`. That module
 owns both immutable URNs and derives the lint/measure summary from the supplied
 records.
 It also exposes the typed `MeasurementReportInput` subset and

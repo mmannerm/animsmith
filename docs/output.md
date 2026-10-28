@@ -28,8 +28,13 @@ report creation still exits 0 even when its evidence describes lint failures.
 Rendering admits at most 4,096 engine facets and 4 MiB of serialized engine
 evidence per ordinary report. Comparison retains its existing per-side row/text
 and total JSON limits, counting both original evidence and display copies before
-allocating the presentation JSON tree. These are presentation limits, not total
-process-memory or sampling bounds. Renderers require current validated evidence,
+allocating the presentation JSON tree. The 4 MiB ordinary ceiling reuses the
+comparison's per-side text budget to bound the combined original and display
+copies. It is deliberately a presentation policy, distinct from core's 8 MiB
+retained-prediction-text limit (which does not count serialized JSON overhead).
+Valid V19 evidence can exceed the HTML budget and is then refused explicitly;
+core admission does not promise HTML admission. These limits do not bound total
+process memory or sampling. Renderers require current validated evidence,
 source/grid identity, matching primary identity, and any profiled dependency
 closure. The CLI's shared analysis establishes the source/configuration/roles
 association; profile-free V19 alone does not prove closure or configuration.

@@ -12045,6 +12045,31 @@ mod report_current_engine {
     }
 
     #[test]
+    fn selecting_a_valid_ordinary_clip_keeps_other_clip_engine_evidence() {
+        let dir = unique_temp_dir("current-report-selected-clip");
+        let input = dir.path().join("two-clips.gltf");
+        let mut source: Value =
+            serde_json::from_slice(&std::fs::read(fixture("rig.gltf")).unwrap()).unwrap();
+        let mut other = source["animations"][0].clone();
+        other["name"] = json!("other");
+        source["animations"].as_array_mut().unwrap().push(other);
+        write_json(&input, &source);
+        let config = write_bevy_config(dir.path(), "selected-clip");
+        let all = report(&input, &config, &[]);
+        let selected = report(&input, &config, &["--clip", "walk"]);
+        assert_eq!(all["clips"].as_array().unwrap().len(), 2);
+        assert_eq!(selected["clips"].as_array().unwrap().len(), 1);
+        assert_eq!(selected["clips"][0]["name"], "walk");
+        assert_exact(&lint(&input, &config), &selected["engine_evidence"]);
+        assert_eq!(selected["engine_evidence"], all["engine_evidence"]);
+        let subjects: Vec<_> = facets(&selected, "engine-addressability")
+            .iter()
+            .map(|row| row["scope"]["subject"].as_str().unwrap())
+            .collect();
+        assert_eq!(subjects, ["Animation0", "Animation1"]);
+    }
+
+    #[test]
     fn current_v5_machine_results_and_comparison_keep_each_side_exact() {
         let dir = unique_temp_dir("current-report-v5");
         let input = dir.path().join("source.glb");
