@@ -131,6 +131,8 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 mod addressability;
+mod decoded_budget;
+use decoded_budget::DecodedAccessorBudget;
 
 /// Errors returned while loading `.gltf` or `.glb` input.
 ///
@@ -140,6 +142,16 @@ mod addressability;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum LoadError {
+    /// A consumed accessor would exceed the cumulative decoded-array budget.
+    #[error("{location}: accessor {accessor} exceeds decoded accessor budget: {problem}")]
+    DecodedAccessorBudget {
+        /// Source accessor index, including when its decoded data is copied.
+        accessor: usize,
+        /// Source slot whose next materialization was refused.
+        location: String,
+        /// Requested storage, prior usage, and fixed limits.
+        problem: String,
+    },
     /// The source file or one of its external buffers could not be read.
     #[error("failed to read {path}: {source}")]
     Io {
@@ -1168,8 +1180,9 @@ fn unwalkable(
 /// inverse-bind declaration is *source evidence* — the skin's accessor
 /// state is reported as [`SourceInverseBindAccessorStatus::Unreadable`] and
 /// the rest of the file still measures. Refusing the document would replace
-/// that evidence with an exit code. So the three inverse-bind read sites
-/// gate on this instead, and never build the reader when it is false.
+/// that evidence with an exit code. The source-skeleton reader
+/// gates on this; bone and instance bindings reuse its decoded matrices.
+/// Readable arrays must separately fit the decoded-accessor resource budget.
 fn inverse_bind_is_readable(accessor: &gltf::Accessor<'_>) -> bool {
     encoding_matches(accessor, &INVERSE_BIND_ENCODING) && unreadable_layout(accessor).is_none()
 }
@@ -1282,7 +1295,9 @@ fn validate_track_lengths(
 /// buffers, malformed GLB framing, parser rejection, structurally invalid
 /// animation channels, geometry or animation accessors typed for an element
 /// the selected reader cannot decode or laid out so it cannot walk them, or
-/// node graphs that cannot be represented as a skeleton forest.
+/// node graphs that cannot be represented as a skeleton forest. Decoded
+/// accessor arrays cumulatively exceeding 16,777,216 elements or 256 MiB
+/// return [`LoadError::DecodedAccessorBudget`] before iteration/materialization.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     load_source(path).map(LoadedSource::into_document)
 }
@@ -1321,7 +1336,8 @@ pub fn load_source(path: &Path) -> Result<LoadedSource, LoadError> {
 /// GLB framing, parser rejection, structurally invalid animation channels,
 /// geometry or animation accessors typed for an element the selected reader
 /// cannot decode or laid out so it cannot walk them, or node graphs that
-/// cannot be represented as a skeleton forest.
+/// cannot be represented as a skeleton forest. The decoded-array limits
+/// documented on [`load`] also apply.
 pub fn load_bytes(path: &Path, bytes: &[u8]) -> Result<Document, LoadError> {
     load_source_bytes(path, bytes).map(LoadedSource::into_document)
 }
@@ -1395,7 +1411,26 @@ fn load_source_bytes_inner_with_reader<F>(
     path: &Path,
     bytes: &[u8],
     resource_root: Option<&Path>,
+    read_external: F,
+) -> Result<LoadedSource, LoadError>
+where
+    F: FnMut(&Path, u64) -> CapturedResource,
+{
+    load_source_bytes_with_budget(
+        path,
+        bytes,
+        resource_root,
+        read_external,
+        &mut DecodedAccessorBudget::default(),
+    )
+}
+
+fn load_source_bytes_with_budget<F>(
+    path: &Path,
+    bytes: &[u8],
+    resource_root: Option<&Path>,
     mut read_external: F,
+    budget: &mut DecodedAccessorBudget,
 ) -> Result<LoadedSource, LoadError>
 where
     F: FnMut(&Path, u64) -> CapturedResource,
@@ -1432,9 +1467,24 @@ where
     // asset extraction must agree on which bone each node became, and it is
     // also where malformed graphs are rejected (so that runs once too).
     let topo = topology(&gltf.document)?;
-    let source_skeleton = extract_source_skeleton(&gltf.document, &buffers, &topo);
-    let mut doc = build_document(&gltf, &buffers, path, &topo, &mut facts)?;
-    doc.assets = extract_assets(&gltf.document, &buffers, &mut resources, &topo.bone_of_node);
+    let source_skeleton = extract_source_skeleton(&gltf.document, &buffers, &topo, budget)?;
+    let mut doc = build_document(
+        &gltf,
+        &buffers,
+        path,
+        &topo,
+        &mut facts,
+        &source_skeleton,
+        budget,
+    )?;
+    doc.assets = extract_assets(
+        &gltf.document,
+        &buffers,
+        &mut resources,
+        &topo.bone_of_node,
+        &source_skeleton,
+        budget,
+    )?;
     doc.assets.scenes = extract_scenes(&gltf.document, &topo.bone_of_node);
     doc.assets.default_scene = gltf.document.default_scene().map(|scene| scene.index());
     doc.assets.source_skeleton = source_skeleton;
@@ -2556,6 +2606,8 @@ fn build_document(
     path: &Path,
     topo: &Topology,
     source_facts: &mut RawSourceFactsBuilderV1,
+    source_skeleton: &SourceSkeletonAssets,
+    budget: &mut DecodedAccessorBudget,
 ) -> Result<Document, LoadError> {
     let doc = &gltf.document;
 
@@ -2588,23 +2640,14 @@ fn build_document(
     // Existing compatibility representation: one bone can carry only one
     // inverse bind, so the last source skin wins here. `source_skeleton`
     // retains the complete per-skin source evidence for measurements.
-    for skin in doc.skins() {
-        // Skip a count-0 IBM accessor: gltf 1.4's reader underflows and
-        // panics iterating one. An accessor that is not `MAT4` of `FLOAT`
-        // panics in that reader too; both are skipped here and recorded as
-        // source evidence by `extract_source_skeleton`.
-        if skin
-            .inverse_bind_matrices()
-            .is_none_or(|accessor| accessor.count() == 0 || !inverse_bind_is_readable(&accessor))
+    for skin in &source_skeleton.skins {
+        for (&joint, &ibm) in skin
+            .joint_source_node_indices
+            .iter()
+            .zip(&skin.inverse_bind_accessor.matrices)
         {
-            continue;
-        }
-        let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
-        if let Some(ibms) = reader.read_inverse_bind_matrices() {
-            for (joint, ibm) in skin.joints().zip(ibms) {
-                if let Some(bone_id) = bone_of_node[joint.index()] {
-                    bones[bone_id].inverse_bind = Some(Mat4::from_cols_array_2d(&ibm));
-                }
+            if let Some(bone_id) = bone_of_node[joint] {
+                bones[bone_id].inverse_bind = Some(ibm);
             }
         }
     }
@@ -2659,8 +2702,24 @@ fn build_document(
             // half of the reader has to be judged on its own accessor.
             check_sampler_accessor(&name, node, "input", &sampler.input())?;
             check_sampler_accessor(&name, node, "output", &sampler.output())?;
+            let location = format!(
+                "animation {} channel {} node {node}",
+                animation.index(),
+                channel.index()
+            );
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
-            let times = reader.read_inputs().map(|it| it.collect::<Vec<f32>>());
+            // Reader construction only checks slices. Charge an available
+            // array before iteration or collect.
+            let times = if let Some(it) = reader.read_inputs() {
+                budget.admit::<f32>(
+                    sampler.input().index(),
+                    sampler.input().count(),
+                    &format!("{location} input"),
+                )?;
+                Some(it.collect::<Vec<f32>>())
+            } else {
+                None
+            };
             if let Some(pending) = pending_facts.as_mut()
                 && !pending.truncated
             {
@@ -2669,21 +2728,32 @@ fn build_document(
             let Some(times) = times else {
                 continue;
             };
+            let output = sampler.output();
+            let output_location = format!("{location} output");
             let (property, values) = match reader.read_outputs() {
-                Some(gltf::animation::util::ReadOutputs::Translations(it)) => (
-                    Property::Translation,
-                    TrackValues::Vec3s(it.map(Vec3::from_array).collect()),
-                ),
-                Some(gltf::animation::util::ReadOutputs::Rotations(r)) => (
-                    Property::Rotation,
-                    TrackValues::Quats(r.into_f32().map(Quat::from_array).collect()),
-                ),
-                Some(gltf::animation::util::ReadOutputs::Scales(it)) => (
-                    Property::Scale,
-                    TrackValues::Vec3s(it.map(Vec3::from_array).collect()),
-                ),
-                // Morph-target weights are out of scope for the
-                // skeletal check catalog (P2 revisits them).
+                Some(gltf::animation::util::ReadOutputs::Translations(it)) => {
+                    budget.admit::<Vec3>(output.index(), output.count(), &output_location)?;
+                    (
+                        Property::Translation,
+                        TrackValues::Vec3s(it.map(Vec3::from_array).collect()),
+                    )
+                }
+                Some(gltf::animation::util::ReadOutputs::Rotations(r)) => {
+                    budget.admit::<Quat>(output.index(), output.count(), &output_location)?;
+                    (
+                        Property::Rotation,
+                        TrackValues::Quats(r.into_f32().map(Quat::from_array).collect()),
+                    )
+                }
+                Some(gltf::animation::util::ReadOutputs::Scales(it)) => {
+                    budget.admit::<Vec3>(output.index(), output.count(), &output_location)?;
+                    (
+                        Property::Scale,
+                        TrackValues::Vec3s(it.map(Vec3::from_array).collect()),
+                    )
+                }
+                // Morph timelines still contribute raw facts above, but
+                // skeletal loading never materializes their output arrays.
                 Some(gltf::animation::util::ReadOutputs::MorphTargetWeights(_)) | None => continue,
             };
             let interpolation = match channel.sampler().interpolation() {
@@ -2864,12 +2934,15 @@ fn topology(doc: &gltf::Document) -> Result<Topology, LoadError> {
 /// mesh definition is later skipped by the triangle-only asset importer.
 /// Inverse-bind accessor failures are source evidence rather than load errors:
 /// callers can measure a parseable file's incomplete or malformed binding
-/// declaration without silently falling back to a bone-level matrix.
+/// declaration without silently falling back to a bone-level matrix. Readable
+/// arrays that exceed the decoded budget are resource failures, not evidence
+/// of an unreadable accessor.
 fn extract_source_skeleton(
     doc: &gltf::Document,
     buffers: &[Vec<u8>],
     topo: &Topology,
-) -> SourceSkeletonAssets {
+    budget: &mut DecodedAccessorBudget,
+) -> Result<SourceSkeletonAssets, LoadError> {
     let mut scene_root_indices = vec![Vec::new(); doc.nodes().count()];
     for scene in doc.scenes() {
         for root in scene.nodes() {
@@ -2888,7 +2961,7 @@ fn extract_source_skeleton(
             continue;
         };
         let Some(for_skin) = attachments.get_mut(skin.index()) else {
-            return SourceSkeletonAssets::default();
+            return Ok(SourceSkeletonAssets::default());
         };
         for_skin.push(SourceSkinAttachment {
             source_node_index: node.index(),
@@ -2944,6 +3017,14 @@ fn extract_source_skeleton(
                 let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
                 match reader.read_inverse_bind_matrices() {
                     Some(matrices) => {
+                        // Construction is constant-space after the declared
+                        // layout check. Missing actual bytes remain Unreadable;
+                        // only an available iterator may materialize an array.
+                        budget.admit::<Mat4>(
+                            accessor.index(),
+                            declared_count,
+                            &format!("skin {} inverseBindMatrices", skin.index()),
+                        )?;
                         let matrices = matrices
                             .map(|matrix| Mat4::from_cols_array_2d(&matrix))
                             .collect::<Vec<_>>();
@@ -2975,11 +3056,11 @@ fn extract_source_skeleton(
         });
     }
 
-    SourceSkeletonAssets {
+    Ok(SourceSkeletonAssets {
         coverage: SourceSkeletonCoverage::Complete,
         nodes,
         skins,
-    }
+    })
 }
 
 /// Parse meshes (indexed or unindexed), skins (joints + inverse bind
@@ -2996,7 +3077,9 @@ fn extract_assets(
     buffers: &[Vec<u8>],
     resources: &mut ResourceCaptureSession,
     bone_of_node: &[Option<usize>],
-) -> SceneAssets {
+    source_skeleton: &SourceSkeletonAssets,
+    budget: &mut DecodedAccessorBudget,
+) -> Result<SceneAssets, LoadError> {
     let mut assets = SceneAssets::default();
 
     let source_images = extract_source_images(doc, buffers, resources);
@@ -3091,15 +3174,26 @@ fn extract_assets(
             // not crash the loader). Treat a zero-count attribute as
             // absent, and skip a primitive whose POSITION is missing or
             // empty — a primitive without positions carries no geometry.
-            let has = |sem: gltf::Semantic| prim.get(&sem).is_some_and(|a| a.count() > 0);
-            if !has(gltf::Semantic::Positions) {
+            let present = |sem: gltf::Semantic| prim.get(&sem).filter(|a| a.count() > 0);
+            let Some(position) = present(gltf::Semantic::Positions) else {
                 continue;
-            }
+            };
+            let location = format!("mesh {} primitive {}", mesh.index(), prim.index());
+            budget.admit::<Vec3>(
+                position.index(),
+                position.count(),
+                &format!("{location} POSITION"),
+            )?;
             let positions: Vec<Vec3> = reader
                 .read_positions()
                 .map(|it| it.map(Vec3::from_array).collect())
                 .unwrap_or_default();
-            let normals = if has(gltf::Semantic::Normals) {
+            let normals = if let Some(accessor) = present(gltf::Semantic::Normals) {
+                budget.admit::<Vec3>(
+                    accessor.index(),
+                    accessor.count(),
+                    &format!("{location} NORMAL"),
+                )?;
                 reader
                     .read_normals()
                     .map(|it| it.map(Vec3::from_array).collect())
@@ -3107,7 +3201,12 @@ fn extract_assets(
             } else {
                 Vec::new()
             };
-            let uvs = if has(gltf::Semantic::TexCoords(0)) {
+            let uvs = if let Some(accessor) = present(gltf::Semantic::TexCoords(0)) {
+                budget.admit::<[f32; 2]>(
+                    accessor.index(),
+                    accessor.count(),
+                    &format!("{location} TEXCOORD_0"),
+                )?;
                 reader
                     .read_tex_coords(0)
                     .map(|tc| tc.into_f32().collect())
@@ -3116,15 +3215,27 @@ fn extract_assets(
                 Vec::new()
             };
             // JOINTS_0/WEIGHTS_0 come as a pair; keep them parallel.
-            let (joints, weights) =
-                if has(gltf::Semantic::Joints(0)) && has(gltf::Semantic::Weights(0)) {
-                    match (reader.read_joints(0), reader.read_weights(0)) {
-                        (Some(j), Some(w)) => (j.into_u16().collect(), w.into_f32().collect()),
-                        _ => (Vec::new(), Vec::new()),
-                    }
-                } else {
-                    (Vec::new(), Vec::new())
-                };
+            let (joints, weights) = if let (Some(joints), Some(weights)) = (
+                present(gltf::Semantic::Joints(0)),
+                present(gltf::Semantic::Weights(0)),
+            ) {
+                budget.admit::<[u16; 4]>(
+                    joints.index(),
+                    joints.count(),
+                    &format!("{location} JOINTS_0"),
+                )?;
+                budget.admit::<[f32; 4]>(
+                    weights.index(),
+                    weights.count(),
+                    &format!("{location} WEIGHTS_0"),
+                )?;
+                match (reader.read_joints(0), reader.read_weights(0)) {
+                    (Some(j), Some(w)) => (j.into_u16().collect(), w.into_f32().collect()),
+                    _ => (Vec::new(), Vec::new()),
+                }
+            } else {
+                (Vec::new(), Vec::new())
+            };
             // Secondary influence attributes do not change the core's
             // primary-set semantics, but their independent presence matters
             // to consumers that must reject or report unsupported influence
@@ -3160,7 +3271,12 @@ fn extract_assets(
                     _ => {}
                 }
             }
-            let indices = if prim.indices().is_some_and(|a| a.count() > 0) {
+            let indices = if let Some(accessor) = prim.indices().filter(|a| a.count() > 0) {
+                budget.admit::<u32>(
+                    accessor.index(),
+                    accessor.count(),
+                    &format!("{location} indices"),
+                )?;
                 reader
                     .read_indices()
                     .map(|it| it.into_u32().collect())
@@ -3208,25 +3324,25 @@ fn extract_assets(
                     .collect()
             })
             .unwrap_or_default();
-        let skin_ibms = skin
-            .as_ref()
-            .filter(|skin| {
-                skin.inverse_bind_matrices().is_some_and(|accessor| {
-                    accessor.count() > 0 && inverse_bind_is_readable(&accessor)
-                })
-            })
-            .map(|skin| {
-                let reader = skin.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
-                reader
-                    .read_inverse_bind_matrices()
-                    .map(|matrices| {
-                        matrices
-                            .map(|matrix| Mat4::from_cols_array_2d(&matrix))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
+        let skin_ibms = if let Some(skin) = skin.as_ref() {
+            let matrices = &source_skeleton.skins[skin.index()]
+                .inverse_bind_accessor
+                .matrices;
+            if let Some(accessor) = skin.inverse_bind_matrices() {
+                budget.admit::<Mat4>(
+                    accessor.index(),
+                    matrices.len(),
+                    &format!(
+                        "node {} skin {} inverseBindMatrices copy",
+                        node.index(),
+                        skin.index()
+                    ),
+                )?;
+            }
+            matrices.clone()
+        } else {
+            Vec::new()
+        };
         assets.instances.push(MeshInstance {
             source_node_index: node.index(),
             node: bone_of_node[node.index()].unwrap_or(0),
@@ -3236,7 +3352,7 @@ fn extract_assets(
         });
     }
 
-    assets
+    Ok(assets)
 }
 
 fn material_texture(

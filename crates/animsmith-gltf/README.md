@@ -69,6 +69,23 @@ despite the missing declaration, so the loader returns a located
 `UNSIGNED_SHORT` attributes keep their decoded float values, as do `FLOAT`
 attributes.
 
+Each load now admits at most **16,777,216 decoded accessor elements** and
+**256 MiB of decoded array storage**, cumulatively across source inverse binds,
+animation timelines/values, modeled geometry attributes/indices, and per-instance
+inverse-bind copies. These fixed engineering safety ceilings apply before
+iteration or allocating a destination array. Optional readers first establish
+availability with constant-space slice checks. Counts
+include implicit zero values in sparse accessors, repeated reads of the same
+accessor, and the destination size after integer-to-float or index widening.
+An accessor that would exceed either ceiling produces a located
+`LoadError::DecodedAccessorBudget`; the limits have no runtime override.
+Unreadable or empty inverse binds keep their existing availability evidence;
+a readable but oversized array is instead a resource refusal. Unused accessors,
+skipped primitive modes, and unmodeled attributes are not decoded or charged.
+The clip-track capability projection uses the same budget for the arrays it
+retains. These limits are distinct from encoded-buffer and image limits and
+do not bound total process memory, parsed JSON, or later sampling and reporting.
+
 Animation sampler accessors are checked against the reader selected by their
 slot and target property before decoding. Key times require `SCALAR`/`FLOAT`,
 translation and scale require `VEC3`/`FLOAT`, and rotation retains all five
