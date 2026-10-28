@@ -767,6 +767,21 @@ adding one. Repairs have stable ids so scripts can pin exact behavior:
 | `quat-norm` | Unit-normalizes finite, non-zero LINEAR/STEP quaternion keys. This is lossless because scaling a quaternion does not change the represented rotation after normalization. CUBICSPLINE tracks are skipped to preserve tangents. |
 | `quat-flip` | Normalizes adjacent quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. |
 
+Both repairs check ownership before changing bytes. A track is skipped when
+its storage overlaps another accessor (including unreferenced or sparse data),
+an image, or a known extension payload, or when the same accessor also serves
+another semantic role or an incompatible interpolation layout. Disjoint
+accessors packed into one buffer view remain repairable; stride gaps are
+conservatively included in each accessor's protected range.
+
+An unresolved source range or unmodeled extension makes ownership unavailable,
+so `fix` skips all quaternion repairs for that file and names the cause. For
+example, `EXT_meshopt_compression` can name compressed bytes independently of
+accessors and currently produces this skip. Recognized extensions with no new
+storage owners, such as `KHR_materials_unlit`, remain accepted; Draco's direct
+buffer views are protected without decoding their contents. No accessors are
+copied or repointed, and skipped payloads and JSON remain byte-identical.
+
 By default `fix` runs every repair. `--repair id[,id]` pins an exact
 list (`animsmith fix --help` names the valid ids). `fix` writes only
 when you explicitly choose a destination; `--dry-run` reports and sets

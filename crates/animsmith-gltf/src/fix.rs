@@ -23,10 +23,17 @@
 //! repaired.) `quat-norm` skips CUBICSPLINE tracks because scaling value
 //! keys without their tangents would change interior samples. Sparse
 //! accessors and quantized (normalized-int) rotations are skipped.
+//!
+//! Both repairs require exclusive storage ownership. Original source ranges
+//! and semantic uses are inventoried once before mutation; conflicting or
+//! unprovable ownership produces a located skip instead of altering another
+//! accessor, image or extension payload. Disjoint accessors may share a view.
 
 use crate::{FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path};
 use std::ops::Range;
 use std::path::Path;
+
+mod ownership;
 
 const ROTATION_ELEMENT_BYTES: usize = 16;
 const QUAT_NORM_TOLERANCE: f32 = 1e-3;
@@ -102,6 +109,7 @@ pub struct FixSession {
     original: Vec<u8>,
     gltf: gltf::Gltf,
     buffers: Vec<Vec<u8>>,
+    ownership: ownership::Ownership,
 }
 
 impl FixSession {
@@ -125,11 +133,13 @@ impl FixSession {
         // time, not assumed to be index 0). External and data-URI buffers
         // are loaded, patched, and written back to where they came from.
         let buffers = resolve_buffers(&gltf, input.parent())?;
+        let ownership = ownership::Ownership::read(&original, &buffers)?;
 
         Ok(Self {
             original,
             gltf,
             buffers,
+            ownership,
         })
     }
 
@@ -333,6 +343,13 @@ impl FixSession {
                         range.start,
                         range.end,
                         buffer.len()
+                    ));
+                    continue;
+                }
+                if let Some(reason) = self.ownership.reason(accessor.index()) {
+                    report.skipped.push(format!(
+                        "{clip}/{bone}: /accessors/{} {reason}",
+                        accessor.index()
                     ));
                     continue;
                 }
