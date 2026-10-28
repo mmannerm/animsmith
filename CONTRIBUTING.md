@@ -48,8 +48,11 @@ Use `docs:` for documentation-only changes. Use `feat:`, `fix:`, or
 calculation. Release automation groups the merged conventional commits
 into the changelog.
 
-Agent-authored commits also need the agent attribution trailer required
-by that agent's local instructions.
+Agent-authored commits must carry a `Co-authored-by:` trailer naming the
+actual agent, for example `Co-authored-by: Codex <codex@openai.com>` or
+`Co-authored-by: Claude <claude@anthropic.com>`. Agent-written PR text and
+comments name their writer; do not edit another agent's comments without
+explicit authorization for that update.
 
 ## MSRV Policy
 
@@ -136,14 +139,18 @@ Substantial changes need a review before you ask for a merge: new checks,
 subcommands, measurement semantics, output contracts, dependency additions,
 write/fix path changes, or broad docs restructures. Use whatever review
 process or tools you like; maintainer-specific agent configuration is not
-required for contributors.
+required for contributors. Substantial agent-authored changes still need
+independent review by the other provider (Codex for Claude, Claude for
+Codex); contributors may use their own process to supply that review and
+the required evidence.
 
 Before asking for a merge, integrate the freshly fetched target branch
 (`main`, or the approved parent of a stacked PR) into the final clean head.
 Record head/base revisions and gate results; required CI and review evidence
 must cover that head. A changed head or base needs reconciliation and the
 required checks before it is ready again. Review completion alone does not
-grant merge permission.
+grant merge permission. After a stacked parent merges, retarget the child
+to `main` and repeat this readiness check.
 
 The review should check:
 
