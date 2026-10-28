@@ -5010,6 +5010,119 @@ fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
 }
 
 #[test]
+fn standalone_quat_flip_preserves_bytes_across_finite_f32_ranges() {
+    let dir = unique_temp_dir("standalone-quat-flip-range");
+    for (name, interpolation, magnitude, negative_dot) in [
+        ("large-negative", "LINEAR", 1e20, true),
+        ("subnormal-negative", "STEP", f32::from_bits(1), true),
+        ("large-positive", "LINEAR", 1e20, false),
+    ] {
+        let first = [magnitude; 4];
+        let second = if negative_dot {
+            [magnitude, -magnitude, -magnitude, -magnitude]
+        } else {
+            [-magnitude, magnitude, magnitude, magnitude]
+        };
+        // Self-authored raw GLB: two timestamps, two quaternion keys and
+        // an adjacent unused accessor. The normalized dot is +/-1/2.
+        let mut json = serde_json::to_vec(&json!({
+            "asset": {"version": "2.0"},
+            "nodes": [{"name": "joint"}],
+            "scenes": [{"nodes": [0]}], "scene": 0,
+            "buffers": [{"byteLength": 48}],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": 8},
+                {"buffer": 0, "byteOffset": 8, "byteLength": 32},
+                {"buffer": 0, "byteOffset": 40, "byteLength": 8}
+            ],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 2,
+                 "type": "SCALAR", "min": [0.0], "max": [1.0]},
+                {"bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4"},
+                {"name": "preserved-sentinel", "bufferView": 2,
+                 "componentType": 5126, "count": 2, "type": "SCALAR"}
+            ],
+            "animations": [{
+                "name": "raw-quaternions",
+                "samplers": [{"input": 0, "output": 1, "interpolation": interpolation}],
+                "channels": [{"sampler": 0, "target": {"node": 0, "path": "rotation"}}]
+            }]
+        }))
+        .unwrap();
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        let bin_start = 28 + json.len();
+        let mut source = Vec::new();
+        for word in [
+            0x46546c67,
+            2,
+            (bin_start + 48) as u32,
+            json.len() as u32,
+            0x4e4f534a,
+        ] {
+            source.extend_from_slice(&word.to_le_bytes());
+        }
+        source.extend_from_slice(&json);
+        source.extend_from_slice(&48u32.to_le_bytes());
+        source.extend_from_slice(&0x004e4942u32.to_le_bytes());
+        for value in [0.0f32, 1.0].into_iter().chain(first).chain(second) {
+            source.extend_from_slice(&value.to_le_bytes());
+        }
+        source.extend_from_slice(&[0x12, 0x34, 0x56, 0x3f, 0x78, 0x9a, 0xbc, 0x3e]);
+        let input = dir.path().join(format!("{name}.glb"));
+        let fixed = dir.path().join(format!("{name}-fixed.glb"));
+        let again = dir.path().join(format!("{name}-again.glb"));
+        std::fs::write(&input, &source).unwrap();
+        let mut expected = source.clone();
+        if negative_dot {
+            for component in 0..4 {
+                // IEEE-754 negation toggles only the sign bit. This
+                // expected-byte oracle uses no loader or quaternion math.
+                expected[bin_start + 24 + component * 4 + 3] ^= 0x80;
+            }
+        }
+        let output = animsmith()
+            .arg("fix")
+            .arg(&input)
+            .args(["--repair", "quat-flip", "--output"])
+            .arg(&fixed)
+            .output()
+            .expect("runs standalone hemisphere repair");
+        assert_eq!(output.status.code(), Some(0), "{name}: {}", stderr(&output));
+        assert!(
+            stdout(&output).contains(&format!("{} key(s) fixed", usize::from(negative_dot))),
+            "{name}: {}",
+            stdout(&output)
+        );
+        assert_eq!(std::fs::read(&fixed).unwrap(), expected, "{name}");
+        assert_eq!(
+            std::fs::read(&input).unwrap(),
+            source,
+            "source stays intact"
+        );
+        let output = animsmith()
+            .arg("fix")
+            .arg(&fixed)
+            .args(["--repair", "quat-flip", "--output"])
+            .arg(&again)
+            .output()
+            .expect("runs second hemisphere repair");
+        assert_eq!(output.status.code(), Some(0), "{name}: {}", stderr(&output));
+        assert!(
+            stdout(&output).contains("0 key(s) fixed"),
+            "{name}: {}",
+            stdout(&output)
+        );
+        assert_eq!(
+            std::fs::read(&again).unwrap(),
+            expected,
+            "{name}: idempotent"
+        );
+    }
+}
+
+#[test]
 fn fix_rejects_unknown_repair_ids() {
     // Nonexistent input on purpose: flag validation must produce exit 2
     // regardless of file state, so no fixture is needed.

@@ -110,7 +110,8 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Default findings: `warning`.
 - Measurement and finding: counts adjacent rotation keys on opposite
   hemispheres. A finding means neighborhood-uncorrected slerp can take the long
-  path.
+  path. The dot product is evaluated in `f64`, avoiding intermediate `f32`
+  overflow or underflow for finite authored components.
 - Prerequisites and applicability: none. This is generic file-ready coverage.
 - Config, defaults, and units: `[checks.quat-flip] severity` only.
 - Inactive, not-applicable, and coverage gaps: never `not_applicable` and no

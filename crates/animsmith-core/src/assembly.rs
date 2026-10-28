@@ -640,6 +640,8 @@ fn rest_track(
 /// their dot product is negative. Cubic-spline values and tangents are left
 /// untouched: changing individual triplet signs changes the Hermite curve.
 /// A zero dot product is deliberately left unchanged, making ties stable.
+/// Dot products use f64 arithmetic to avoid intermediate f32 overflow or
+/// underflow without changing the supplied quaternion magnitudes.
 /// Returns the number of flipped keys.
 pub fn normalize_quaternion_hemispheres(clip: &mut Clip) -> usize {
     let mut flipped = 0;
@@ -657,7 +659,9 @@ pub fn normalize_quaternion_hemispheres(clip: &mut Clip) -> usize {
             if !value.is_finite() {
                 continue;
             }
-            if previous.is_some_and(|previous: Quat| previous.dot(*value) < 0.0) {
+            if previous
+                .is_some_and(|previous: Quat| previous.as_dquat().dot(value.as_dquat()) < 0.0)
+            {
                 *value = -*value;
                 flipped += 1;
             }
