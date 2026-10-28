@@ -322,7 +322,9 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Default findings: `warning`.
 - Measurement and finding: checks for the strict authored-key case where a
   declared loop repeats its first pose at the final endpoint and that closing
-  key can be removed mechanically.
+  key can be removed mechanically. Rotation comparison uses a sign-invariant
+  `1e-4` radian tolerance and widens finite components before normalization,
+  preserving angular evidence for large and tiny quaternion magnitudes.
 - Prerequisites and applicability: active only on clips declared
   `loop = true`, and only when authored endpoint analysis is available.
 - Config, defaults, and units: `[checks.duplicate-loop-endpoint] severity` and

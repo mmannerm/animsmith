@@ -3,7 +3,7 @@ use animsmith_core::model::{
 };
 use animsmith_core::transform::{
     DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD, DUPLICATE_ENDPOINT_VEC3_TOLERANCE,
-    DuplicateLoopEndpointError, analyze_duplicate_loop_endpoint,
+    DuplicateLoopEndpointError, analyze_duplicate_loop_endpoint, drop_duplicate_loop_endpoint,
 };
 use animsmith_core::{
     Applicability, CheckCtx, CheckEvaluation, CheckSelection, Config, CoverageGapCode,
@@ -161,29 +161,66 @@ fn fixed_endpoint_tolerances_and_quaternion_sign_equivalence_are_enforced() {
     values[2] = Vec3::splat(1.1 * DUPLICATE_ENDPOINT_VEC3_TOLERANCE);
     assert_eq!(analyze_duplicate_loop_endpoint(&clip).unwrap(), None);
 
-    clip.tracks[0] = Track {
-        bone: 0,
-        property: Property::Rotation,
-        interpolation: Interpolation::Linear,
-        times: vec![0.0, 0.5, 1.0],
-        values: TrackValues::Quats(vec![
-            Quat::IDENTITY,
-            Quat::from_rotation_y(0.5),
-            -Quat::from_rotation_y(0.9 * DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD),
-        ]),
-    };
-    let rotation_outcome = analyze_duplicate_loop_endpoint(&clip)
-        .unwrap()
-        .expect("antipodal quaternion inside the angular tolerance is removable");
-    let measured_rotation = rotation_outcome
-        .max_rotation_endpoint_delta_rad
-        .expect("rotation delta");
-    assert!((measured_rotation - 0.9 * DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD).abs() < 1.0e-7);
-    let TrackValues::Quats(values) = &mut clip.tracks[0].values else {
-        unreachable!()
-    };
-    values[2] = Quat::from_rotation_y(1.1 * DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD);
-    assert_eq!(analyze_duplicate_loop_endpoint(&clip).unwrap(), None);
+    assert_eq!(DUPLICATE_ENDPOINT_QUATERNION_TOLERANCE_RAD, 1e-4);
+    for magnitude in [1.0, 1e20, 1e-30] {
+        // [0, y, 0, 1] has angle 2*atan(y): these authored ratios straddle
+        // the endpoint's 1e-4 tolerance, independently of the 1e-3 prune limit.
+        clip.tracks[0] = Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Quats(vec![
+                Quat::from_xyzw(0.0, 0.0, 0.0, magnitude),
+                Quat::from_xyzw(0.0, magnitude, 0.0, magnitude),
+                Quat::from_xyzw(0.0, -4.5e-5 * magnitude, 0.0, -magnitude),
+            ]),
+        };
+        let rotation_outcome = analyze_duplicate_loop_endpoint(&clip)
+            .unwrap()
+            .expect("antipodal quaternion inside the angular tolerance is removable");
+        let measured_rotation = rotation_outcome
+            .max_rotation_endpoint_delta_rad
+            .expect("rotation delta");
+        let expected_angle = 2.0 * 4.5e-5_f64.atan();
+        assert!((f64::from(measured_rotation) - expected_angle).abs() < 1.0e-10);
+        let TrackValues::Quats(values) = &mut clip.tracks[0].values else {
+            unreachable!()
+        };
+        values[2] = Quat::from_xyzw(0.0, 5.5e-5 * magnitude, 0.0, magnitude);
+        assert_eq!(analyze_duplicate_loop_endpoint(&clip).unwrap(), None);
+    }
+}
+
+#[test]
+fn zero_and_nonfinite_rotation_endpoints_refuse_without_mutating() {
+    for (component, expected) in [
+        (0.0, Ok(None)),
+        (
+            f32::NAN,
+            Err(DuplicateLoopEndpointError::NonFinite { track: Some(1) }),
+        ),
+        (
+            f32::INFINITY,
+            Err(DuplicateLoopEndpointError::NonFinite { track: Some(1) }),
+        ),
+    ] {
+        let mut clip = document(&[0.0, 1.0, 0.0]).clips.remove(0);
+        clip.tracks.push(Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Quats(vec![
+                Quat::IDENTITY,
+                Quat::from_rotation_y(0.5),
+                Quat::from_xyzw(0.0, 0.0, 0.0, component),
+            ]),
+        });
+        let before = format!("{clip:?}");
+        assert_eq!(drop_duplicate_loop_endpoint(&mut clip), expected);
+        assert_eq!(format!("{clip:?}"), before, "refusal is atomic");
+    }
 }
 
 #[test]

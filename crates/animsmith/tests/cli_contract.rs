@@ -4801,6 +4801,209 @@ fn transform_summary_reports_a_loaded_clip_omitted_from_the_artifact() {
 }
 
 #[test]
+fn duplicate_loop_endpoint_preserves_moving_rotation_at_finite_magnitudes() {
+    // Decode emitted accessor bytes directly, without the production loader
+    // or sampler normalizing away the endpoint that this transform must keep.
+    fn channels(path: &std::path::Path) -> BTreeMap<String, (Vec<u32>, Vec<u32>)> {
+        let bytes = std::fs::read(path).unwrap();
+        let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let json: Value = serde_json::from_slice(&bytes[20..20 + json_len]).unwrap();
+        let bin = &bytes[28 + json_len..];
+        let accessor_bits = |index: &Value| {
+            let accessor = &json["accessors"][index.as_u64().unwrap() as usize];
+            assert_eq!(accessor["componentType"], 5126);
+            let view = &json["bufferViews"][accessor["bufferView"].as_u64().unwrap() as usize];
+            let width = match accessor["type"].as_str().unwrap() {
+                "SCALAR" => 1,
+                "VEC3" => 3,
+                "VEC4" => 4,
+                other => panic!("unexpected accessor type {other}"),
+            };
+            let offset = view["byteOffset"].as_u64().unwrap_or(0) as usize
+                + accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+            let stride = view["byteStride"].as_u64().unwrap_or(4 * width) as usize;
+            (0..accessor["count"].as_u64().unwrap() as usize)
+                .flat_map(|key| {
+                    (0..width as usize).map(move |component| {
+                        let start = offset + key * stride + component * 4;
+                        u32::from_le_bytes(bin[start..start + 4].try_into().unwrap())
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let animation = &json["animations"][0];
+        assert_eq!(animation["channels"].as_array().unwrap().len(), 2);
+        animation["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|channel| {
+                let sampler = &animation["samplers"][channel["sampler"].as_u64().unwrap() as usize];
+                assert_eq!(sampler["interpolation"], "LINEAR");
+                (
+                    channel["target"]["path"].as_str().unwrap().to_owned(),
+                    (
+                        accessor_bits(&sampler["input"]),
+                        accessor_bits(&sampler["output"]),
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    let dir = unique_temp_dir("duplicate-endpoint-magnitude");
+    let config = dir.path().join("animsmith.toml");
+    std::fs::write(&config, "[clips.loop]\nloop = true\n").unwrap();
+    for (name, magnitude, duplicate) in [
+        ("ordinary-moving", 0.5_f32, false),
+        ("large-moving", 1e20, false),
+        ("tiny-moving", 1e-30, false),
+        ("large-antipodal-duplicate", 1e20, true),
+        ("tiny-antipodal-duplicate", 1e-30, true),
+    ] {
+        let input = dir.path().join(format!("{name}.gltf"));
+        let buffer = dir.path().join(format!("{name}.bin"));
+        let output = dir.path().join(format!("{name}-out.glb"));
+        let m = magnitude;
+        // The moving endpoint's normalized dot with [m,m,m,m] is -1/2,
+        // hence a 120-degree shortest rotation at every positive magnitude.
+        let rotation = [
+            m,
+            m,
+            m,
+            m,
+            0.0,
+            0.0,
+            0.0,
+            m,
+            if duplicate { -m } else { m },
+            -m,
+            -m,
+            -m,
+        ];
+        let times = [0.0_f32, 0.5, 1.0];
+        let translation = [0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let payload: Vec<u8> = times
+            .iter()
+            .chain(&rotation)
+            .chain(&translation)
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        let json = serde_json::to_vec(&json!({
+            "asset": { "version": "2.0" },
+            "nodes": [{ "name": "joint" }], "scenes": [{ "nodes": [0] }], "scene": 0,
+            "buffers": [{ "uri": format!("{name}.bin"), "byteLength": 96 }],
+            "bufferViews": [
+                { "buffer": 0, "byteOffset": 0, "byteLength": 12 },
+                { "buffer": 0, "byteOffset": 12, "byteLength": 48 },
+                { "buffer": 0, "byteOffset": 60, "byteLength": 36 }
+            ],
+            "accessors": [
+                { "bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [1] },
+                { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4" },
+                { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3" }
+            ],
+            "animations": [{ "name": "loop", "samplers": [
+                { "input": 0, "output": 1, "interpolation": "LINEAR" },
+                { "input": 0, "output": 2, "interpolation": "LINEAR" }
+            ], "channels": [
+                { "sampler": 0, "target": { "node": 0, "path": "rotation" } },
+                { "sampler": 1, "target": { "node": 0, "path": "translation" } }
+            ] }]
+        })).unwrap();
+        std::fs::write(&input, &json).unwrap();
+        std::fs::write(&buffer, &payload).unwrap();
+
+        let transformed = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .arg("transform")
+            .arg(&input)
+            .arg("--drop-duplicate-loop-endpoint")
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert_eq!(
+            transformed.status.code(),
+            Some(0),
+            "{name}: {}",
+            stderr(&transformed)
+        );
+        let retained = if duplicate { 2 } else { 3 };
+        let expected_times: Vec<_> = times[..retained].iter().map(|v| v.to_bits()).collect();
+        let expected = BTreeMap::from([
+            (
+                "rotation".into(),
+                (
+                    expected_times.clone(),
+                    rotation[..4 * retained]
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect(),
+                ),
+            ),
+            (
+                "translation".into(),
+                (
+                    expected_times,
+                    translation[..3 * retained]
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect(),
+                ),
+            ),
+        ]);
+        assert_eq!(
+            channels(&output),
+            expected,
+            "{name}: preserve exact authored keys/times"
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), json, "{name}: source JSON");
+        assert_eq!(
+            std::fs::read(&buffer).unwrap(),
+            payload,
+            "{name}: source buffer"
+        );
+
+        let lint = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .arg("lint")
+            .arg(&input)
+            .args(["--select", "duplicate-loop-endpoint"])
+            .output()
+            .unwrap();
+        assert_eq!(lint.status.code(), Some(0), "{name}: {}", stderr(&lint));
+        assert_eq!(
+            stdout(&lint).contains("warning[duplicate-loop-endpoint]"),
+            duplicate,
+            "{name}: {}",
+            stdout(&lint)
+        );
+        if duplicate {
+            let again = dir.path().join(format!("{name}-again.glb"));
+            let repeated = animsmith()
+                .arg("--config")
+                .arg(&config)
+                .arg("transform")
+                .arg(&output)
+                .arg("--drop-duplicate-loop-endpoint")
+                .arg("-o")
+                .arg(&again)
+                .output()
+                .unwrap();
+            assert_eq!(repeated.status.code(), Some(0), "{}", stderr(&repeated));
+            assert_eq!(
+                channels(&again),
+                expected,
+                "{name}: second pass is unchanged"
+            );
+        }
+    }
+}
+
+#[test]
 fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     let dir = unique_temp_dir("duplicate-loop-endpoint");
     let input = dir.path().join("input.glb");
