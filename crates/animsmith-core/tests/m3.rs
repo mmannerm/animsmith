@@ -962,3 +962,113 @@ fn invalid_rest_rotation_is_insufficient_evidence_not_complete() {
     assert_eq!(scope.code, EvaluationScopeCode::FIRST_FRAME_REST_DELTA);
     assert_eq!(scope.subject.as_deref(), Some("pose"));
 }
+
+fn evaluate_bind_pose(doc: &Document, config: &Config) -> CheckEvaluation {
+    let roles = ResolvedRoles::default();
+    let grids = MetricGrids::new(doc);
+    let ctx = CheckCtx::new(&grids, &roles, config);
+    let selected = ["bind-pose".to_string()].into_iter().collect();
+    evaluate_checks(&ctx, &all_checks(), CheckSelection::Only(&selected))
+        .unwrap()
+        .into_iter()
+        .find(|record| record.check_id() == "bind-pose")
+        .unwrap()
+}
+
+#[test]
+fn bind_pose_equivalent_finite_orientations_have_complete_zero_deviation() {
+    let mut doc = rotated_first_frame_doc(0.0);
+    let large = 1e20;
+    let tiny = f32::from_bits(1);
+    // Literal equivalent pairs cover overflow/underflow on both operands,
+    // opposite signs, and a non-identity orientation. Every angle is zero.
+    let pairs = [
+        (Quat::IDENTITY, Quat::from_xyzw(0.0, 0.0, 0.0, large)),
+        (
+            Quat::from_xyzw(0.0, 0.0, 0.0, -large),
+            Quat::from_xyzw(0.0, 0.0, 0.0, tiny),
+        ),
+        (
+            Quat::from_xyzw(0.0, 0.0, tiny, tiny),
+            Quat::from_xyzw(0.0, 0.0, -large, -large),
+        ),
+    ];
+    for ((bone, track), (rest, first)) in doc
+        .skeleton
+        .bones
+        .iter_mut()
+        .zip(&mut doc.clips[0].tracks)
+        .zip(pairs)
+    {
+        bone.rest.rotation = rest;
+        track.values = TrackValues::Quats(vec![first; 2]);
+    }
+    let config =
+        json_config(serde_json::json!({"checks": {"bind-pose": {"max_mean_rest_delta_deg": 0.0}}}));
+    let record = evaluate_bind_pose(&doc, &config);
+    assert_eq!(record.evaluation(), EvaluationState::Complete);
+    assert!(record.findings().is_empty(), "{record:#?}");
+    assert!(record.gaps().is_empty());
+    assert_eq!(record.evaluated_scopes().len(), 1);
+    assert_eq!(
+        record.evaluated_scopes()[0].code,
+        EvaluationScopeCode::FIRST_FRAME_REST_DELTA
+    );
+    assert_eq!(
+        record.evaluated_scopes()[0].subject.as_deref(),
+        Some("pose")
+    );
+}
+
+#[test]
+fn bind_pose_known_angle_mean_preserves_cap_and_attribution() {
+    let mut doc = rotated_first_frame_doc(0.0);
+    // A quarter turn on one of three bones: mean deviation is 90/3 = 30°.
+    doc.clips[0].tracks[0].values =
+        TrackValues::Quats(vec![Quat::from_xyzw(0.0, 0.0, 1e20, 1e20); 2]);
+    for track in &mut doc.clips[0].tracks[1..] {
+        track.values = TrackValues::Quats(vec![Quat::IDENTITY; 2]);
+    }
+    for (cap, expected_count) in [(29.0, 1), (30.0, 0)] {
+        let config = json_config(
+            serde_json::json!({"checks": {"bind-pose": {"max_mean_rest_delta_deg": cap}}}),
+        );
+        let record = evaluate_bind_pose(&doc, &config);
+        assert_eq!(record.evaluation(), EvaluationState::Complete);
+        assert!(record.gaps().is_empty());
+        assert_eq!(record.findings().len(), expected_count, "{record:#?}");
+        if let Some(finding) = record.findings().first() {
+            assert_eq!(finding.severity, Severity::Warning);
+            assert_eq!(finding.clip.as_deref(), Some("pose"));
+            assert_eq!(finding.time_s, Some(0.0));
+            assert!(matches!(finding.measured, Some(Value::Number(value)) if value == 30.0));
+            assert!(matches!(finding.expected, Some(Value::Number(value)) if value == 29.0));
+            assert!(finding.message.contains("worst pelvis: 90°"));
+        }
+    }
+}
+
+#[test]
+fn bind_pose_invalid_first_keys_do_not_supply_the_third_usable_track() {
+    for invalid in [
+        Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+        Quat::from_xyzw(0.0, 0.0, 0.0, f32::INFINITY),
+    ] {
+        let mut doc = rotated_first_frame_doc(0.0);
+        doc.clips[0].tracks[0].values = TrackValues::Quats(vec![invalid; 2]);
+        let record = evaluate_bind_pose(&doc, &Config::default());
+        assert_eq!(record.evaluation(), EvaluationState::NotEvaluated);
+        assert!(record.findings().is_empty());
+        assert!(record.evaluated_scopes().is_empty());
+        assert_eq!(record.gaps().len(), 1);
+        assert_eq!(
+            record.gaps()[0].code,
+            CoverageGapCode::INSUFFICIENT_ROTATION_EVIDENCE
+        );
+        assert!(record.gaps()[0].message.starts_with("only 2 usable"));
+        assert_eq!(
+            record.gaps()[0].scope.as_ref().unwrap().subject.as_deref(),
+            Some("pose")
+        );
+    }
+}
