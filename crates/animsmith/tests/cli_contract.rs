@@ -11934,3 +11934,84 @@ fn inspect_reports_every_selectable_mesh_instance_and_material() {
         )
     );
 }
+
+fn write_cubic_hemisphere_glb(path: &std::path::Path, flipped: bool) {
+    let q1 = Quat::from_xyzw(0.0, 0.24740396, 0.0, 0.9689124);
+    let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    let values = vec![
+        zero,
+        Quat::IDENTITY,
+        zero,
+        zero,
+        if flipped { -q1 } else { q1 },
+        zero,
+    ];
+    let mut doc = two_bone_rotation_doc("cubic", values, false);
+    doc.clips[0].tracks[0].times = vec![0.0, 1.0];
+    doc.clips[0].tracks[0].interpolation = Interpolation::CubicSpline;
+    animsmith_gltf::write::write(&doc, path).unwrap();
+}
+
+#[test]
+fn fix_cubic_hemisphere_preserves_bytes_for_default_and_selected_repairs() {
+    let dir = unique_temp_dir("cubic-hemisphere");
+    let input = dir.path().join("cubic.glb");
+    write_cubic_hemisphere_glb(&input, true);
+    let before = std::fs::read(&input).unwrap();
+    for selected in [false, true] {
+        let fixed = dir.path().join(format!("fixed-{selected}.glb"));
+        for write in [false, true] {
+            let mut command = animsmith();
+            command.arg("fix").arg(&input);
+            if selected {
+                command.args(["--repair", "quat-flip"]);
+            }
+            if write {
+                command.arg("-o").arg(&fixed);
+            } else {
+                command.arg("--dry-run");
+            }
+            let output = command.output().unwrap();
+            assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+            let out = stdout(&output);
+            assert!(out.contains("skipped[quat-flip]"), "{out}");
+            assert!(
+                out.contains("quat-flip skipped to preserve the curve"),
+                "{out}"
+            );
+            assert!(!out.contains("fixed["), "{out}");
+            assert_eq!(std::fs::read(&input).unwrap(), before);
+            if write {
+                assert_eq!(std::fs::read(&fixed).unwrap(), before);
+            } else {
+                assert!(!fixed.exists());
+            }
+        }
+    }
+    let output = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("--in-place")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains("skipped[quat-flip]"));
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+}
+
+#[test]
+fn fix_cubic_hemisphere_clean_control_has_no_false_skip() {
+    let dir = unique_temp_dir("clean-cubic-hemisphere");
+    let input = dir.path().join("clean.glb");
+    write_cubic_hemisphere_glb(&input, false);
+    let before = std::fs::read(&input).unwrap();
+    let output = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(!stdout(&output).contains("skipped["), "{}", stdout(&output));
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+}

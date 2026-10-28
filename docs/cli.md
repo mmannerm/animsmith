@@ -524,8 +524,8 @@ errors. `fix --dry-run` is the repair check mode: it exits 1 when the
 file has repairable defects and 0 otherwise, so CI can gate on "this
 asset needs fixing" without writing anything. The exit code
 reflects repairs `fix` would actually perform: tracks it cannot patch
-(data-URI buffers, cubic `quat-norm` tracks, quantized rotations) are printed as
-`skipped[...]` but do not fail the check — gate on `lint` (the
+(data-URI buffers, cubic rotation tracks needing repair, quantized rotations)
+are printed as `skipped[...]` but do not fail the check — gate on `lint` (the
 `quat-norm` or `quat-flip` checks) when detection alone should fail CI.
 
 ## Unsupported glTF Encodings
@@ -765,7 +765,12 @@ adding one. Repairs have stable ids so scripts can pin exact behavior:
 | Repair id | Behavior |
 |---|---|
 | `quat-norm` | Unit-normalizes finite, non-zero LINEAR/STEP quaternion keys. This is lossless because scaling a quaternion does not change the represented rotation after normalization. CUBICSPLINE tracks are skipped to preserve tangents. |
-| `quat-flip` | Normalizes adjacent quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. |
+| `quat-flip` | Normalizes adjacent LINEAR/STEP quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. CUBICSPLINE tracks needing a flip are skipped to preserve the authored curve. |
+
+For CUBICSPLINE rotation, negating an individual key and its tangents can
+change the curve between keys even though the endpoint rotations remain
+equivalent. `fix` leaves those tracks byte-identical and reports a skip when
+it detects a repair need; clean cubic tracks do not produce a skip message.
 
 By default `fix` runs every repair. `--repair id[,id]` pins an exact
 list (`animsmith fix --help` names the valid ids). `fix` writes only
