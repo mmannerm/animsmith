@@ -253,6 +253,14 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   is not byte-identical and would rewrite bytes `fix` must leave
   untouched. The `Document` round-trip is the right tool for
   `convert`/`transform`; in-place `fix` is not a round-trip.
+- Assembly quaternion cleanup unit-normalizes and aligns LINEAR/STEP signs.
+  CUBICSPLINE value keys are admitted within the existing `quat-norm` length
+  tolerance (`1e-3`, evaluated in `f64`) and retained with every tangent and
+  sign unchanged. Out-of-band cubic values produce the existing transform
+  refusal before publication; individual normalization or triplet flipping is
+  not a lossless curve repair. The independent scale reference uses this same
+  admission without mutating accepted cubic components. Constant-track pruning
+  remains owned by the shared interpolation-aware classifier.
 - `convert` and `assemble` are compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the

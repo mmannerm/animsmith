@@ -1515,6 +1515,58 @@ fn v4_rebases_every_cubic_slot_for_a_factor_greater_than_one() {
     let authored = factor_two_rig_glb();
     write_cubic_asset_from(&dir.path().join("inputs/base.glb"), &authored, 0.0);
     write_cubic_asset_from(&dir.path().join("inputs/clip.glb"), &authored, 10.0);
+    // Reach back to authored rotation bytes, not two outputs of the same
+    // cleanup on the staged and independent reference documents.
+    let rotations: [[f32; 4]; 6] = [
+        [0.25, -0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0005],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, -0.5, 0.0, 0.0],
+        [0.0, -0.25f32.sin() * 1.0005, 0.0, -0.25f32.cos() * 1.0005],
+        [0.0, 0.0, 0.25, 0.0],
+    ];
+    let clip_path = dir.path().join("inputs/clip.glb");
+    let mut source = animsmith_gltf::load(&clip_path).unwrap();
+    let rotation = source.clips[0]
+        .tracks
+        .iter_mut()
+        .find(|track| track.property == Property::Rotation)
+        .unwrap();
+    rotation.interpolation = Interpolation::CubicSpline;
+    rotation.times = vec![0.0, 1.0];
+    rotation.values = TrackValues::Quats(rotations.into_iter().map(Quat::from_array).collect());
+    animsmith_gltf::write::write(&source, &clip_path).unwrap();
+    let raw_rotation = |path: &Path| {
+        let bytes = std::fs::read(path).unwrap();
+        let gltf = gltf::Gltf::from_slice(&bytes).unwrap();
+        let channel = gltf
+            .animations()
+            .next()
+            .unwrap()
+            .channels()
+            .find(|channel| channel.target().property() == gltf::animation::Property::Rotation)
+            .unwrap();
+        let sampler = channel.sampler();
+        assert_eq!(
+            sampler.interpolation(),
+            gltf::animation::Interpolation::CubicSpline
+        );
+        let accessor = sampler.output();
+        let view = accessor.view().unwrap();
+        let blob = gltf.blob.as_ref().unwrap();
+        (0..accessor.count())
+            .flat_map(|key| {
+                let start = view.offset() + accessor.offset() + key * view.stride().unwrap_or(16);
+                blob[start..start + 16].iter().copied()
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected_rotation = rotations
+        .iter()
+        .flatten()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>();
+    assert_eq!(raw_rotation(&clip_path), expected_rotation);
     std::fs::write(
         dir.path().join("recipe.toml"),
         recipe("clip.glb").replace("expected_factor = 0.01", "expected_factor = 2.0"),
@@ -1549,6 +1601,11 @@ fn v4_rebases_every_cubic_slot_for_a_factor_greater_than_one() {
     for (slot, expected) in values.iter().zip(expected) {
         assert!(slot.abs_diff_eq(expected * 2.0, 1.0e-5));
     }
+    assert_eq!(
+        raw_rotation(&dir.path().join("character.glb")),
+        expected_rotation
+    );
+    assert_eq!(raw_rotation(&clip_path), expected_rotation);
 }
 
 #[test]
