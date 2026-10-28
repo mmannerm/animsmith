@@ -4957,6 +4957,34 @@ fn transform_hold_emits_the_next_representable_f32_time() {
 }
 
 #[test]
+fn transform_slice_preserves_a_lone_drifted_endpoint() {
+    let dir = unique_temp_dir("transform-lone-drift");
+    let input = dir.path().join("input.glb");
+    let output = dir.path().join("output.glb");
+    write_timing_transform_glb(&input, [0.0, f32::from_bits(0x3f7fffff)]);
+    let original = std::fs::read(&input).unwrap();
+    let result = animsmith()
+        .arg("transform")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .arg("--slice=-0.5:1")
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+    let written = animsmith_gltf::load(&output).unwrap();
+    let late = written
+        .clips
+        .iter()
+        .find(|clip| clip.name == "late")
+        .unwrap();
+    assert_eq!(late.tracks[0].times, [0.5, 1.5]);
+    assert_eq!(late.tracks[0].key_vec3(0), Some(Vec3::ONE));
+    assert_eq!(late.tracks[0].key_vec3(1), Some(Vec3::splat(2.0)));
+    assert_eq!(std::fs::read(&input).unwrap(), original);
+}
+
+#[test]
 fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     let dir = unique_temp_dir("duplicate-loop-endpoint");
     let input = dir.path().join("input.glb");

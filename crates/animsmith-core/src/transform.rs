@@ -1026,8 +1026,10 @@ pub enum TransformTimingError {
         /// Source key index, or the new key index for a hold.
         key: usize,
     },
-    /// Retiming would collapse an interior source key onto the slice end.
-    #[error("track {track} key {key} rounds onto the slice end in the f32 timeline")]
+    /// An interior key rounded onto the slice end would discard another key.
+    #[error(
+        "track {track} key {key} rounds onto the slice end and would discard another authored key"
+    )]
     RoundedSliceEnd {
         /// Index of the track in the clip.
         track: usize,
@@ -1072,8 +1074,9 @@ fn validate_emitted_times(
 /// one closest to the original boundary is kept and the rest dropped —
 /// so the output has at most one key at 0 and one at the end, stays
 /// time-monotonic, and round-trips its declared duration.
-/// A source key strictly before the end that rounds onto the retimed end
-/// is refused before deduplication can discard a different authored key.
+/// If a source key strictly before the end rounds onto the retimed end,
+/// deduplication must not use it to discard another authored key. That
+/// collision is refused; a lone rounded endpoint remains valid.
 ///
 /// Equal bounds allow a one-frame window; a negative start is also allowed.
 /// Every track's resulting timeline is analyzed before any track is changed.
@@ -1082,8 +1085,8 @@ fn validate_emitted_times(
 ///
 /// Returns [`TransformTimingError`] for invalid numeric arguments or key times
 /// that cannot remain finite, nonnegative and strictly increasing after
-/// retiming and boundary deduplication, or for an interior key rounded onto
-/// the slice end. The clip is unchanged on error.
+/// retiming and boundary deduplication, or when an interior key rounded onto
+/// the slice end would discard another key. The clip is unchanged on error.
 ///
 /// # Panics
 ///
@@ -1121,18 +1124,12 @@ pub fn slice(
     let mut plans = Vec::with_capacity(clip.tracks.len());
     for (track_index, track) in clip.tracks.iter().enumerate() {
         // (key index, retimed+clamped time), in original key order.
-        let mut kept: Vec<(usize, f32)> = (0..track.key_count())
+        let kept: Vec<(usize, f32)> = (0..track.key_count())
             .filter(|&k| track.times[k] >= lower && track.times[k] <= upper)
             .map(|key| {
                 let time = track.times[key] - start;
                 if !time.is_finite() {
                     return Err(TransformTimingError::InvalidKeyTime {
-                        track: track_index,
-                        key,
-                    });
-                }
-                if track.times[key] < end && time >= duration {
-                    return Err(TransformTimingError::RoundedSliceEnd {
                         track: track_index,
                         key,
                     });
@@ -1143,26 +1140,33 @@ pub fn slice(
 
         // Drop boundary duplicates: at t=0 keep the last (closest to
         // `start`); at t=duration keep the first (closest to `end`).
-        // Rounding onto the end was refused above. Check for remaining
-        // interior collisions after the existing boundary-only deduplication.
-        kept.retain({
-            let times: Vec<f32> = kept.iter().map(|&(_, t)| t).collect();
-            let mut i = 0;
-            move |_| {
-                let t = times[i];
-                let keep = if t <= 0.0 {
-                    times.get(i + 1).is_none_or(|&next| next > 0.0)
-                } else if t >= duration {
-                    i == 0 || times[i - 1] < duration
-                } else {
-                    true
-                };
-                i += 1;
+        // Refuse only when end deduplication would discard a later key in
+        // favor of an interior source key rounded onto that boundary.
+        let mut deduplicated: Vec<(usize, f32)> = Vec::with_capacity(kept.len());
+        for (i, &(key, time)) in kept.iter().enumerate() {
+            let keep = if time <= 0.0 {
+                kept.get(i + 1).is_none_or(|&(_, next)| next > 0.0)
+            } else if time >= duration {
+                let keep = i == 0 || kept[i - 1].1 < duration;
+                if !keep
+                    && let Some(&(retained_key, _)) = deduplicated.last()
+                    && track.times[retained_key] < end
+                {
+                    return Err(TransformTimingError::RoundedSliceEnd {
+                        track: track_index,
+                        key: retained_key,
+                    });
+                }
                 keep
+            } else {
+                true
+            };
+            if keep {
+                deduplicated.push((key, time));
             }
-        });
-        validate_emitted_times(track_index, kept.iter().copied())?;
-        plans.push(kept);
+        }
+        validate_emitted_times(track_index, deduplicated.iter().copied())?;
+        plans.push(deduplicated);
     }
 
     for (track, kept) in clip.tracks.iter_mut().zip(plans) {

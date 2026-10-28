@@ -148,6 +148,16 @@ fn slice_refuses_an_interior_key_rounded_onto_end_before_changing_any_track() {
 }
 
 #[test]
+fn slice_keeps_a_lone_drifted_endpoint_without_discarding_keys() {
+    let mut clip = linear_clip(&[0.0, f32::from_bits(0x3f7fffff)]);
+    slice(&mut clip, -0.5, 1.0, 30.0).unwrap();
+    assert_eq!(clip.tracks[0].times, [0.5, 1.5]);
+    assert_eq!(clip.tracks[0].key_vec3(0), Some(Vec3::ONE));
+    assert_eq!(clip.tracks[0].key_vec3(1), Some(Vec3::splat(2.0)));
+    assert_eq!(clip.duration_s, 1.5);
+}
+
+#[test]
 fn slice_preserves_single_frame_negative_start_and_zero_epsilon_uses() {
     let mut pose = linear_clip(&[0.0, 1.0]);
     slice(&mut pose, 1.0, 1.0, 30.0).unwrap();
