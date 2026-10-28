@@ -23,7 +23,9 @@ reader's copy of that identity lives in
 `crates/animsmith-engine/src/bevy_readback_lock.txt`, because the lock is
 outside the published crate; `just bevy-readback-lock-refresh` writes those
 two lines and `just bevy-readback-lock` fails when they and this lock
-disagree. A build script records
+disagree. That static identity check does not resolve Cargo's graph; use
+`--locked` when building or running the probe so Cargo refuses a graph that
+would require changing the recorded lock. A build script records
 the compiler selected by Cargo and refuses compilation unless it is the exact
 official `rustc 1.95.0 (59807616e 2026-04-14)` build; the readback validates
 that observed compiler identity rather than filling a version string at run
@@ -36,14 +38,17 @@ redirect it to a local file rather than committing it. Do not pass commercial
 or private assets through CI, issue text, logs, or public reports.
 
 ```console
-cargo +1.95.0 run --manifest-path tools/bevy-readback/Cargo.toml -- \
+cargo +1.95.0 run --locked --manifest-path tools/bevy-readback/Cargo.toml -- \
   --asset-root /owner-authorized/assets --asset character.glb \
   --prediction character.addressability-v2.json > character.bevy-readback.json
 ```
 
 The asset argument must be a relative `.gltf` or `.glb` path under
-`--asset-root`. The prediction must be AnimSmith's strict rich addressability
-V2 output for the same immutable primary input and dependency closure.
+`--asset-root`. External resource keys are relative to the primary file's
+parent: `nested/character.gltf` referencing `buffer.bin` reads
+`nested/buffer.bin`, never a root-level `buffer.bin`. The prediction must be
+AnimSmith's strict rich addressability V2 output for the same immutable
+primary input and dependency closure.
 
 Before Bevy starts, the probe resolves the owner-provided root once, then
 streams the exact primary plus every complete-closure external resource into a
@@ -51,7 +56,8 @@ private, read-only temporary snapshot while verifying their recorded
 identities. On Windows, it opens each source descriptor before copying, refuses
 final reparse points, and validates the opened handle's final path remains
 under the authorized root; Unix retains nonblocking no-follow opens. It
-preserves each safe source-relative key, points `AssetServer` only at that
+preserves the primary path and resolves each safe resource key under the
+primary's parent in the snapshot too, points `AssetServer` only at that
 snapshot, retains it through all observation, then re-hashes and removes it
 before forming or serializing the readback. The original authorized paths are
 therefore not a second mutable read after verification. A stale or cross-asset
