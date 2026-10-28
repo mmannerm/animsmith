@@ -2629,7 +2629,6 @@ fn assembly_keeps_linear_and_step_quaternion_cleanup() {
         assert_eq!(values, [[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.6, 0.8]]);
         if interpolation == "STEP" {
             assert_eq!(mode, gltf::animation::Interpolation::Step);
-            assert_eq!(values[0], [0.0, 0.0, 0.0, 1.0], "midpoint holds first key");
         } else {
             assert_eq!(mode, gltf::animation::Interpolation::Linear);
             // At halfway, slerp of unit endpoints is their normalized sum.

@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- *(assemble)* preserve admitted cubic quaternion values and tangents during
-  cleanup; refuse out-of-band cubic key magnitudes instead of changing motion
-
 ## [0.14.0](https://github.com/mmannerm/animsmith/compare/v0.13.2...v0.14.0) - 2026-09-16
 
 ### Added
