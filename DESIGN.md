@@ -668,6 +668,15 @@ learns an embedder's contract schema.
 `animsmith report clip.glb -o report.html` → **one self-contained offline
 HTML file** (CI-artifact- and PR-attachment-friendly; no CDN, no install).
 
+Ordinary and comparison reports share source/config/retained-sidecar
+publication preflight and a sibling-file stage followed by the CLI's existing
+single-file rename publisher. A refusal or publication failure preserves the
+sources and any previous report; evidence-only rendering uses the same path.
+The shared retained-dependency identity helper excludes paths below missing
+or non-directory ancestors because they cannot name a valid destination.
+Missing final keys remain protected, and permission or other inspection
+errors still refuse publication; reports need no separate identity exception.
+
 The explicit comparison spelling is a separate presentation producer: it
 preflights named/indexed skeleton correspondence, selected metric-grid work,
 and input text before either side's checks run; writes atomically only to an
