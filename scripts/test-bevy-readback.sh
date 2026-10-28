@@ -66,7 +66,7 @@ jq -e '.conformance.state == "exact" and .observation.terminal.state == "loaded"
 printf 'wrong root-level buffer' > "$work/buffer.bin"
 ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_AFTER_SNAPSHOT=1 ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_DEPENDENCY_AFTER_SNAPSHOT=nested/buffer.bin "$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json" > "$work/nested-race.readback.json"
 jq -e '.conformance.state == "exact" and .observation.terminal.state == "loaded" and .observation.primary_verified == true and .observation.dependencies_verified == true and (.observation.animations | length) == 1 and (.observation.targets | length) == 2' "$work/nested-race.readback.json" >/dev/null
-test "$(wc -c < "$work/nested/buffer.bin")" -gt "$(jq -r '.buffers[0].byteLength' "$work/nested/rig.gltf")"
+test "$(wc -c < "$work/nested/buffer.bin")" -gt "$(jq -r '.buffers[0].byteLength' crates/animsmith-gltf/testdata/rig.gltf)"
 # The live primary can no longer parse, so a loaded result above proves that
 # Bevy consumed the snapshot. Restore it before isolating the missing buffer.
 if jq -e . "$work/nested/rig.gltf" >/dev/null 2>&1; then
