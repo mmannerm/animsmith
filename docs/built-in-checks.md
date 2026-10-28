@@ -562,7 +562,11 @@ only after an explicit `note`, `warn`, or `error` severity.
 
 - Default findings: `warning`.
 - Measurement and finding: checks the mean first-frame rotation deviation from
-  rest across bones with usable rotation tracks.
+  rest across bones with usable rotation tracks. Finite nonzero rest and keyed
+  quaternions use widened angular arithmetic, including very large and subnormal
+  magnitudes; opposite quaternion signs denote the same orientation. Zero and
+  nonfinite rotations do not count as usable evidence. This comparison does not
+  repair authored values or suppress separate `quat-norm` diagnostics.
 - Prerequisites and applicability: active whenever the file has clips. A clip
   needs at least three usable first-frame rotation tracks before the check can
   evaluate it.

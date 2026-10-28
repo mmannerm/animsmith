@@ -11934,3 +11934,76 @@ fn inspect_reports_every_selectable_mesh_instance_and_material() {
         )
     );
 }
+
+#[test]
+fn bind_pose_lint_distinguishes_finite_magnitude_from_orientation() {
+    let directory = unique_temp_dir("bind-pose-finite-magnitude");
+    let path = directory.path().join("identity.glb");
+    for magnitude in [1.0, 1e20, f32::from_bits(1)] {
+        let doc = Document {
+            skeleton: Skeleton {
+                bones: (0..3)
+                    .map(|index| Bone {
+                        name: format!("joint-{index}"),
+                        parent: None,
+                        rest: Transform::IDENTITY,
+                        inverse_bind: None,
+                    })
+                    .collect(),
+            },
+            clips: vec![Clip {
+                name: "identity-at-rest".into(),
+                duration_s: 1.0,
+                tracks: (0..3)
+                    .map(|bone| Track {
+                        bone,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 1.0],
+                        values: TrackValues::Quats(vec![
+                            Quat::from_xyzw(0.0, 0.0, 0.0, magnitude);
+                            2
+                        ]),
+                    })
+                    .collect(),
+            }],
+            ..Document::default()
+        };
+        animsmith_gltf::write::write(&doc, &path).unwrap();
+        let source = std::fs::read(&path).unwrap();
+        let output = animsmith()
+            .arg("lint")
+            .arg(&path)
+            .args(["--select", "bind-pose,quat-norm", "--format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(if magnitude == 1.0 { 0 } else { 1 }),
+            "{}",
+            stderr(&output)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let checks = report["files"][0]["checks"].as_array().unwrap();
+        let bind = checks
+            .iter()
+            .find(|check| check["check_id"] == "bind-pose")
+            .unwrap();
+        assert_eq!(bind["evaluation"], "complete", "{bind:#}");
+        assert!(bind["findings"].as_array().unwrap().is_empty(), "{bind:#}");
+        assert!(bind.get("gaps").is_none());
+        assert_eq!(
+            bind["evaluated_scopes"],
+            json!([{"code": "first_frame_rest_delta", "subject": "identity-at-rest"}])
+        );
+        let norm = checks
+            .iter()
+            .find(|check| check["check_id"] == "quat-norm")
+            .unwrap();
+        assert_eq!(
+            norm["findings"].as_array().unwrap().len(),
+            if magnitude == 1.0 { 0 } else { 3 }
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), source);
+    }
+}
