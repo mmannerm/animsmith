@@ -150,10 +150,12 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
         &config,
         "acceptance-matrix",
     );
-    let first =
-        animsmith_report::render_comparison(before, after, full()).expect("comparison renders");
+    let first = animsmith_report::render_comparison(before, after, full())
+        .expect("comparison renders")
+        .html;
     let second = animsmith_report::render_comparison(before, after, full())
-        .expect("comparison renders deterministically");
+        .expect("comparison renders deterministically")
+        .html;
 
     assert_eq!(first, second);
     assert_self_contained(&first);
@@ -457,7 +459,8 @@ fn comparison_binds_equal_primary_bytes_to_changed_sidecar_closures() {
         comparison_side!(&after_source, &after_grids, &roles, &[], &config, "walk"),
         full(),
     )
-    .unwrap();
+    .unwrap()
+    .html;
     let data = embedded_json(&html, "comparison-report-data");
     assert_eq!(data["before"]["identity"], data["after"]["identity"]);
     assert_ne!(
@@ -510,7 +513,8 @@ fn comparison_projects_node_only_finding_subjects_from_exact_source_authority() 
         comparison_side!(&after_source, &after_grids, &roles, &[], &config, "walk"),
         full(),
     )
-    .unwrap();
+    .unwrap()
+    .html;
     let data = embedded_json(&html, "comparison-report-data");
     assert_eq!(data["before"]["findings"][0]["subject_bone"], 1);
     assert_eq!(data["before"]["findings"][1]["subject_bone"], 1);
@@ -550,7 +554,8 @@ fn identical_findings_get_side_and_occurrence_unique_navigation_anchors() {
         ),
         full(),
     )
-    .unwrap();
+    .unwrap()
+    .html;
     let data = embedded_json(&html, "comparison-report-data");
     let first = data["before"]["findings"][0]["anchor"].as_str().unwrap();
     let second = data["before"]["findings"][1]["anchor"].as_str().unwrap();
@@ -882,7 +887,8 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
         ),
         full(),
     )
-    .expect("matrix comparison renders");
+    .expect("matrix comparison renders")
+    .html;
     let data = embedded_json(&html, "comparison-report-data");
 
     for side in ["before", "after"] {
@@ -1278,7 +1284,8 @@ fn comparison_filters_mechanical_gaps_but_preserves_whole_input_engine_facets() 
         ),
         full(),
     )
-    .unwrap();
+    .unwrap()
+    .html;
     let data = embedded_json(&html, "comparison-report-data");
     assert_eq!(data["before"]["gaps"].as_array().unwrap().len(), 1);
     assert_eq!(
@@ -1322,7 +1329,8 @@ fn render_embeds_pose_grid_and_uses_no_external_urls() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     assert_self_contained(&html);
     let data = report_data(&html);
     let clips = data["clips"].as_array().expect("clips array");
@@ -1378,7 +1386,8 @@ fn render_self_contained_with_roles_findings_and_charts() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     assert_self_contained(&html);
     assert!(
         html.contains(r#"data-kind="gait""#),
@@ -1419,7 +1428,7 @@ fn render_respects_clip_filter() {
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
-    let html = animsmith_report::render(animsmith_report::ReportInputs {
+    let error = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
         source: &source,
@@ -1428,13 +1437,13 @@ fn render_respects_clip_filter() {
         clip: Some("missing"),
         options: full(),
     })
-    .expect("report renders");
-    assert_self_contained(&html);
-    let data = report_data(&html);
+    .unwrap_err();
     assert_eq!(
-        data["clips"].as_array().expect("clips array").len(),
-        0,
-        "unknown --clip filter excludes every pose grid"
+        error,
+        animsmith_report::ReportError::ClipNotFound {
+            side: "input",
+            clip: "missing".into()
+        }
     );
 
     for name in ["walk", "idle"] {
@@ -1447,7 +1456,8 @@ fn render_respects_clip_filter() {
             clip: Some(name),
             options: full(),
         })
-        .expect("report renders");
+        .expect("report renders")
+        .html;
         let data = report_data(&html);
         let clips = data["clips"].as_array().expect("clips array");
         assert_eq!(clips.len(), 1);
@@ -1501,7 +1511,8 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
             clip: None,
             options: full(),
         })
-        .expect("report renders");
+        .expect("report renders")
+        .html;
         let data = report_data(&html);
         let states = data["engine_evidence"]["checks"][0]["prediction"]["facets"]
             .as_array()
@@ -1666,6 +1677,7 @@ fn comparison_documents(options: animsmith_report::ReportOptions) -> String {
         options,
     )
     .expect("comparison renders")
+    .html
 }
 
 fn themed_documents() -> Vec<(&'static str, String)> {
@@ -1685,7 +1697,8 @@ fn themed_documents() -> Vec<(&'static str, String)> {
                 clip: None,
                 options: full(),
             })
-            .expect("report renders"),
+            .expect("report renders")
+            .html,
         ),
         ("comparison", comparison_documents(full())),
     ]
@@ -1990,6 +2003,7 @@ fn both_single_clip_forms_offer_pairing_and_only_a_full_one_names_the_two_halves
             )
         })
         .expect("report renders")
+        .html
     };
     let full_html = single(full());
     let evidence_html = single(evidence_only());
@@ -2237,7 +2251,8 @@ fn charts_keep_their_sync_hooks_and_describe_themselves() {
         clip: Some("walk"),
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     assert_self_contained(&html);
 
     let figures = chart_figures(&html);
@@ -2408,7 +2423,8 @@ fn the_gait_chart_scales_its_two_value_axes_independently() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -2507,7 +2523,8 @@ fn non_finite_samples_are_reported_as_unavailable_rather_than_plotted() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let path = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2585,7 +2602,8 @@ fn root_path_figure(values: Vec<animsmith_core::glam::Vec3>) -> String {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2945,7 +2963,8 @@ fn an_all_non_finite_series_is_named_rather_than_plotted_as_nan() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -3006,7 +3025,8 @@ fn a_flat_series_is_centred_and_labelled_once() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -3052,7 +3072,8 @@ fn a_stationary_root_path_says_so_in_words() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let path = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -3094,7 +3115,8 @@ fn a_stationary_root_path_says_so_in_words() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let parked_path = chart_figures(&parked_html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -3127,7 +3149,8 @@ fn a_stationary_root_path_says_so_in_words() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let moving = chart_figures(&travelled)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -3188,7 +3211,8 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
 
     let figure = chart_figures(&html)
         .into_iter()
@@ -3354,7 +3378,8 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
@@ -3364,7 +3389,8 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
         clip: None,
         options: evidence_only(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     assert_self_contained(&html);
 
     let full_data = report_data(&full_html);
@@ -3494,7 +3520,8 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
@@ -3504,7 +3531,8 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
         clip: None,
         options: evidence_only(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
 
     // Every payload the document carries, not only the field the pose grid
     // used to occupy.
@@ -3781,7 +3809,8 @@ fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
 
     let (before, after) = sides();
     let html = animsmith_report::render_comparison(before, after, evidence_only())
-        .expect("an evidence-only comparison embeds no grid, so the budget does not apply");
+        .expect("an evidence-only comparison embeds no grid, so the budget does not apply")
+        .html;
     let data = embedded_json(&html, "comparison-report-data");
     assert_eq!(data["evidence_only"], true);
     assert_eq!(data["before"]["clip"]["frames"], FRAMES);
@@ -3863,9 +3892,13 @@ fn an_evidence_only_comparison_carries_no_unplotted_sample() {
         )
     };
     let (before, after) = sides();
-    let full_html = animsmith_report::render_comparison(before, after, full()).unwrap();
+    let full_html = animsmith_report::render_comparison(before, after, full())
+        .unwrap()
+        .html;
     let (before, after) = sides();
-    let html = animsmith_report::render_comparison(before, after, evidence_only()).unwrap();
+    let html = animsmith_report::render_comparison(before, after, evidence_only())
+        .unwrap()
+        .html;
 
     let full_payloads = document_payloads(&full_html, "comparison-report-data");
     let payloads = document_payloads(&html, "comparison-report-data");
@@ -3963,7 +3996,8 @@ fn every_single_clip_chart_caption_says_what_to_look_for() {
         clip: Some("walk"),
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let figures = chart_figures(&html);
     let caption = |kind: &str| {
         figcaption(
@@ -4071,6 +4105,7 @@ fn the_root_path_marks_where_the_track_starts_and_ends() {
             options: full(),
         })
         .expect("report renders")
+        .html
     };
     let render = |doc: &Document| {
         let html = render_document(doc);
@@ -4472,7 +4507,8 @@ fn contract_captions(
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     chart_figures(&html)
         .into_iter()
         .map(|figure| (attribute(&figure, "data-kind"), figcaption(&figure)))
@@ -4876,7 +4912,8 @@ fn group_figures(
         clip: clip_filter,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let figures = chart_figures(&html)
         .into_iter()
         .filter(|figure| attribute(figure, "data-kind") == "gait-group")
@@ -4974,7 +5011,8 @@ fn a_coherent_gait_group_is_drawn_as_one_figure_within_its_cap() {
         clip: None,
         options: evidence_only(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
     let evidence_figure = chart_figures(&evidence)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait-group")
@@ -5808,7 +5846,8 @@ fn the_document_names_each_groups_members_and_no_figure_names_a_clip() {
         clip: None,
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
 
     let figure = chart_figures(&html)
         .into_iter()
@@ -5897,7 +5936,8 @@ fn a_clip_filtered_report_still_draws_the_whole_group() {
         clip: Some("run_left"),
         options: full(),
     })
-    .expect("report renders");
+    .expect("report renders")
+    .html;
 
     // The document itself is scoped to the selected clip.
     let data = report_data(&html);
@@ -5992,7 +6032,8 @@ fn the_extractors_member_dashes_are_the_stylesheets_own() {
             clip: None,
             options: full(),
         })
-        .expect("report renders"),
+        .expect("report renders")
+        .html,
     );
     let style = animsmith_testkit::docs_visuals::chart_style("chart-one");
     for (member, dashes) in animsmith_testkit::docs_visuals::GROUP_MEMBER_DASHES
@@ -6078,7 +6119,8 @@ fn current_evidence_owns_facet_limit_and_report_preserves_the_admitted_maximum()
         &evidence,
         &no_groups(),
     ))
-    .unwrap();
+    .unwrap()
+    .html;
     let data = report_data(&html);
     assert_eq!(
         data["engine_evidence"]["projection"]["facets"]
@@ -6123,11 +6165,11 @@ fn ordinary_report_counts_original_engine_text_before_rendering() {
             &no_groups(),
         ))
     };
-    let baseline = report_data(&render(String::new()).unwrap());
+    let baseline = report_data(&render(String::new()).unwrap().html);
     let overhead = serde_json::to_vec(&baseline["engine_evidence"])
         .unwrap()
         .len();
-    let exact = report_data(&render("x".repeat(LIMIT - overhead)).unwrap());
+    let exact = report_data(&render("x".repeat(LIMIT - overhead)).unwrap().html);
     assert_eq!(
         serde_json::to_vec(&exact["engine_evidence"]).unwrap().len(),
         LIMIT
@@ -6139,4 +6181,139 @@ fn ordinary_report_counts_original_engine_text_before_rendering() {
             limit: LIMIT
         }
     );
+}
+
+#[test]
+fn emitted_counts_track_selection_and_omit_unavailable_grids() {
+    let mut doc = animsmith_gltf::load(&fixture()).unwrap();
+    let mut other = doc.clips[0].clone();
+    other.name = "other".into();
+    let mut unsampled = other.clone();
+    unsampled.name = "unsampled".into();
+    unsampled.tracks.clear();
+    doc.clips.extend([other, unsampled]);
+    let source = synthetic_source(doc);
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "walk-only").clip("walk"),
+        Finding::new("fixture-check", Severity::Warning, "other-only").clip("other"),
+        Finding::new("fixture-check", Severity::Warning, "global"),
+    ]);
+    let evidence = evidence_for(&source, &roles, &checks, None);
+    let config = no_groups();
+    let inputs = animsmith_report::ReportInputs::new(&grids, &roles, &source, &evidence, &config);
+    let all = animsmith_report::render(inputs).unwrap();
+    assert_eq!(all.clip_count, 3);
+    assert_eq!(all.finding_count, 3);
+    let names: Vec<_> = report_data(&all.html)["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|clip| clip["name"].clone())
+        .collect();
+    assert_eq!(names, ["walk", "idle", "other"]);
+    let selected = animsmith_report::render(animsmith_report::ReportInputs {
+        clip: Some("other"),
+        options: evidence_only(),
+        ..inputs
+    })
+    .unwrap();
+    assert_eq!(selected.clip_count, 1);
+    assert_eq!(report_data(&selected.html)["clips"][0]["name"], "other");
+    assert_eq!(selected.finding_count, 2);
+    let messages: Vec<_> = report_data(&selected.html)["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| finding["message"].clone())
+        .collect();
+    assert_eq!(messages, ["other-only", "global"]);
+    let unsampled = animsmith_report::render(animsmith_report::ReportInputs {
+        clip: Some("unsampled"),
+        ..inputs
+    })
+    .unwrap_err();
+    assert_eq!(
+        unsampled,
+        animsmith_report::ReportError::UnavailableSampleGrid {
+            side: "input",
+            clip: "unsampled".into()
+        }
+    );
+}
+
+#[test]
+fn ordinary_explicit_clip_name_rejects_duplicates() {
+    let mut doc = animsmith_gltf::load(&fixture()).unwrap();
+    doc.clips.push(doc.clips[0].clone());
+    let source = synthetic_source(doc);
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let evidence = evidence_for(&source, &roles, &[], None);
+    let config = no_groups();
+    let inputs = animsmith_report::ReportInputs::new(&grids, &roles, &source, &evidence, &config);
+    assert_eq!(
+        animsmith_report::render(animsmith_report::ReportInputs {
+            clip: Some("walk"),
+            ..inputs
+        })
+        .unwrap_err(),
+        animsmith_report::ReportError::AmbiguousClip {
+            side: "input",
+            clip: "walk".into()
+        }
+    );
+}
+
+#[test]
+fn comparison_finding_count_sums_only_the_two_selected_lists() {
+    let before = animsmith_gltf::load_source(&fixture()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let after_path = directory.path().join("after.gltf");
+    let mut after_json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    after_json["asset"]["generator"] = serde_json::json!("distinct comparison count fixture");
+    std::fs::write(&after_path, serde_json::to_vec(&after_json).unwrap()).unwrap();
+    let after = animsmith_gltf::load_source(&after_path).unwrap();
+    let before_grids = MetricGrids::new(before.document());
+    let after_grids = MetricGrids::new(after.document());
+    let roles = ResolvedRoles::default();
+    let config = no_groups();
+    let before_checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "before selected").clip("walk"),
+        Finding::new("fixture-check", Severity::Warning, "before omitted").clip("idle"),
+        Finding::new("fixture-check", Severity::Warning, "before global"),
+    ]);
+    let after_checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "after selected").clip("walk"),
+        Finding::new("fixture-check", Severity::Warning, "after omitted").clip("idle"),
+    ]);
+    let report = animsmith_report::render_comparison(
+        comparison_side!(
+            &before,
+            &before_grids,
+            &roles,
+            &before_checks,
+            &config,
+            "walk"
+        ),
+        comparison_side!(&after, &after_grids, &roles, &after_checks, &config, "walk"),
+        evidence_only(),
+    )
+    .unwrap();
+    assert_eq!(report.clip_count, 2);
+    assert_eq!(report.finding_count, 3);
+    let data = embedded_json(&report.html, "comparison-report-data");
+    for (side, expected) in [
+        ("before", vec!["before selected", "before global"]),
+        ("after", vec!["after selected"]),
+    ] {
+        let messages: Vec<_> = data[side]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| finding["message"].as_str().unwrap())
+            .collect();
+        assert_eq!(messages, expected);
+    }
 }

@@ -11983,7 +11983,17 @@ mod report_current_engine {
         assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
         let html = std::fs::read_to_string(path).unwrap();
         assert!(html.contains("Whole-input engine evidence"));
-        payload(&html, "report-data")
+        let data = payload(&html, "report-data");
+        assert!(
+            stdout(&output).contains(&format!(
+                "({} clip(s), {} finding(s),",
+                data["clips"].as_array().unwrap().len(),
+                data["findings"].as_array().unwrap().len(),
+            )),
+            "summary must describe emitted clips and findings: {}",
+            stdout(&output)
+        );
+        data
     }
 
     fn assert_exact(lint: &Value, engine: &Value) {
@@ -12007,6 +12017,183 @@ mod report_current_engine {
             .iter()
             .filter(|facet| facet["check_id"] == id)
             .collect()
+    }
+
+    #[test]
+    fn invalid_report_selectors_preserve_previous_output() {
+        let dir = unique_temp_dir("report-invalid-selection");
+        let input = dir.path().join("source.gltf");
+        let path = dir.path().join("report.html");
+        let original: Value =
+            serde_json::from_slice(&std::fs::read(fixture("rig.gltf")).unwrap()).unwrap();
+        for (case, selector, diagnostic, evidence_only) in [
+            ("missing", "absent", "was not found", false),
+            (
+                "source-only",
+                "walk",
+                "has no available metric sample grid",
+                true,
+            ),
+        ] {
+            if case == "source-only" {
+                write_source_animation_inventory_gltf(&input, &[Some("walk")]);
+            } else {
+                write_json(&input, &original);
+            }
+            let source_bytes = std::fs::read(&input).unwrap();
+            std::fs::write(&path, b"previous report sentinel").unwrap();
+            let mut command = animsmith();
+            command
+                .arg("report")
+                .arg(&input)
+                .args(["--clip", selector])
+                .arg("-o")
+                .arg(&path);
+            if evidence_only {
+                command.arg("--evidence-only");
+            }
+            let output = command.output().unwrap();
+            assert_eq!(output.status.code(), Some(2), "{case}: {}", stderr(&output));
+            assert!(
+                stderr(&output).contains(diagnostic),
+                "{case}: {}",
+                stderr(&output)
+            );
+            assert!(output.stdout.is_empty(), "no success summary for {case}");
+            assert_eq!(std::fs::read(&path).unwrap(), b"previous report sentinel");
+            assert_eq!(std::fs::read(&input).unwrap(), source_bytes);
+        }
+    }
+
+    #[test]
+    fn report_selects_each_normalized_display_name_for_duplicate_authored_names() {
+        let dir = unique_temp_dir("report-duplicate-display-names");
+        let input = dir.path().join("source.gltf");
+        let mut source: Value =
+            serde_json::from_slice(&std::fs::read(fixture("rig.gltf")).unwrap()).unwrap();
+        let duplicate = source["animations"][0].clone();
+        source["animations"].as_array_mut().unwrap().push(duplicate);
+        write_json(&input, &source);
+        let config = write_bevy_config(dir.path(), "duplicate-display-names");
+        for name in ["walk", "walk#1"] {
+            let data = report(&input, &config, &["--clip", name, "--evidence-only"]);
+            assert_eq!(data["clips"].as_array().unwrap().len(), 1);
+            assert_eq!(data["clips"][0]["name"], name);
+        }
+    }
+
+    #[test]
+    fn report_summaries_count_emitted_clips_and_the_two_comparison_sides() {
+        let dir = unique_temp_dir("report-comparison-count");
+        let before = dir.path().join("before.gltf");
+        let after = dir.path().join("after.gltf");
+        let path = dir.path().join("comparison.html");
+        let mut source: Value =
+            serde_json::from_slice(&std::fs::read(fixture("rig.gltf")).unwrap()).unwrap();
+        write_json(&after, &source);
+        for name in ["other", "third"] {
+            let mut clip = source["animations"][0].clone();
+            clip["name"] = json!(name);
+            source["animations"].as_array_mut().unwrap().push(clip);
+        }
+        source["animations"].as_array_mut().unwrap().push(json!({
+            "name": "unsampled", "channels": [], "samplers": []
+        }));
+        write_json(&before, &source);
+        let config = dir.path().join("counts.toml");
+        std::fs::write(
+            &config,
+            "[clips.other]\nduration_s = { value = 99.0, tolerance = 0.0 }\n",
+        )
+        .unwrap();
+        let selected = report(&before, &config, &["--clip", "walk"]);
+        assert!(
+            selected["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|finding| finding["clip"] != "other")
+        );
+        let ordinary = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .arg("report")
+            .arg(&before)
+            .arg("-o")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_eq!(ordinary.status.code(), Some(0), "{}", stderr(&ordinary));
+        assert!(
+            stdout(&ordinary).contains("(3 clip(s),"),
+            "{}",
+            stdout(&ordinary)
+        );
+        let data = payload(&std::fs::read_to_string(&path).unwrap(), "report-data");
+        let names: Vec<_> = data["clips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|clip| clip["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["walk", "other", "third"]);
+        assert!(
+            data["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["clip"] == "other")
+        );
+        assert!(
+            data["findings"].as_array().unwrap().len()
+                > selected["findings"].as_array().unwrap().len()
+        );
+        let output = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .arg("report")
+            .arg(&before)
+            .arg("--compare-after")
+            .arg(&after)
+            .args([
+                "--before-clip",
+                "walk",
+                "--after-clip",
+                "walk",
+                "--evidence-only",
+            ])
+            .arg("-o")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        assert!(
+            stdout(&output).contains("(2 clip(s),"),
+            "{}",
+            stdout(&output)
+        );
+        let data = payload(
+            &std::fs::read_to_string(&path).unwrap(),
+            "comparison-report-data",
+        );
+        assert_eq!(data["correspondence"]["before_clip"], "walk");
+        assert_eq!(data["correspondence"]["after_clip"], "walk");
+        let before_findings = data["before"]["findings"].as_array().unwrap();
+        let after_findings = data["after"]["findings"].as_array().unwrap();
+        assert!(
+            before_findings
+                .iter()
+                .chain(after_findings)
+                .all(|finding| finding["clip"] != "other")
+        );
+        assert!(
+            stdout(&output).contains(&format!(
+                "(2 clip(s), {} finding(s),",
+                before_findings.len() + after_findings.len()
+            )),
+            "{}",
+            stdout(&output)
+        );
     }
 
     #[test]

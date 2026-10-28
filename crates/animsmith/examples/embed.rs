@@ -131,10 +131,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // V3/V5/V6 provenance and catalog choices for a profiled host.
     #[cfg(feature = "report")]
     {
-        let html = animsmith_report::render(animsmith_report::ReportInputs::new(
+        let report = animsmith_report::render(animsmith_report::ReportInputs::new(
             &grids, &roles, &source, &evidence, &config,
         ))?;
-        println!("HTML report: {} bytes", html.len());
+        println!(
+            "HTML report: {} clips, {} findings, {} bytes",
+            report.clip_count,
+            report.finding_count,
+            report.html.len()
+        );
     }
     let report = LintEnvelopeV19::new(
         ToolInfo::animsmith(ToolSource::new(None, None)),

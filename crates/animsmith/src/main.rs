@@ -875,17 +875,15 @@ fn main() -> ExitCode {
 #[cfg(feature = "report")]
 fn write_report(
     output: &Path,
-    doc: &Document,
-    finding_count: usize,
-    html: String,
+    report: animsmith_report::RenderedReport,
 ) -> Result<ExitCode, String> {
-    std::fs::write(output, &html)
+    std::fs::write(output, &report.html)
         .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
     publish::emit_text(&render::render_report_written(
         output,
-        doc.clips.len(),
-        finding_count,
-        html.len(),
+        report.clip_count,
+        report.finding_count,
+        report.html.len(),
     ));
     Ok(ExitCode::SUCCESS)
 }
@@ -2013,10 +2011,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 Severity::Error,
                 &BTreeSet::new(),
             )?;
-            let doc = loaded.document();
-            let evaluations = analysis.report.checks();
-            let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
-            let html = match comparison_after {
+            let report = match comparison_after {
                 None => animsmith_report::render(animsmith_report::ReportInputs {
                     source: &loaded.source,
                     grids: &analysis.grids,
@@ -2043,7 +2038,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         Severity::Error,
                         &BTreeSet::new(),
                     )?;
-                    let html = animsmith_report::render_comparison(
+                    let report = animsmith_report::render_comparison(
                         animsmith_report::ComparisonSide {
                             source: &loaded.source,
                             grids: &analysis.grids,
@@ -2063,13 +2058,6 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         report_options,
                     )
                     .map_err(|error| error.to_string())?;
-                    let finding_count = finding_count
-                        + after_analysis
-                            .report
-                            .checks()
-                            .iter()
-                            .map(|check| check.findings().len())
-                            .sum::<usize>();
                     let mut comparison_inputs = vec![
                         ("before input", file.as_path()),
                         ("after input", after_path.as_path()),
@@ -2077,17 +2065,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     if let Some(config_path) = loaded_config.control_input() {
                         comparison_inputs.push(("configuration input", config_path));
                     }
-                    publish_comparison_report(&output, &comparison_inputs, &html)?;
+                    publish_comparison_report(&output, &comparison_inputs, &report.html)?;
                     publish::emit_text(&render::render_report_written(
                         &output,
-                        doc.clips.len(),
-                        finding_count,
-                        html.len(),
+                        report.clip_count,
+                        report.finding_count,
+                        report.html.len(),
                     ));
                     return Ok(ExitCode::SUCCESS);
                 }
             };
-            write_report(&output, doc, finding_count, html)
+            write_report(&output, report)
         }
         Cmd::Transform {
             input,

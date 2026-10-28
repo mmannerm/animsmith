@@ -21,8 +21,8 @@
 //! ) -> Result<(), Box<dyn std::error::Error>> {
 //! let grids = animsmith_core::MetricGrids::new(source.document());
 //! let inputs = animsmith_report::ReportInputs::new(&grids, roles, source, evidence, config);
-//! let html = animsmith_report::render(inputs)?;
-//! std::fs::write("report.html", html)?;
+//! let report = animsmith_report::render(inputs)?;
+//! std::fs::write("report.html", report.html)?;
 //! Ok(())
 //! }
 //! ```
@@ -268,6 +268,22 @@ pub struct ComparisonSide<'a> {
     pub clip: &'a str,
 }
 
+/// Self-contained HTML and counts of the emitted clip and finding entries.
+#[derive(Debug)]
+pub struct RenderedReport {
+    /// Complete HTML document, ready to store or serve.
+    pub html: String,
+    /// Emitted ordinary clip entries, or the two selected comparison sides.
+    ///
+    /// Without a selector, clips without an available metric grid are omitted.
+    /// Whole-input engine evidence may describe additional source clips.
+    pub clip_count: usize,
+    /// Entries in the report's filtered finding lists, summed across comparison sides.
+    ///
+    /// Whole-input engine attachments may retain additional unselected findings.
+    pub finding_count: usize,
+}
+
 /// Refusal returned before report HTML is produced.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ReportError {
@@ -497,7 +513,7 @@ pub fn render_comparison(
     before: ComparisonSide<'_>,
     after: ComparisonSide<'_>,
     options: ReportOptions,
-) -> Result<String, ReportError> {
+) -> Result<RenderedReport, ReportError> {
     let before_doc = before.grids.document();
     let after_doc = after.grids.document();
     validate_side_authority(before, "before")?;
@@ -537,7 +553,7 @@ pub fn render_comparison(
         })?;
 
     let bones = comparison_bones(before_doc);
-    let before_side = comparison_side_json(
+    let (before_side, before_finding_count) = comparison_side_json(
         before,
         before_clip.name.as_str(),
         before_clip.duration_s,
@@ -545,7 +561,7 @@ pub fn render_comparison(
         "before",
         options,
     )?;
-    let after_side = comparison_side_json(
+    let (after_side, after_finding_count) = comparison_side_json(
         after,
         after_clip.name.as_str(),
         after_clip.duration_s,
@@ -609,8 +625,11 @@ pub fn render_comparison(
     } else {
         ""
     };
-    Ok(format!(
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
+    Ok(RenderedReport {
+        clip_count: 2,
+        finding_count: before_finding_count + after_finding_count,
+        html: format!(
+            "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>animsmith — visual comparison</title><style>{TOKENS_CSS}{BASE_CSS}{COMPARISON_CSS}</style></head>\n\
          <body><header><h1>animsmith visual comparison</h1></header>\n\
@@ -623,7 +642,8 @@ pub fn render_comparison(
          <section class=\"side\" id=\"before-evidence\"><h2>Before evidence</h2><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Whole-input engine evidence</h3><pre id=\"before-predictions\"></pre></section>\n\
          <section class=\"side\" id=\"after-evidence\"><h2>After evidence</h2><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Whole-input engine evidence</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script>{shared_js}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
-    ))
+        ),
+    })
 }
 
 fn select_clip<'a>(
@@ -1065,7 +1085,7 @@ fn comparison_side_json(
     grid: &PoseGrid,
     side_name: &'static str,
     options: ReportOptions,
-) -> Result<Value, ReportError> {
+) -> Result<(Value, usize), ReportError> {
     let frames = grid.frame_count();
     let bones = side.grids.document().skeleton.bones.len();
     let mut positions = Vec::new();
@@ -1131,17 +1151,21 @@ fn comparison_side_json(
     // comparison of the same clip. The viewer supplies only the measured
     // numbers around them.
     let contract = clip_contract(side.evidence.checks(), clip_name);
-    Ok(json!({
-        "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
-        "dependency_closure_identity": closure_identity,
-        "guidance": {
-            "root_path": contract.root_path_guidance(SHARED_PATH_MARKS),
-            "gait": contract.gait_guidance(true),
-        },
-        "clip": clip,
-        "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
-        "findings":findings,"gaps":gaps,"engine_evidence":engine,
-    }))
+    let finding_count = anchored_findings.len();
+    Ok((
+        json!({
+            "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
+            "dependency_closure_identity": closure_identity,
+            "guidance": {
+                "root_path": contract.root_path_guidance(SHARED_PATH_MARKS),
+                "gait": contract.gait_guidance(true),
+            },
+            "clip": clip,
+            "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
+            "findings":findings,"gaps":gaps,"engine_evidence":engine,
+        }),
+        finding_count,
+    ))
 }
 
 /// The sampled pose grid as base64, or nothing at all for an evidence-only
@@ -1595,7 +1619,8 @@ pub struct ReportInputs<'a> {
     /// group's members against each other; the report reads nothing else
     /// out of it.
     pub config: &'a Config,
-    /// Restricts the report to one clip name when present. The gait-group
+    /// Restricts the report to one normalized clip name when present; the
+    /// name must resolve uniquely in the document. The gait-group
     /// figures a selected clip belongs to are still drawn from every member,
     /// because the group is what that clip is judged against. Engine evidence
     /// remains whole-input, including other clips and source-only subjects.
@@ -1633,14 +1658,22 @@ impl<'a> ReportInputs<'a> {
 ///
 /// The function performs no filesystem I/O and cannot report write errors;
 /// callers choose where to store or serve the returned self-contained HTML
-/// string.
+/// in [`RenderedReport::html`]; [`RenderedReport::clip_count`] counts emitted
+/// clip entries. Without a selector, source-only evidence remains renderable
+/// even when no normalized clip has an available grid.
 ///
 /// # Errors
-/// Refuses grids from another source, evidence with a different primary identity
+/// Refuses absent or ambiguous explicit clip names, an explicitly selected
+/// clip without a metric grid, grids from another source, evidence with a
+/// different primary identity
 /// or profiled dependency closure, and engine evidence above the presentation
 /// row/text bounds. Callers must supply the roles and configuration used for
 /// analysis; profile-free evidence does not independently bind those values.
-pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
+pub fn render(inputs: ReportInputs<'_>) -> Result<RenderedReport, ReportError> {
+    let selected_clip = inputs
+        .clip
+        .map(|name| select_clip(inputs.grids.document(), name, "input").map(|(index, _)| index))
+        .transpose()?;
     engine_evidence::validate(inputs.source, inputs.grids, inputs.evidence, "input")?;
     let engine = EngineEvidence::new(inputs.evidence);
     serde_json::to_writer(&mut ReportTextCounter { bytes: 0 }, &engine).map_err(|_| {
@@ -1684,13 +1717,19 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
     // rather than sitting under whichever clip happens to be shown.
     let (mut charts_html, group_members) = gait_group_charts(grids, roles, config, clip_filter);
     for (clip_index, clip) in doc.clips.iter().enumerate() {
-        if clip_filter.is_some_and(|f| f != clip.name) {
+        if selected_clip.is_some_and(|selected| selected != clip_index) {
             continue;
         }
         if let Some(preflight) = &mut blend_preflight {
             preflight.include(clip);
         }
         let Some(grid) = grids.grid(clip_index) else {
+            if selected_clip.is_some() {
+                return Err(ReportError::UnavailableSampleGrid {
+                    side: "input",
+                    clip: clip.name.clone(),
+                });
+            }
             continue;
         };
         #[cfg(test)]
@@ -1789,6 +1828,8 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
         })
         .collect();
 
+    let clip_count = clips_json.len();
+    let finding_count = findings_json.len();
     let mut data = json!({
         "file": doc.source.path,
         "profile": roles.profile,
@@ -1849,8 +1890,11 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
     // data block early; escaping `<` inside JSON strings is lossless.
     let data = data.to_string().replace('<', "\\u003c");
 
-    Ok(format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+    Ok(RenderedReport {
+        clip_count,
+        finding_count,
+        html: format!(
+            "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>animsmith — {title}</title>\n<style>{TOKENS_CSS}{BASE_CSS}{VIEWER_CSS}</style>\n</head>\n<body>\n\
          <header><h1>animsmith report</h1><span id=\"file\"></span></header>\n\
@@ -1879,7 +1923,8 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
          <script>{shared_js}</script>\n\
          <script type=\"application/json\" id=\"report-data\">{data}</script>\n\
          <script>{VIEWER_JS}</script>\n</body>\n</html>\n"
-    ))
+        ),
+    })
 }
 
 /// Render a collection inventory dashboard from its already-validated,
@@ -3475,7 +3520,8 @@ mod tests {
             options,
             ..ReportInputs::new(&grids_once, &roles, &source, &evidence, &config)
         })
-        .unwrap();
+        .unwrap()
+        .html;
         let grids = MetricGrids::new(doc);
         let ctx = CheckCtx::new(&grids, &roles, &config);
         assert!(ctx.grid(0).is_some());
@@ -3483,7 +3529,8 @@ mod tests {
             options,
             ..ReportInputs::new(&grids, &roles, &source, &evidence, &config)
         })
-        .unwrap();
+        .unwrap()
+        .html;
 
         assert_eq!(fresh, shared);
         assert!(shared.contains(r#"data-kind="rootpath""#));
