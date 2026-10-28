@@ -1024,7 +1024,7 @@ removed named-bone translation deltas, mesh and skin canonicalization, tool
 identity, and the final artifact digest and counts. When `prune_constant_tracks`
 is enabled, each clip also records the exact removed tracks in
 `pruned_constant_tracks`, including each track's index in the completed,
-normalized output clip immediately before pruning (the pre-prune authored
+prepared output clip immediately before pruning (the pre-prune authored
 order). In assembly evidence v3 through v7, `bone_index` is the BoneId in the
 post-canonicalization/pre-node-removal skeleton; `removed_nodes` provides the
 stable compaction ledger needed to derive a surviving final index. The array

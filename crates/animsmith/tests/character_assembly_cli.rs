@@ -1660,7 +1660,7 @@ fn assembly_constant_track_pruning_is_opt_in_protected_and_deterministic() {
                                 Quat::IDENTITY,
                                 Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
                                 Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
-                                -Quat::IDENTITY,
+                                Quat::IDENTITY, // same-sign constant; antipodal cubic keys cross zero
                                 Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
                             ]),
                         },
@@ -2298,123 +2298,345 @@ fn assembly_prunes_after_completion_without_recreating_removed_channels() {
     }
 }
 
+// Self-authored raw glTF: no production writer constructs the motion oracle.
+fn write_rotation_cleanup_fixture(
+    dir: &Path,
+    interpolation: &str,
+    values: &[[f32; 4]],
+    prune: bool,
+) {
+    use serde_json::json;
+    let inputs = dir.join("inputs");
+    std::fs::create_dir(&inputs).unwrap();
+    let mut root = json!({
+        "asset":{"version":"2.0"}, "scene":0, "scenes":[{"nodes":[0,1]}],
+        "nodes":[{"name":"turn"},{"name":"clock"}]
+    });
+    std::fs::write(inputs.join("base.gltf"), serde_json::to_vec(&root).unwrap()).unwrap();
+    let mut blob = [0.0f32, 1.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect::<Vec<_>>();
+    blob.extend(
+        values
+            .iter()
+            .flatten()
+            .flat_map(|value| value.to_le_bytes()),
+    );
+    let clock_start = blob.len();
+    blob.extend(
+        [
+            0.0f32, 0.5, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        ]
+        .into_iter()
+        .flat_map(f32::to_le_bytes),
+    );
+    root["buffers"] = json!([{"byteLength":blob.len()}]);
+    root["bufferViews"] = json!([
+        {"buffer":0,"byteLength":8},
+        {"buffer":0,"byteOffset":8,"byteLength":values.len()*16},
+        {"buffer":0,"byteOffset":clock_start,"byteLength":12},
+        {"buffer":0,"byteOffset":clock_start+12,"byteLength":36}
+    ]);
+    root["accessors"] = json!([
+        {"bufferView":0,"componentType":5126,"type":"SCALAR","count":2,"min":[0],"max":[1]},
+        {"bufferView":1,"componentType":5126,"type":"VEC4","count":values.len()},
+        {"bufferView":2,"componentType":5126,"type":"SCALAR","count":3,"min":[0],"max":[1]},
+        {"bufferView":3,"componentType":5126,"type":"VEC3","count":3}
+    ]);
+    root["animations"] = json!([{"name":"source","samplers":[
+        {"input":0,"output":1,"interpolation":interpolation}, {"input":2,"output":3}
+    ],"channels":[
+        {"sampler":0,"target":{"node":0,"path":"rotation"}},
+        {"sampler":1,"target":{"node":1,"path":"translation"}}
+    ]}]);
+    let mut json = serde_json::to_vec(&root).unwrap();
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let mut bytes = b"glTF".to_vec();
+    for word in [
+        2,
+        (28 + json.len() + blob.len()) as u32,
+        json.len() as u32,
+        0x4e4f534a,
+    ] {
+        bytes.extend(word.to_le_bytes());
+    }
+    bytes.extend(json);
+    bytes.extend((blob.len() as u32).to_le_bytes());
+    bytes.extend(0x004e4942u32.to_le_bytes());
+    bytes.extend(blob);
+    std::fs::write(inputs.join("clips.glb"), bytes).unwrap();
+    std::fs::write(dir.join("recipe.toml"), format!(
+        "schema_version = 3\nschema = \"urn:animsmith:schema:character-assembly-recipe:3\"\ninput_root = \"inputs\"\nbase_input = \"base.gltf\"\nprune_constant_tracks = {prune}\n\n[[clips]]\nname = \"turn\"\ninput = \"clips.glb\"\ntake = \"source\"\n"
+    )).unwrap();
+    std::fs::write(dir.join("animsmith.toml"), b"").unwrap();
+}
+
+fn raw_rotation_components(path: &Path) -> (gltf::animation::Interpolation, Vec<[f32; 4]>) {
+    let bytes = std::fs::read(path).unwrap();
+    let gltf = gltf::Gltf::from_slice(&bytes).unwrap();
+    let channel = gltf
+        .animations()
+        .next()
+        .unwrap()
+        .channels()
+        .find(|channel| channel.target().property() == gltf::animation::Property::Rotation)
+        .unwrap();
+    let sampler = channel.sampler();
+    let blob = gltf.blob.as_ref().unwrap();
+    let input = sampler.input();
+    let input_view = input.view().unwrap();
+    let times = (0..input.count())
+        .map(|key| {
+            let at = input_view.offset() + input.offset() + key * input_view.stride().unwrap_or(4);
+            f32::from_le_bytes(blob[at..at + 4].try_into().unwrap())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(times, [0.0, 1.0]);
+    let output = sampler.output();
+    let view = output.view().unwrap();
+    let values = (0..output.count())
+        .map(|key| {
+            std::array::from_fn(|component| {
+                let at = view.offset()
+                    + output.offset()
+                    + key * view.stride().unwrap_or(16)
+                    + component * 4;
+                f32::from_le_bytes(blob[at..at + 4].try_into().unwrap())
+            })
+        })
+        .collect();
+    (sampler.interpolation(), values)
+}
+
+fn component_bits(values: &[[f32; 4]]) -> Vec<[u32; 4]> {
+    values.iter().map(|value| value.map(f32::to_bits)).collect()
+}
+
+// Component Hermite at t=.5 for a one-second segment, independently normalized.
+fn raw_cubic_midpoint(values: &[[f32; 4]]) -> [f64; 4] {
+    assert_eq!(values.len(), 6);
+    let point: [f64; 4] = std::array::from_fn(|c| {
+        0.5 * f64::from(values[1][c])
+            + 0.125 * f64::from(values[2][c])
+            + 0.5 * f64::from(values[4][c])
+            - 0.125 * f64::from(values[3][c])
+    });
+    let norm = point.iter().map(|v| v * v).sum::<f64>().sqrt();
+    assert!(norm.is_finite() && norm > 0.0);
+    point.map(|value| value / norm)
+}
+
 #[test]
-fn assembly_normalizes_quaternion_hemispheres_before_pruning() {
-    use animsmith_core::glam::{Quat, Vec3};
-    use animsmith_core::model::{
-        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
-    };
-
-    let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
-    let dir = tempfile::tempdir().expect("creates quaternion fixture directory");
-    let inputs = dir.path().join("inputs");
-    std::fs::create_dir(&inputs).expect("creates input root");
-    let skeleton = Skeleton {
-        bones: vec![
-            Bone {
-                name: "sign-equivalent".into(),
-                parent: None,
-                rest: Transform::IDENTITY,
-                inverse_bind: None,
-            },
-            Bone {
-                name: "grid-clock".into(),
-                parent: None,
-                rest: Transform::IDENTITY,
-                inverse_bind: None,
-            },
+fn assembly_preserves_authored_cubic_motion_with_and_without_pruning() {
+    for angle in [0.5f32, 0.0005] {
+        for prune in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let values = [
+                [0.0; 4],
+                [0.0, 0.0, 0.0, 1.0],
+                [-0.0, 0.0, 0.0, 0.0],
+                [0.0; 4],
+                if angle < 0.001 {
+                    [
+                        0.0,
+                        -f32::from_bits(0x3983_126f),
+                        0.0,
+                        -f32::from_bits(0x3f7f_ffff),
+                    ]
+                } else {
+                    [0.0, -(angle * 0.5).sin(), 0.0, -(angle * 0.5).cos()]
+                },
+                [0.0; 4],
+            ];
+            write_rotation_cleanup_fixture(dir.path(), "CUBICSPLINE", &values, prune);
+            let source_path = dir.path().join("inputs/clips.glb");
+            let source = std::fs::read(&source_path).unwrap();
+            let (_, authored) = raw_rotation_components(&source_path);
+            assert_eq!(component_bits(&authored), component_bits(&values));
+            let output = run(dir.path());
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let (interpolation, emitted) =
+                raw_rotation_components(&dir.path().join("character.glb"));
+            assert_eq!(interpolation, gltf::animation::Interpolation::CubicSpline);
+            assert_eq!(component_bits(&emitted), component_bits(&values));
+            let midpoint = raw_cubic_midpoint(&emitted);
+            let expected = if angle < 0.001 {
+                // Literal binary32 input yields raw midpoint
+                // [0,-0.0001250000059371814,0,2^-25], about 179.97 degrees
+                // from identity despite endpoint distance below 0.001 radians.
+                [0.0, -0.9999999715782945, 0.0, 0.00023841856100102586]
+            } else {
+                [0.0, -0.125f64.cos(), 0.0, 0.125f64.sin()]
+            };
+            for (actual, expected) in midpoint.into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-6, "{midpoint:?}");
+            }
+            let evidence: Value = serde_json::from_slice(
+                &std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                evidence["clips"][0]["pruned_constant_tracks"],
+                serde_json::json!([])
+            );
+            assert_eq!(std::fs::read(source_path).unwrap(), source);
+        }
+    }
+    // Pruning remains useful for a genuinely constant same-hemisphere cubic.
+    let dir = tempfile::tempdir().unwrap();
+    write_rotation_cleanup_fixture(
+        dir.path(),
+        "CUBICSPLINE",
+        &[
+            [0.0; 4],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0; 4],
+            [0.0; 4],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0; 4],
         ],
-    };
-    let sign_equivalent_track = Track {
-        bone: 0,
-        property: Property::Rotation,
-        interpolation: Interpolation::CubicSpline,
-        times: vec![0.0, 1.0],
-        values: TrackValues::Quats(vec![
-            zero,
-            Quat::IDENTITY,
-            zero,
-            zero,
-            -Quat::IDENTITY,
-            zero,
-        ]),
-    };
-    assert!(matches!(
-        animsmith_core::sample::sample_track(&sign_equivalent_track, 0.5),
-        animsmith_core::sample::TrackSample::Quat(value) if !value.is_finite()
-    ));
-    animsmith_gltf::write::write(
-        &Document {
-            skeleton: skeleton.clone(),
-            ..Document::default()
-        },
-        &inputs.join("base.glb"),
-    )
-    .expect("writes base fixture");
-    animsmith_gltf::write::write(
-        &Document {
-            skeleton,
-            clips: vec![Clip {
-                name: "source".into(),
-                duration_s: 1.0,
-                tracks: vec![
-                    sign_equivalent_track,
-                    Track {
-                        bone: 1,
-                        property: Property::Translation,
-                        interpolation: Interpolation::Linear,
-                        times: vec![0.0, 0.5, 1.0],
-                        values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X, Vec3::ZERO]),
-                    },
-                ],
-            }],
-            ..Document::default()
-        },
-        &inputs.join("clips.glb"),
-    )
-    .expect("writes source fixture");
-    std::fs::write(
-        dir.path().join("recipe.toml"),
-        concat!(
-            "schema_version = 3\n",
-            "schema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
-            "input_root = \"inputs\"\n",
-            "base_input = \"base.glb\"\n",
-            "prune_constant_tracks = true\n\n",
-            "[[clips]]\n",
-            "name = \"normalized\"\n",
-            "input = \"clips.glb\"\n",
-            "take = \"source\"\n",
-        ),
-    )
-    .expect("writes assembly recipe");
-    std::fs::write(dir.path().join("animsmith.toml"), b"").expect("writes empty config");
-
-    let output = run(dir.path());
-    assert!(
-        output.status.success(),
-        "assembly failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        true,
     );
-    let evidence: Value = serde_json::from_slice(
-        &std::fs::read(dir.path().join("character.assembly.json")).expect("reads evidence"),
-    )
-    .expect("parses evidence");
-    assert_schema_valid(&evidence, EVIDENCE_SCHEMA);
+    assert!(run(dir.path()).status.success());
+    let evidence: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("character.assembly.json")).unwrap())
+            .unwrap();
     assert_eq!(
-        evidence["clips"][0]["pruned_constant_tracks"],
-        serde_json::json!([{
-            "original_track_index": 0,
-            "bone": "sign-equivalent",
-            "bone_index": 0,
-            "property": "rotation",
-            "interpolation": "cubic_spline",
-            "key_count": 2,
-        }]),
-        "hemisphere normalization must make the sign-equivalent cubic track safely removable"
+        evidence["clips"][0]["pruned_constant_tracks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
     );
-    let assembled =
-        animsmith_gltf::load(&dir.path().join("character.glb")).expect("loads artifact");
-    assert_eq!(assembled.clips[0].tracks.len(), 1);
-    assert_eq!(assembled.clips[0].tracks[0].bone, 1);
+    assert_eq!(
+        evidence["clips"][0]["pruned_constant_tracks"][0]["property"],
+        "rotation"
+    );
+    let bytes = std::fs::read(dir.path().join("character.glb")).unwrap();
+    assert!(
+        gltf::Gltf::from_slice(&bytes)
+            .unwrap()
+            .animations()
+            .next()
+            .unwrap()
+            .channels()
+            .all(|channel| channel.target().property() != gltf::animation::Property::Rotation)
+    );
+}
+
+#[test]
+fn assembly_preserves_in_band_cubic_magnitudes_and_refuses_curve_changing_cleanup() {
+    for magnitude in [1.0005f32, 0.998, 1.002, 2.0] {
+        let dir = tempfile::tempdir().unwrap();
+        let values = [
+            [0.0; 4],
+            [0.0, 0.0, 0.0, magnitude],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0; 4],
+            [0.0, 0.0, 0.0, magnitude],
+            [0.0; 4],
+        ];
+        write_rotation_cleanup_fixture(dir.path(), "CUBICSPLINE", &values, false);
+        let source_path = dir.path().join("inputs/clips.glb");
+        let source = std::fs::read(&source_path).unwrap();
+        if magnitude == 1.0005 {
+            let output = run(dir.path());
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let (_, emitted) = raw_rotation_components(&dir.path().join("character.glb"));
+            assert_eq!(component_bits(&emitted), component_bits(&values));
+            let midpoint = raw_cubic_midpoint(&emitted);
+            let norm = (0.125f64.powi(2) + f64::from(magnitude).powi(2)).sqrt();
+            assert!((midpoint[1] - 0.125 / norm).abs() < 1e-12);
+            assert!((midpoint[3] - f64::from(magnitude) / norm).abs() < 1e-12);
+        } else {
+            std::fs::write(dir.path().join("character.glb"), b"artifact sentinel").unwrap();
+            std::fs::write(
+                dir.path().join("character.assembly.json"),
+                b"evidence sentinel",
+            )
+            .unwrap();
+            let output = run_args(
+                dir.path(),
+                &[
+                    "recipe.toml",
+                    "-o",
+                    "character.glb",
+                    "--evidence",
+                    "character.assembly.json",
+                    "--format",
+                    "json",
+                ],
+            );
+            assert_eq!(output.status.code(), Some(1));
+            let refusal: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(refusal["outcome"], "rejected");
+            assert_eq!(refusal["rejection"]["kind"], "transform-refused");
+            let detail = refusal["rejection"]["detail"].as_str().unwrap();
+            for expected in [
+                "turn",
+                "CUBICSPLINE",
+                "bone 0 key 0",
+                "norm",
+                "tolerance",
+                "re-export",
+            ] {
+                assert!(detail.contains(expected), "{detail}");
+            }
+            assert_eq!(
+                std::fs::read(dir.path().join("character.glb")).unwrap(),
+                b"artifact sentinel"
+            );
+            assert_eq!(
+                std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+                b"evidence sentinel"
+            );
+        }
+        assert_eq!(std::fs::read(source_path).unwrap(), source);
+    }
+}
+
+#[test]
+fn assembly_keeps_linear_and_step_quaternion_cleanup() {
+    for interpolation in ["LINEAR", "STEP"] {
+        let dir = tempfile::tempdir().unwrap();
+        write_rotation_cleanup_fixture(
+            dir.path(),
+            interpolation,
+            &[[0.0, 0.0, 0.0, 2.0], [0.0, 0.0, -1.2, -1.6]],
+            false,
+        );
+        let output = run(dir.path());
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (mode, values) = raw_rotation_components(&dir.path().join("character.glb"));
+        assert_eq!(values, [[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.6, 0.8]]);
+        if interpolation == "STEP" {
+            assert_eq!(mode, gltf::animation::Interpolation::Step);
+        } else {
+            assert_eq!(mode, gltf::animation::Interpolation::Linear);
+            // At halfway, slerp of unit endpoints is their normalized sum.
+            let z = f64::from(values[1][2]);
+            let w = f64::from(values[0][3]) + f64::from(values[1][3]);
+            let norm = z.hypot(w);
+            assert!((z / norm - 1.0 / 10.0f64.sqrt()).abs() < 1e-7);
+            assert!((w / norm - 3.0 / 10.0f64.sqrt()).abs() < 1e-7);
+        }
+    }
 }

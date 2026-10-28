@@ -1515,6 +1515,84 @@ fn v4_rebases_every_cubic_slot_for_a_factor_greater_than_one() {
     let authored = factor_two_rig_glb();
     write_cubic_asset_from(&dir.path().join("inputs/base.glb"), &authored, 0.0);
     write_cubic_asset_from(&dir.path().join("inputs/clip.glb"), &authored, 10.0);
+    // Reach back to authored rotation bytes, not two outputs of the same
+    // cleanup on the staged and independent reference documents.
+    let rotations: [[f32; 4]; 6] = [
+        [0.25, -0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0005],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, -0.5, 0.0, 0.0],
+        [0.0, -0.25f32.sin() * 1.0005, 0.0, -0.25f32.cos() * 1.0005],
+        [0.0, 0.0, 0.25, 0.0],
+    ];
+    let clip_path = dir.path().join("inputs/clip.glb");
+    // Append raw components without another model round-trip, which would
+    // create a second generated mesh-holder node in this already-staged asset.
+    let bytes = std::fs::read(&clip_path).unwrap();
+    let mut container = gltf::binary::Glb::from_slice(&bytes).unwrap();
+    let mut json: Value = serde_json::from_slice(&container.json).unwrap();
+    let sampler = json["animations"][0]["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|channel| channel["target"]["path"] == "rotation")
+        .unwrap()["sampler"]
+        .as_u64()
+        .unwrap() as usize;
+    let accessor = json["animations"][0]["samplers"][sampler]["output"]
+        .as_u64()
+        .unwrap() as usize;
+    json["animations"][0]["samplers"][sampler]["interpolation"] = Value::from("CUBICSPLINE");
+    let bin = container.bin.as_mut().unwrap().to_mut();
+    let offset = bin.len();
+    bin.extend(
+        rotations
+            .iter()
+            .flatten()
+            .flat_map(|value| value.to_le_bytes()),
+    );
+    json["buffers"][0]["byteLength"] = Value::from(bin.len());
+    let view = json["bufferViews"].as_array().unwrap().len();
+    json["bufferViews"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"buffer":0,"byteOffset":offset,"byteLength":96}));
+    json["accessors"][accessor]["bufferView"] = Value::from(view);
+    json["accessors"][accessor]["byteOffset"] = Value::from(0);
+    json["accessors"][accessor]["count"] = Value::from(6);
+    container.json = serde_json::to_vec(&json).unwrap().into();
+    std::fs::write(&clip_path, container.to_vec().unwrap()).unwrap();
+    let raw_rotation = |path: &Path| {
+        let bytes = std::fs::read(path).unwrap();
+        let gltf = gltf::Gltf::from_slice(&bytes).unwrap();
+        let channel = gltf
+            .animations()
+            .next()
+            .unwrap()
+            .channels()
+            .find(|channel| channel.target().property() == gltf::animation::Property::Rotation)
+            .unwrap();
+        let sampler = channel.sampler();
+        assert_eq!(
+            sampler.interpolation(),
+            gltf::animation::Interpolation::CubicSpline
+        );
+        let accessor = sampler.output();
+        let view = accessor.view().unwrap();
+        let blob = gltf.blob.as_ref().unwrap();
+        (0..accessor.count())
+            .flat_map(|key| {
+                let start = view.offset() + accessor.offset() + key * view.stride().unwrap_or(16);
+                blob[start..start + 16].iter().copied()
+            })
+            .collect::<Vec<_>>()
+    };
+    let expected_rotation = rotations
+        .iter()
+        .flatten()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>();
+    assert_eq!(raw_rotation(&clip_path), expected_rotation);
     std::fs::write(
         dir.path().join("recipe.toml"),
         recipe("clip.glb").replace("expected_factor = 0.01", "expected_factor = 2.0"),
@@ -1549,6 +1627,11 @@ fn v4_rebases_every_cubic_slot_for_a_factor_greater_than_one() {
     for (slot, expected) in values.iter().zip(expected) {
         assert!(slot.abs_diff_eq(expected * 2.0, 1.0e-5));
     }
+    assert_eq!(
+        raw_rotation(&dir.path().join("character.glb")),
+        expected_rotation
+    );
+    assert_eq!(raw_rotation(&clip_path), expected_rotation);
 }
 
 #[test]

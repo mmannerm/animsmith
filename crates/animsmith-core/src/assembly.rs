@@ -2,8 +2,8 @@
 //!
 //! These helpers deliberately do not retarget motion.  They only move a clip
 //! between skeletons with the same exact bone names, remove selected channels,
-//! fill omitted channels from an authoritative rest pose, and make quaternion
-//! signs consistent.
+//! fill omitted channels from an authoritative rest pose, and make LINEAR/STEP
+//! quaternion signs consistent. Cubic components remain authored.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -634,57 +634,34 @@ fn rest_track(
     }
 }
 
-/// Make rotation-track key quaternions hemisphere-consistent in key order.
+/// Make LINEAR/STEP rotation keys hemisphere-consistent in key order.
 ///
-/// Each finite key is compared to the preceding finite key.  If their dot
-/// product is negative, the key is negated.  Cubic-spline keys negate their
-/// whole tangent/value/tangent triplet, preserving the represented curve.
-/// A zero dot product is deliberately left unchanged, making ties stable and
-/// avoiding platform-dependent sign choices.  Returns the number of flipped
-/// keys.
+/// Each finite key is compared to the preceding finite key and negated when
+/// their dot product is negative. Cubic-spline values and tangents are left
+/// untouched: changing individual triplet signs changes the Hermite curve.
+/// A zero dot product is deliberately left unchanged, making ties stable.
+/// Returns the number of flipped keys.
 pub fn normalize_quaternion_hemispheres(clip: &mut Clip) -> usize {
     let mut flipped = 0;
     for track in &mut clip.tracks {
-        if track.property != Property::Rotation {
+        if track.property != Property::Rotation || track.interpolation == Interpolation::CubicSpline
+        {
             continue;
         }
         let key_count = track.key_count();
-        let interpolation = track.interpolation;
         let TrackValues::Quats(values) = &mut track.values else {
             continue;
         };
         let mut previous = None;
-        for key in 0..key_count {
-            let value_index = match interpolation {
-                Interpolation::CubicSpline => key * 3 + 1,
-                _ => key,
-            };
-            let Some(value) = values.get(value_index).copied() else {
-                break;
-            };
+        for value in values.iter_mut().take(key_count) {
             if !value.is_finite() {
                 continue;
             }
-            if previous.is_some_and(|previous: Quat| previous.dot(value) < 0.0) {
-                let start = match interpolation {
-                    Interpolation::CubicSpline => key * 3,
-                    _ => key,
-                };
-                let count = match interpolation {
-                    Interpolation::CubicSpline => 3,
-                    _ => 1,
-                };
-                if start + count > values.len() {
-                    break;
-                }
-                for quaternion in &mut values[start..start + count] {
-                    *quaternion = -*quaternion;
-                }
-                previous = Some(-value);
+            if previous.is_some_and(|previous: Quat| previous.dot(*value) < 0.0) {
+                *value = -*value;
                 flipped += 1;
-            } else {
-                previous = Some(value);
             }
+            previous = Some(*value);
         }
     }
     flipped

@@ -245,11 +245,17 @@ and proved once before the artifact/evidence pair can be published.
 
 `complete_tracks = true` fills absent TRS channels from the base rest pose for
 the union of selected skin joints and nodes targeted by any emitted clip.
-Per-clip `strip_bones` entries stay excluded. Rotation key values are
-unit-normalized and made hemisphere-consistent without changing cubic tangent
-sign relationships. When FBX scale staging produces an independent reference
-skeleton, completion targets are carried by exact unique bone name and resolved
-separately in each skeleton; numeric bone IDs are document-local. Each
+Per-clip `strip_bones` entries stay excluded. LINEAR/STEP rotation keys are
+unit-normalized and made hemisphere-consistent. CUBICSPLINE value keys must be
+finite, nonzero, and within the existing `quat-norm` tolerance of `1e-3` from
+unit length (checked in `f64`). Accepted cubic values and tangents retain every
+component exactly, including signs and exporter rounding: normalizing values
+or changing individual triplet signs would change the Hermite curve. Outside
+that tolerance, assembly refuses the transform and asks for a re-export with
+unit value keys; it does not repair or prove validity of every interior sample.
+The same preservation rule applies to the independent scale reference.
+When FBX scale staging produces an independent reference skeleton, completion
+targets are carried by exact unique bone name and resolved separately in each skeleton; numeric bone IDs are document-local. Each
 skeleton's own node-removal closure is excluded before completion.
 
 `canonicalize_skin = true` bakes each skin's common geometry-to-world transform
@@ -351,7 +357,7 @@ operation counts, start/end/delta facts for named translation tracks removed by
 `strip_bones`, mesh selection, canonicalization flags, tool identity, and the
 final artifact digest and counts. When pruning is enabled, each clip records
 the exact removed tracks in `pruned_constant_tracks`: the index in the
-completed, normalized output clip immediately before pruning (retaining its
+completed, prepared output clip immediately before pruning (retaining its
 pre-prune authored order), exact bone name and `bone_index` in the
 post-canonicalization/pre-node-removal skeleton, TRS property, interpolation,
 and key count. `bone_remaps.base_index` uses that same pre-removal coordinate
