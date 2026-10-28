@@ -111,9 +111,11 @@ human-readable prose is rendered. The [CLI guide](cli.md) and retained
 A collection manifest declares logical relationships across exact source files.
 It does not turn ordinary multi-file linting into collection policy, and equal
 display names do not make clips from different files interchangeable. Core
-owns validated value types, strict JSON wire readers and pure planning; the
-CLI decodes TOML declarations and owns rooted access, retained source sessions
-and command execution.
+owns validated collection declarations, contact/transition contracts and pure
+foot-cycle planning. Its JSON readers cover the contracts it defines. The CLI
+decodes TOML declarations and owns the collection-output and foot-cycle
+producer evidence envelopes and their strict readers, as well as rooted access,
+retained source sessions and command execution.
 The accepted [collection decision](../DESIGN.md#appendix-f--decision-record-file-scoped-clip-identity-and-collections)
 and [collection guide](collection-contracts.md) define identity, completeness,
 coverage and refusal semantics.
