@@ -307,6 +307,41 @@ fn ordinary_report_load_errors_preserve_previous_output_and_inputs() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn ordinary_report_refuses_a_retained_symlink_even_for_an_unrelated_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let (input, buffer) = write_external_buffer_gltf(directory.path(), "source");
+    let target = directory.path().join("target.png");
+    let link = directory.path().join("texture.png");
+    let output = directory.path().join("report.html");
+    let mut source: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&input).unwrap()).unwrap();
+    source["images"] = serde_json::json!([{"uri":"texture.png"}]);
+    std::fs::write(&input, serde_json::to_vec(&source).unwrap()).unwrap();
+    std::fs::write(&target, b"unconsumed texture target").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    std::fs::write(&output, b"previous report").unwrap();
+    let originals: Vec<_> = [&input, &buffer, &target, &output]
+        .into_iter()
+        .map(|path| (path, std::fs::read(path).unwrap()))
+        .collect();
+
+    let result = animsmith()
+        .current_dir(directory.path())
+        .arg("report")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert_publication_refused(&result, "external dependency \"texture.png\" is a symlink");
+    for (path, bytes) in originals {
+        assert_file_unchanged(path, &bytes);
+    }
+    assert_eq!(std::fs::read_link(&link).unwrap(), target);
+}
+
 #[test]
 fn ordinary_report_replaces_the_destination_without_truncating_its_previous_hardlink() {
     let directory = tempfile::tempdir().unwrap();

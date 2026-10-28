@@ -2036,7 +2036,7 @@ mod tests {
     }
 
     #[test]
-    fn single_publication_flush_failure_preserves_the_previous_output() {
+    fn single_publication_missing_stage_preserves_the_previous_output() {
         let dir = tempfile::tempdir().unwrap();
         let destination = dir.path().join("report.html");
         let missing_temp = dir.path().join("absent.tmp");

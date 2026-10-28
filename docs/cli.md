@@ -166,6 +166,9 @@ not preserved.
 
 Missing optional resources do not by themselves prevent an ordinary report;
 their retained paths still cannot be used as its output.
+If dependency capture refuses a sidecar as a symlink or stops at its resource
+budget, report publication exits 2 even for an unrelated output path. The
+source files and any previous report remain unchanged.
 
 `report --compare-after` writes one offline synchronized before/after diagnostic.
 Both input files and both clip names are explicit; it refuses duplicate or

@@ -676,6 +676,8 @@ The shared retained-dependency identity helper excludes paths below missing
 or non-directory ancestors because they cannot name a valid destination.
 Missing final keys remain protected, and permission or other inspection
 errors still refuse publication; reports need no separate identity exception.
+Ordinary reports retain the shared publication refusals for symlink keys and
+dependency inventories truncated by resource-budget exhaustion.
 
 The explicit comparison spelling is a separate presentation producer: it
 preflights named/indexed skeleton correspondence, selected metric-grid work,
