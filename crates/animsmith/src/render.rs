@@ -455,8 +455,8 @@ impl FindingSummary {
 /// A **producer** must not call this. It serializes afresh from the value, so
 /// its bytes would be a second serialization rather than the ones the
 /// producer published; producers hand their published `Vec<u8>` straight to
-/// [`crate::publish::emit`]. Pinned by
-/// `publish::tests::no_producer_module_reaches_for_the_re_serializing_printer`.
+/// [`crate::publish::emit`]. Producer byte-identity tests compare stdout with
+/// published evidence; they do not count serialization calls.
 ///
 /// # Errors
 ///

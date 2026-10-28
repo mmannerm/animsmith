@@ -1766,7 +1766,7 @@ fn the_theme_bridge_and_embedded_report_assets_are_tracked() {
         let markdown = std::fs::read_to_string(&page).expect("reads documentation page");
         for (_, source) in docs_markdown::rendered_html_references(&markdown, &[("iframe", "src")])
         {
-            let path = source.split(['#', '?']).next().unwrap_or_default();
+            let path = source.split('#').next().unwrap_or_default();
             let target = page
                 .parent()
                 .unwrap()
