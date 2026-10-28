@@ -20,11 +20,11 @@
 - [ ] `just package-inventory`, when manifests, READMEs, include lists, or release docs changed.
 - [ ] Manual docs/template link review, when GitHub-facing docs changed.
 
-## Audit
+## Review
 
-- [ ] Exact HEAD SHA and gate evidence recorded before external audits.
-- [ ] Audit checklist run for substantial changes.
-- [ ] Not substantial; audit not required.
+- [ ] Substantial change reviewed on its final head (any process or tools).
+- [ ] Current target base integrated; head/base and required gate/CI evidence recorded.
+- [ ] Not substantial; maintainer review only.
 
 ## Agent Attribution
 

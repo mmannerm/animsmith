@@ -266,7 +266,7 @@ require_match CONTRIBUTING.md '^## Pull Request Flow$' "PR flow"
 require_match CONTRIBUTING.md '^## Conventional Commits$' "Conventional Commits policy"
 require_match CONTRIBUTING.md '^## Documentation Freshness$' "documentation freshness policy"
 require_literal CONTRIBUTING.md "type:docs" "type:docs follow-up route"
-require_match CONTRIBUTING.md '^## Audit Expectations$' "audit expectations"
+require_match CONTRIBUTING.md '^## Review Expectations$' "review expectations"
 require_match CONTRIBUTING.md '^## Labels And Milestones$' "labels and milestones"
 require_match CONTRIBUTING.md '^## Merge Policy$' "merge policy"
 

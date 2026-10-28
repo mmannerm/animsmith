@@ -55,7 +55,9 @@ fn write_external_buffer_gltf(directory: &std::path::Path, name: &str) -> (PathB
 #[test]
 fn report_comparison_refuses_symlink_and_hardlink_outputs_without_touching_inputs() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let before = fixture();
+    // The input and its hardlink must share a filesystem, including on CI.
+    let before = directory.path().join("before.glb");
+    std::fs::copy(fixture(), &before).expect("copies input fixture");
     let after = comparison_fixture("after");
     let original = std::fs::read(&before).expect("fixture bytes");
     for (name, symlink) in [("symlink.html", true), ("hardlink.html", false)] {
