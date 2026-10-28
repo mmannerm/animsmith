@@ -21,8 +21,6 @@
 
 #![warn(missing_docs)]
 
-#[cfg(feature = "report")]
-use animsmith_core::evaluate_checks;
 use animsmith_core::{
     Check, CheckCtx, CheckSelection, Config, DiffEnvelope, EngineRootMotionClipIntentInputV1,
     EngineRootMotionClipMappingStateV1, EngineRootMotionProjectIntentV1, LintEnvelopeV19,
@@ -35,8 +33,6 @@ use animsmith_core::{
     resolve_configured_roles,
 };
 use animsmith_core::{Document, InputIdentity};
-#[cfg(feature = "report")]
-use animsmith_engine::EngineAddressabilityCheck;
 use animsmith_engine::{
     BakeOrExtract, BevyGltfHandlerEnvironmentV2, BevyLoadMeshesStateV2, ENGINE_CHECK_IDS_V2,
     EngineAddressabilityCheckV3, EngineClipBoundaryCheck, EngineDeclaration, EngineDeclarationV2,
@@ -1579,20 +1575,23 @@ fn is_unity_generic_root_motion_profile(profile: &ResolvedProfileSettingsV2) -> 
         && profile.source_format() == animsmith_core::SourceFormatV1::Fbx
 }
 
-struct LintAnalysis {
+struct LintAnalysis<'a> {
+    #[cfg(feature = "report")]
+    roles: animsmith_core::ResolvedRoles,
+    grids: MetricGrids<'a>,
     report: LintFileReportV19,
     requires_failure: bool,
     indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
 }
 
-fn analyze_loaded_lint(
-    loaded: &LoadedInput,
+fn analyze_loaded_lint<'a>(
+    loaded: &'a LoadedInput,
     config: &LoadedConfig,
     path_label: impl Into<String>,
     selection: CheckSelection<'_>,
     fail_at: Severity,
     allowed: &BTreeSet<String>,
-) -> Result<LintAnalysis, String> {
+) -> Result<LintAnalysis<'a>, String> {
     let input = loaded.input().clone();
     let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
@@ -1728,6 +1727,9 @@ fn analyze_loaded_lint(
     }
     .map_err(|error| error.to_string())?;
     Ok(LintAnalysis {
+        #[cfg(feature = "report")]
+        roles,
+        grids,
         report,
         requires_failure,
         indexed_measurements,
@@ -1955,7 +1957,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let report_options = animsmith_report::ReportOptions { evidence_only };
             let loaded_config = load_config(cli.config.as_deref())?;
             full_check_ids()?;
-            let loaded = load_with_config(&file, &loaded_config)?;
+            let loaded = load_with_config_v2(&file, &loaded_config)?;
             let comparison_after = if let Some(after_path) = compare_after.as_ref() {
                 if clip.is_some() {
                     return Err("--clip cannot be used with --compare-after; declare both --before-clip and --after-clip".into());
@@ -1966,7 +1968,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let after_name = after_clip
                     .as_deref()
                     .ok_or_else(|| "--compare-after requires --after-clip".to_string())?;
-                let after_loaded = load_with_config(after_path, &loaded_config)?;
+                let after_loaded = load_with_config_v2(after_path, &loaded_config)?;
                 animsmith_report::preflight_comparison_sources(
                     &loaded.source,
                     before_name,
@@ -2003,38 +2005,28 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 None
             };
             let config = &loaded_config.config;
-            let prediction_provenance = loaded
-                .engine
-                .as_ref()
-                .map(|profile| {
-                    animsmith_engine::project_prediction_provenance_v1(profile, &loaded.source)
-                })
-                .transpose()
-                .map_err(|error| error.to_string())?;
+            let analysis = analyze_loaded_lint(
+                &loaded,
+                &loaded_config,
+                file.display().to_string(),
+                CheckSelection::All,
+                Severity::Error,
+                &BTreeSet::new(),
+            )?;
             let doc = loaded.document();
-            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
-            let grids = MetricGrids::new(doc);
-            let ctx = CheckCtx::new(&grids, &roles, config);
-            let evaluations = {
-                let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
-                checks.push(Box::new(
-                    EngineAddressabilityCheck::new(&loaded.source, prediction_provenance.as_ref())
-                        .map_err(|error| error.to_string())?,
-                ));
-                evaluate_checks(&ctx, &checks, CheckSelection::All)
-                    .map_err(|error| error.to_string())?
-            };
+            let evaluations = analysis.report.checks();
             let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
             let html = match comparison_after {
                 None => animsmith_report::render(animsmith_report::ReportInputs {
-                    grids: &grids,
-                    roles: &roles,
-                    checks: &evaluations,
+                    source: &loaded.source,
+                    grids: &analysis.grids,
+                    roles: &analysis.roles,
+                    evidence: &analysis.report,
                     config,
-                    prediction_provenance: prediction_provenance.as_ref(),
                     clip: clip.as_deref(),
                     options: report_options,
-                }),
+                })
+                .map_err(|error| error.to_string())?,
                 Some(after_loaded) => {
                     let before_clip = before_clip
                         .ok_or_else(|| "--compare-after requires --before-clip".to_string())?;
@@ -2043,57 +2035,38 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     let after_path = compare_after
                         .as_ref()
                         .expect("comparison load is paired with its path");
-                    let after_prediction_provenance = after_loaded
-                        .engine
-                        .as_ref()
-                        .map(|profile| {
-                            animsmith_engine::project_prediction_provenance_v1(
-                                profile,
-                                &after_loaded.source,
-                            )
-                        })
-                        .transpose()
-                        .map_err(|error| error.to_string())?;
-                    let after_doc = after_loaded.document();
-                    let after_roles = resolve_configured_roles(&after_doc.skeleton, &config.rig);
-                    let after_grids = MetricGrids::new(after_doc);
-                    let after_ctx = CheckCtx::new(&after_grids, &after_roles, config);
-                    let after_evaluations = {
-                        let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
-                        checks.push(Box::new(
-                            EngineAddressabilityCheck::new(
-                                &after_loaded.source,
-                                after_prediction_provenance.as_ref(),
-                            )
-                            .map_err(|error| error.to_string())?,
-                        ));
-                        evaluate_checks(&after_ctx, &checks, CheckSelection::All)
-                            .map_err(|error| error.to_string())?
-                    };
+                    let after_analysis = analyze_loaded_lint(
+                        &after_loaded,
+                        &loaded_config,
+                        after_path.display().to_string(),
+                        CheckSelection::All,
+                        Severity::Error,
+                        &BTreeSet::new(),
+                    )?;
                     let html = animsmith_report::render_comparison(
                         animsmith_report::ComparisonSide {
                             source: &loaded.source,
-                            grids: &grids,
-                            roles: &roles,
-                            checks: &evaluations,
+                            grids: &analysis.grids,
+                            roles: &analysis.roles,
+                            evidence: &analysis.report,
                             config,
-                            prediction_provenance: prediction_provenance.as_ref(),
                             clip: &before_clip,
                         },
                         animsmith_report::ComparisonSide {
                             source: &after_loaded.source,
-                            grids: &after_grids,
-                            roles: &after_roles,
-                            checks: &after_evaluations,
+                            grids: &after_analysis.grids,
+                            roles: &after_analysis.roles,
+                            evidence: &after_analysis.report,
                             config,
-                            prediction_provenance: after_prediction_provenance.as_ref(),
                             clip: &after_clip,
                         },
                         report_options,
                     )
                     .map_err(|error| error.to_string())?;
                     let finding_count = finding_count
-                        + after_evaluations
+                        + after_analysis
+                            .report
+                            .checks()
                             .iter()
                             .map(|check| check.findings().len())
                             .sum::<usize>();

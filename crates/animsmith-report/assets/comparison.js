@@ -680,7 +680,9 @@ function listContexts(name) {
 for (const name of ["before", "after"]) {
   q(`${name}-identity`).textContent = summary(data[name]);
   listContexts(name); list(name, "findings"); list(name, "gaps");
-  q(`${name}-predictions`).textContent = JSON.stringify({ provenance: data[name].prediction_provenance, predictions: data[name].predictions }, null, 2);
+  const engine = data[name].engine_evidence;
+  const summaries = engine.projection.facets.map(animsmithEngineFacetText).join("\n");
+  q(`${name}-predictions`).textContent = "Whole-input engine evidence includes other clips and source-only subjects.\n" + summaries + "\n" + JSON.stringify(engine, null, 2);
 }
 function selectHash() {
   const match = location.hash.match(/^#(?:finding|time)-(before|after)-([a-f0-9]{16})$/);

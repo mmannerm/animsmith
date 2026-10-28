@@ -182,10 +182,14 @@ cargo run -p animsmith --example embed
 6. **Create one `MetricGrids`.** Share it by reference with
    `measure_document`, `CheckCtx::new`, `evaluate_checks`, and optional report
    rendering so each clip is sampled once. `animsmith_report::render` takes
-   one `ReportInputs` carrying those grids, the roles, the evaluations and the
-   same `Config` the checks ran under; the configuration is what lets it draw
+   one `ReportInputs` carrying those grids, the roles, the exact `LoadedSource`,
+   validated current `LintFileReportV19` evidence, and the same `Config` the
+   checks ran under; the configuration is what lets it draw
    a declared gait group's members against each other, since a coherent group
-   emits no finding naming them.
+   emits no finding naming them. Both renderers return `Result<String, ReportError>`;
+   source/grids pointer identity, primary evidence identity and any profiled
+   dependency closure must agree. The caller still establishes the association
+   with roles/configuration, including profile-free evidence.
 7. **Map results into the host.** `Finding` carries a stable check id,
    severity, optional clip/bone/time, measured and expected values, and a
    message. The host decides whether warnings fail its gate.

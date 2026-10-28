@@ -5,9 +5,9 @@ use animsmith_core::{
     CheckEvaluation, CheckOutput, CoverageGap, CoverageGapCode, Finding, Severity,
 };
 use animsmith_core::{
-    EnginePredictionBasisV1, EnginePredictionFacetV1, EnginePredictionV1, EvaluationScope,
-    EvaluationScopeCode, PredictionBasisReferenceV1, PredictionProvenanceV1,
-    PredictionUnavailableReasonV1,
+    EnginePredictionBasisV2, EnginePredictionFacetV3, EnginePredictionV3, EvaluationScope,
+    EvaluationScopeCode, PredictionBasisReferenceV1, PredictionProvenanceV3,
+    PredictionUnavailableReasonV2,
 };
 use base64::Engine as _;
 use serde_json::Value;
@@ -57,43 +57,53 @@ fn embedded_json(html: &str, id: &str) -> Value {
     serde_json::from_str(&html[start..end]).expect("report data JSON")
 }
 
-fn comparison_side<'a>(
-    source: &'a animsmith_core::LoadedSource,
-    grids: &'a MetricGrids<'a>,
-    roles: &'a ResolvedRoles,
-    checks: &'a [CheckEvaluation],
-    config: &'a animsmith_core::Config,
-    clip: &'a str,
-) -> animsmith_report::ComparisonSide<'a> {
-    animsmith_report::ComparisonSide {
-        source,
-        grids,
-        roles,
-        checks,
-        config,
-        prediction_provenance: None,
-        clip,
-    }
+fn synthetic_source(doc: animsmith_core::Document) -> animsmith_core::LoadedSource {
+    animsmith_core::RawSourceFactsBuilderV1::new(
+        animsmith_core::SourceFormatV1::GltfJson,
+        animsmith_core::InputIdentity::from_bytes(b"explicit synthetic report fixture"),
+    )
+    .finish(doc)
+    .unwrap()
 }
 
-fn comparison_side_with_provenance<'a>(
-    source: &'a animsmith_core::LoadedSource,
-    grids: &'a MetricGrids<'a>,
-    roles: &'a ResolvedRoles,
-    checks: &'a [CheckEvaluation],
-    config: &'a animsmith_core::Config,
-    provenance: Option<&'a PredictionProvenanceV1>,
-    clip: &'a str,
-) -> animsmith_report::ComparisonSide<'a> {
-    animsmith_report::ComparisonSide {
-        source,
-        grids,
-        roles,
-        checks,
-        config,
-        prediction_provenance: provenance,
-        clip,
-    }
+fn evidence_for(
+    source: &animsmith_core::LoadedSource,
+    roles: &ResolvedRoles,
+    checks: &[CheckEvaluation],
+    provenance: Option<&PredictionProvenanceV3>,
+) -> animsmith_core::LintFileReportV19 {
+    // Chart fixtures do not run another check catalog or warm the pose cache.
+    animsmith_core::LintFileReportV19::new(
+        "fixture",
+        source.source_facts().primary_identity().clone(),
+        animsmith_core::RigInfo::from_resolved(source.document(), roles).unwrap(),
+        provenance.cloned(),
+        checks.to_vec(),
+        animsmith_core::MeasurementContract::new(
+            Default::default(),
+            animsmith_core::measure::measure_assets(source.document()),
+        )
+        .unwrap(),
+    )
+    .expect("valid current fixture evidence")
+}
+
+macro_rules! comparison_side {
+    ($source:expr, $grids:expr, $roles:expr, $checks:expr, $config:expr, $clip:expr $(,)?) => {
+        comparison_side_with_provenance!($source, $grids, $roles, $checks, $config, None, $clip)
+    };
+}
+macro_rules! comparison_side_with_provenance {
+    ($source:expr, $grids:expr, $roles:expr, $checks:expr, $config:expr, $provenance:expr, $clip:expr $(,)?) => {
+        animsmith_report::ComparisonSide {
+            source: $source,
+            grids: $grids,
+            roles: $roles,
+            evidence: &evidence_for($source, $roles, $checks, $provenance),
+            config: $config,
+            clip: $clip,
+        }
+    };
 }
 
 #[test]
@@ -124,7 +134,7 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
         .bone("hips")
         .time(0.5),
     ]);
-    let before = comparison_side(
+    let before = comparison_side!(
         &before_source,
         &before_grids,
         &roles,
@@ -132,7 +142,7 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
         &config,
         "acceptance-matrix",
     );
-    let after = comparison_side(
+    let after = comparison_side!(
         &after_source,
         &after_grids,
         &roles,
@@ -164,7 +174,7 @@ fn comparison_is_deterministic_escaped_and_keeps_sides_separate() {
     );
     assert!(first.contains(&format!("before-{before_clip_anchor}")));
     assert!(first.contains(&format!("after-{after_clip_anchor}")));
-    assert_eq!(data["kind"], "animsmith-comparison-v1");
+    assert_eq!(data["kind"], "animsmith-comparison-v2");
     assert_eq!(data["correspondence"]["before_clip"], "acceptance-matrix");
     assert_eq!(data["correspondence"]["after_clip"], "acceptance-matrix");
     assert_eq!(
@@ -202,7 +212,7 @@ fn comparison_refuses_incompatible_named_hierarchy_before_rendering() {
             .expect_err("different named parent must refuse");
     assert!(matches!(
         error,
-        animsmith_report::ComparisonError::IncompatibleSkeleton { .. }
+        animsmith_report::ReportError::IncompatibleSkeleton { .. }
     ));
 }
 
@@ -219,7 +229,7 @@ fn comparison_public_preflight_refuses_normalized_document_clip_ambiguity() {
             "acceptance-matrix",
             full(),
         ),
-        Err(animsmith_report::ComparisonError::AmbiguousClip { side: "before", .. })
+        Err(animsmith_report::ReportError::AmbiguousClip { side: "before", .. })
     ));
 }
 
@@ -257,7 +267,7 @@ fn comparison_public_input_text_boundary_accepts_max_and_refuses_n_plus_one() {
             "acceptance-matrix",
             full(),
         ),
-        Err(animsmith_report::ComparisonError::InputTextWorkExceeded {
+        Err(animsmith_report::ReportError::InputTextWorkExceeded {
             side: "before",
             bytes: LIMIT + 1,
             limit: LIMIT,
@@ -289,7 +299,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
             )
         };
         assert!(
-            matches!(result, Err(animsmith_report::ComparisonError::DuplicateBoneName { side: found, .. }) if found == side)
+            matches!(result, Err(animsmith_report::ReportError::DuplicateBoneName { side: found, .. }) if found == side)
         );
 
         let mut later_parent = baseline.clone();
@@ -312,7 +322,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
             )
         };
         assert!(
-            matches!(result, Err(animsmith_report::ComparisonError::InvalidHierarchy { side: found, .. }) if found == side)
+            matches!(result, Err(animsmith_report::ReportError::InvalidHierarchy { side: found, .. }) if found == side)
         );
 
         let mut invalid_parent = baseline.clone();
@@ -335,7 +345,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
             )
         };
         assert!(
-            matches!(result, Err(animsmith_report::ComparisonError::InvalidHierarchy { side: found, .. }) if found == side)
+            matches!(result, Err(animsmith_report::ReportError::InvalidHierarchy { side: found, .. }) if found == side)
         );
 
         let mut unavailable = baseline.clone();
@@ -358,7 +368,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
             )
         };
         assert!(
-            matches!(result, Err(animsmith_report::ComparisonError::UnavailableSampleGrid { side: found, .. }) if found == side)
+            matches!(result, Err(animsmith_report::ReportError::UnavailableSampleGrid { side: found, .. }) if found == side)
         );
     }
 
@@ -372,7 +382,7 @@ fn comparison_preflight_refuses_each_structural_and_grid_ambiguity_on_both_sides
             "acceptance-matrix",
             full(),
         ),
-        Err(animsmith_report::ComparisonError::IncompatibleSkeleton { .. })
+        Err(animsmith_report::ReportError::IncompatibleSkeleton { .. })
     ));
 }
 
@@ -381,7 +391,7 @@ fn comparison_refuses_the_same_complete_loader_authority() {
     let source = animsmith_gltf::load_source(&fixture()).expect("fixture loads");
     assert_eq!(
         animsmith_report::preflight_comparison_sources(&source, "walk", &source, "idle", full()),
-        Err(animsmith_report::ComparisonError::IdenticalAuthorities)
+        Err(animsmith_report::ReportError::IdenticalAuthorities)
     );
 }
 
@@ -427,9 +437,24 @@ fn comparison_binds_equal_primary_bytes_to_changed_sidecar_closures() {
     let after_grids = MetricGrids::new(after_source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
+    let provenance = prediction_provenance_for(&before_source);
+    let evidence = evidence_for(&before_source, &roles, &[], Some(&provenance));
+    assert!(matches!(
+        animsmith_report::render(animsmith_report::ReportInputs::new(
+            &after_grids,
+            &roles,
+            &after_source,
+            &evidence,
+            &config
+        )),
+        Err(animsmith_report::ReportError::PredictionAuthorityMismatch {
+            detail: "provenance dependency closure differs from the loaded source",
+            ..
+        })
+    ));
     let html = animsmith_report::render_comparison(
-        comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
-        comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        comparison_side!(&before_source, &before_grids, &roles, &[], &config, "walk"),
+        comparison_side!(&after_source, &after_grids, &roles, &[], &config, "walk"),
         full(),
     )
     .unwrap();
@@ -474,7 +499,7 @@ fn comparison_projects_node_only_finding_subjects_from_exact_source_authority() 
             .node("#99(unprojected(special)/[])"),
     ]);
     let html = animsmith_report::render_comparison(
-        comparison_side(
+        comparison_side!(
             &before_source,
             &before_grids,
             &roles,
@@ -482,7 +507,7 @@ fn comparison_projects_node_only_finding_subjects_from_exact_source_authority() 
             &config,
             "walk",
         ),
-        comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+        comparison_side!(&after_source, &after_grids, &roles, &[], &config, "walk"),
         full(),
     )
     .unwrap();
@@ -507,7 +532,7 @@ fn identical_findings_get_side_and_occurrence_unique_navigation_anchors() {
     let before_checks = evaluations(vec![identical.clone(), identical.clone()]);
     let after_checks = evaluations(vec![identical]);
     let html = animsmith_report::render_comparison(
-        comparison_side(
+        comparison_side!(
             &before_source,
             &before_grids,
             &roles,
@@ -515,7 +540,7 @@ fn identical_findings_get_side_and_occurrence_unique_navigation_anchors() {
             &config,
             "acceptance-matrix",
         ),
-        comparison_side(
+        comparison_side!(
             &after_source,
             &after_grids,
             &roles,
@@ -550,7 +575,7 @@ fn comparison_public_boundary_admits_finding_max_and_refuses_n_plus_one() {
     let render = |count| {
         let checks = evaluations(vec![finding.clone(); count]);
         animsmith_report::render_comparison(
-            comparison_side(
+            comparison_side!(
                 &before_source,
                 &before_grids,
                 &roles,
@@ -558,7 +583,7 @@ fn comparison_public_boundary_admits_finding_max_and_refuses_n_plus_one() {
                 &config,
                 "acceptance-matrix",
             ),
-            comparison_side(
+            comparison_side!(
                 &after_source,
                 &after_grids,
                 &roles,
@@ -572,7 +597,7 @@ fn comparison_public_boundary_admits_finding_max_and_refuses_n_plus_one() {
     render(LIMIT).expect("the exact finding limit renders");
     assert_eq!(
         render(LIMIT + 1).unwrap_err(),
-        animsmith_report::ComparisonError::ReportRowsExceeded {
+        animsmith_report::ReportError::ReportRowsExceeded {
             side: "before",
             kind: "findings",
             found: LIMIT + 1,
@@ -592,7 +617,9 @@ fn comparison_public_report_text_boundary_counts_repeated_arbitrary_check_ids() 
     let config = animsmith_core::Config::default();
     let clip = "acceptance-matrix";
     let empty = Finding::new("", Severity::Warning, "bounded context").clip(clip);
-    let fixed = serde_json::to_vec(&empty).unwrap().len() * 3
+    let engine_empty = serde_json::json!({"provenance":null,"checks":[],"projection":{"kind":"animsmith-engine-display-v1","scope":"whole_input","profile":null,"facets":[]}});
+    let fixed = serde_json::to_vec(&engine_empty).unwrap().len()
+        + serde_json::to_vec(&empty).unwrap().len() * 3
         + serde_json::to_vec(&clip).unwrap().len() * 16;
     let exact_id_bytes = (LIMIT - fixed) / 3;
     let render = |id_bytes| {
@@ -601,7 +628,7 @@ fn comparison_public_report_text_boundary_counts_repeated_arbitrary_check_ids() 
             Finding::new(id, Severity::Warning, "bounded context").clip(clip),
         ]);
         animsmith_report::render_comparison(
-            comparison_side(
+            comparison_side!(
                 &before_source,
                 &before_grids,
                 &roles,
@@ -609,14 +636,14 @@ fn comparison_public_report_text_boundary_counts_repeated_arbitrary_check_ids() 
                 &config,
                 clip,
             ),
-            comparison_side(&after_source, &after_grids, &roles, &[], &config, clip),
+            comparison_side!(&after_source, &after_grids, &roles, &[], &config, clip),
             full(),
         )
     };
     render(exact_id_bytes).expect("exact aggregate report-text limit is admitted");
     assert_eq!(
         render(exact_id_bytes + 1).unwrap_err(),
-        animsmith_report::ComparisonError::ReportTextWorkExceeded {
+        animsmith_report::ReportError::ReportTextWorkExceeded {
             side: "before",
             limit: LIMIT,
         }
@@ -624,7 +651,7 @@ fn comparison_public_report_text_boundary_counts_repeated_arbitrary_check_ids() 
 }
 
 #[test]
-fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
+fn comparison_public_boundary_refuses_real_gap_and_context_n_plus_one() {
     const ROW_LIMIT: usize = 4096;
     const CONTEXT_LIMIT: usize = 8192;
     let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
@@ -633,19 +660,20 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
     let after_grids = MetricGrids::new(after_source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
-    let gap = CheckEvaluation::evaluated(
-        "test:gaps",
-        CheckOutput::from_coverage(
-            Vec::new(),
-            Vec::new(),
-            vec![CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap")],
-        ),
-    )
-    .unwrap();
-    let gaps = vec![gap; ROW_LIMIT + 1];
+    let gaps = vec![
+        CheckEvaluation::evaluated(
+            "test:gaps",
+            CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                vec![CoverageGap::new(CoverageGapCode::custom("test:gap"), "gap"); ROW_LIMIT + 1],
+            ),
+        )
+        .unwrap(),
+    ];
     let render = |checks: &[CheckEvaluation], provenance| {
         animsmith_report::render_comparison(
-            comparison_side_with_provenance(
+            comparison_side_with_provenance!(
                 &before_source,
                 &before_grids,
                 &roles,
@@ -654,7 +682,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
                 provenance,
                 "acceptance-matrix",
             ),
-            comparison_side(
+            comparison_side!(
                 &after_source,
                 &after_grids,
                 &roles,
@@ -667,7 +695,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
     };
     assert_eq!(
         render(&gaps, None).unwrap_err(),
-        animsmith_report::ComparisonError::ReportRowsExceeded {
+        animsmith_report::ReportError::ReportRowsExceeded {
             side: "before",
             kind: "coverage gaps",
             found: ROW_LIMIT + 1,
@@ -675,19 +703,8 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
         }
     );
 
-    let provenance = prediction_provenance_for(&before_source);
-    let prediction = prediction_check(&provenance, false, true);
-    let predictions = vec![prediction; ROW_LIMIT + 1];
-    assert_eq!(
-        render(&predictions, Some(&provenance)).unwrap_err(),
-        animsmith_report::ComparisonError::ReportRowsExceeded {
-            side: "before",
-            kind: "prediction facets",
-            found: ROW_LIMIT + 1,
-            limit: ROW_LIMIT,
-        }
-    );
-
+    // The validated evidence owner rejects more than 4096 prediction facets
+    // before a renderer can receive them. Its N+1 boundary belongs to core.
     for frames in [CONTEXT_LIMIT - 2, CONTEXT_LIMIT - 1] {
         let directory = tempfile::tempdir().unwrap();
         let mut json: serde_json::Value =
@@ -747,7 +764,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
             .unwrap(),
         ];
         let result = animsmith_report::render_comparison(
-            comparison_side(
+            comparison_side!(
                 &long_before,
                 &long_before_grids,
                 &long_roles,
@@ -755,7 +772,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
                 &config,
                 "walk",
             ),
-            comparison_side(
+            comparison_side!(
                 &long_after,
                 &long_after_grids,
                 &long_roles,
@@ -770,7 +787,7 @@ fn comparison_public_boundary_refuses_real_gap_facet_and_context_n_plus_one() {
         } else {
             assert_eq!(
                 result.unwrap_err(),
-                animsmith_report::ComparisonError::ReportRowsExceeded {
+                animsmith_report::ReportError::ReportRowsExceeded {
                     side: "before",
                     kind: "diagnostic contexts",
                     found: CONTEXT_LIMIT + 1,
@@ -847,7 +864,7 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
     let before_checks = matrix_evaluations(&before_grids, &roles, &config);
     let after_checks = matrix_evaluations(&after_grids, &after_roles, &config);
     let html = animsmith_report::render_comparison(
-        comparison_side(
+        comparison_side!(
             &before_source,
             &before_grids,
             &roles,
@@ -855,7 +872,7 @@ fn comparison_matrix_projects_typed_visual_acceptance_context() {
             &config,
             "acceptance-matrix",
         ),
-        comparison_side(
+        comparison_side!(
             &after_source,
             &after_grids,
             &after_roles,
@@ -1022,13 +1039,13 @@ fn evaluations(findings: Vec<Finding>) -> Vec<CheckEvaluation> {
     ]
 }
 
-fn prediction_provenance() -> (animsmith_core::LoadedSource, PredictionProvenanceV1) {
+fn prediction_provenance() -> (animsmith_core::LoadedSource, PredictionProvenanceV3) {
     let source = animsmith_gltf::load_source(&fixture()).expect("fixture source loads");
     let provenance = prediction_provenance_for(&source);
     (source, provenance)
 }
 
-fn prediction_provenance_for(source: &animsmith_core::LoadedSource) -> PredictionProvenanceV1 {
+fn prediction_provenance_for(source: &animsmith_core::LoadedSource) -> PredictionProvenanceV3 {
     let clip_names = source
         .document()
         .clips
@@ -1046,14 +1063,17 @@ fn prediction_provenance_for(source: &animsmith_core::LoadedSource) -> Predictio
     })
     .expect("profile declaration is valid")
     .expect("profile selected")
-    .resolve_input(source.source_facts().format(), &clip_names)
+    .resolve_input_v2_iter(
+        source.source_facts().format(),
+        clip_names.iter().map(String::as_str),
+    )
     .expect("fixture format is accepted");
-    animsmith_engine::project_prediction_provenance_v1(&resolved, source)
+    animsmith_engine::project_prediction_provenance_v3(&resolved, source)
         .expect("same-load provenance projects")
 }
 
 fn prediction_check(
-    provenance: &PredictionProvenanceV1,
+    provenance: &PredictionProvenanceV3,
     available: bool,
     unavailable: bool,
 ) -> CheckEvaluation {
@@ -1063,13 +1083,14 @@ fn prediction_check(
     let mut evaluated = Vec::new();
     let mut findings = Vec::new();
     if available {
-        let basis = EnginePredictionBasisV1::new(vec![
-            PredictionBasisReferenceV1::profile_fact("accepted_inputs")
-                .expect("known profile fact reference"),
-        ])
-        .expect("nonempty basis");
+        let basis =
+            EnginePredictionBasisV2::new(vec![animsmith_core::PredictionBasisReferenceV2::v1(
+                PredictionBasisReferenceV1::profile_fact("accepted_inputs")
+                    .expect("known profile fact reference"),
+            )])
+            .expect("nonempty basis");
         facets.push(
-            EnginePredictionFacetV1::available(available_scope.clone(), basis)
+            EnginePredictionFacetV3::available(available_scope.clone(), basis)
                 .expect("available facet"),
         );
         evaluated.push(available_scope.clone());
@@ -1080,20 +1101,20 @@ fn prediction_check(
     }
     if unavailable {
         facets.push(
-            EnginePredictionFacetV1::required_unavailable(
+            EnginePredictionFacetV3::required_unavailable(
                 unavailable_scope,
-                EnginePredictionBasisV1::new(Vec::new()).expect("empty unavailable prefix"),
-                vec![PredictionUnavailableReasonV1::ProjectIntentUnavailable],
+                EnginePredictionBasisV2::new(Vec::new()).expect("empty unavailable prefix"),
+                vec![PredictionUnavailableReasonV2::ProjectIntentUnavailable],
             )
             .expect("required-unavailable facet"),
         );
     }
-    let prediction = EnginePredictionV1::new(provenance.identity().clone(), facets)
+    let prediction = EnginePredictionV3::new(provenance.identity().clone(), facets)
         .expect("canonical prediction");
     CheckEvaluation::evaluated(
         "test:engine",
         CheckOutput::from_coverage(findings, evaluated, Vec::new())
-            .with_engine_prediction(prediction),
+            .with_engine_prediction_v3(prediction),
     )
     .expect("prediction lifecycle is valid")
 }
@@ -1110,109 +1131,85 @@ fn comparison_binds_prediction_provenance_to_each_exact_side() {
     let after_provenance = prediction_provenance_for(&after_source);
     let before_checks = vec![prediction_check(&before_provenance, true, false)];
     let after_checks = vec![prediction_check(&after_provenance, true, false)];
-    let render = |before_checks: &[CheckEvaluation],
-                  before_provenance: Option<&PredictionProvenanceV1>,
-                  after_checks: &[CheckEvaluation],
-                  after_provenance: Option<&PredictionProvenanceV1>| {
-        animsmith_report::render_comparison(
-            comparison_side_with_provenance(
-                &before_source,
-                &before_grids,
-                &roles,
-                before_checks,
-                &config,
-                before_provenance,
-                "acceptance-matrix",
-            ),
-            comparison_side_with_provenance(
-                &after_source,
-                &after_grids,
-                &roles,
-                after_checks,
-                &config,
-                after_provenance,
-                "acceptance-matrix",
-            ),
-            full(),
-        )
-    };
-    render(
+    let before_evidence = evidence_for(
+        &before_source,
+        &roles,
         &before_checks,
         Some(&before_provenance),
+    );
+    let after_evidence = evidence_for(
+        &after_source,
+        &roles,
         &after_checks,
         Some(&after_provenance),
-    )
-    .expect("exact side provenance renders");
-
+    );
+    let before = animsmith_report::ComparisonSide {
+        source: &before_source,
+        grids: &before_grids,
+        roles: &roles,
+        evidence: &before_evidence,
+        config: &config,
+        clip: "acceptance-matrix",
+    };
+    let after = animsmith_report::ComparisonSide {
+        source: &after_source,
+        grids: &after_grids,
+        roles: &roles,
+        evidence: &after_evidence,
+        config: &config,
+        clip: "acceptance-matrix",
+    };
+    animsmith_report::render_comparison(before, after, full()).unwrap();
     for side in ["before", "after"] {
         let result = if side == "before" {
-            render(&before_checks, None, &after_checks, Some(&after_provenance))
-        } else {
-            render(
-                &before_checks,
-                Some(&before_provenance),
-                &after_checks,
-                None,
-            )
-        };
-        assert!(matches!(
-            result,
-            Err(animsmith_report::ComparisonError::PredictionAuthorityMismatch {
-                side: found,
-                detail: "prediction attachment has no supplied provenance"
-            }) if found == side
-        ));
-
-        let result = if side == "before" {
-            render(
-                &before_checks,
-                Some(&after_provenance),
-                &after_checks,
-                Some(&after_provenance),
+            animsmith_report::render_comparison(
+                animsmith_report::ComparisonSide {
+                    evidence: &after_evidence,
+                    ..before
+                },
+                after,
+                full(),
             )
         } else {
-            render(
-                &before_checks,
-                Some(&before_provenance),
-                &after_checks,
-                Some(&before_provenance),
+            animsmith_report::render_comparison(
+                before,
+                animsmith_report::ComparisonSide {
+                    evidence: &before_evidence,
+                    ..after
+                },
+                full(),
             )
         };
-        assert!(matches!(
-            result,
-            Err(animsmith_report::ComparisonError::PredictionAuthorityMismatch {
-                side: found,
-                detail: "provenance dependency closure differs from the loaded source"
-            }) if found == side
-        ));
-
-        let result = if side == "before" {
-            render(
-                &after_checks,
-                Some(&before_provenance),
-                &after_checks,
-                Some(&after_provenance),
-            )
-        } else {
-            render(
-                &before_checks,
-                Some(&before_provenance),
-                &before_checks,
-                Some(&after_provenance),
-            )
-        };
-        assert!(matches!(
-            result,
-            Err(animsmith_report::ComparisonError::PredictionAuthorityMismatch {
-                side: found,
-                detail: "prediction attachment identity differs from supplied provenance"
-            }) if found == side
-        ));
+        assert!(
+            matches!(result, Err(animsmith_report::ReportError::PredictionAuthorityMismatch {
+            side: found, detail: "evidence primary identity differs from the loaded source"
+        }) if found == side)
+        );
     }
+    assert!(matches!(
+        animsmith_report::render(animsmith_report::ReportInputs::new(
+            &before_grids,
+            &roles,
+            &before_source,
+            &after_evidence,
+            &config
+        )),
+        Err(animsmith_report::ReportError::PredictionAuthorityMismatch { side: "input", .. })
+    ));
+    assert!(matches!(
+        animsmith_report::render(animsmith_report::ReportInputs::new(
+            &after_grids,
+            &roles,
+            &before_source,
+            &before_evidence,
+            &config
+        )),
+        Err(animsmith_report::ReportError::AuthorityDocumentMismatch { side: "input" })
+    ));
 }
 
 #[test]
-fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
+fn comparison_filters_mechanical_gaps_but_preserves_whole_input_engine_facets() {
     let before_source = animsmith_gltf::load_source(&comparison_fixture("before")).unwrap();
     let after_source = animsmith_gltf::load_source(&comparison_fixture("after")).unwrap();
     let before_grids = MetricGrids::new(before_source.document());
@@ -1238,15 +1235,15 @@ fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
     )
     .unwrap();
     let provenance = prediction_provenance_for(&before_source);
-    let basis = EnginePredictionBasisV1::new(vec![
+    let basis = EnginePredictionBasisV2::new(vec![animsmith_core::PredictionBasisReferenceV2::v1(
         PredictionBasisReferenceV1::profile_fact("accepted_inputs").unwrap(),
-    ])
+    )])
     .unwrap();
-    let prediction = EnginePredictionV1::new(
+    let prediction = EnginePredictionV3::new(
         provenance.identity().clone(),
         vec![
-            EnginePredictionFacetV1::available(selected_scope.clone(), basis.clone()).unwrap(),
-            EnginePredictionFacetV1::available(other_scope.clone(), basis).unwrap(),
+            EnginePredictionFacetV3::available(selected_scope.clone(), basis.clone()).unwrap(),
+            EnginePredictionFacetV3::available(other_scope.clone(), basis).unwrap(),
         ],
     )
     .unwrap();
@@ -1257,12 +1254,12 @@ fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
             vec![selected_scope.clone(), other_scope],
             Vec::new(),
         )
-        .with_engine_prediction(prediction),
+        .with_engine_prediction_v3(prediction),
     )
     .unwrap();
     let checks = vec![gaps, prediction];
     let html = animsmith_report::render_comparison(
-        comparison_side_with_provenance(
+        comparison_side_with_provenance!(
             &before_source,
             &before_grids,
             &roles,
@@ -1271,7 +1268,7 @@ fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
             Some(&provenance),
             "acceptance-matrix",
         ),
-        comparison_side(
+        comparison_side!(
             &after_source,
             &after_grids,
             &roles,
@@ -1289,34 +1286,43 @@ fn comparison_filters_scoped_gaps_and_prediction_facets_to_selected_clip() {
         "acceptance-matrix"
     );
     assert_eq!(
-        data["before"]["predictions"][0]["prediction"]["facets"]
+        data["before"]["engine_evidence"]["checks"][0]["prediction"]["facets"]
             .as_array()
             .unwrap()
             .len(),
-        1
+        2
     );
+    let subjects: Vec<_> = data["before"]["engine_evidence"]["projection"]["facets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|facet| facet["scope"]["subject"].as_str().unwrap())
+        .collect();
+    assert!(subjects.contains(&"acceptance-matrix") && subjects.contains(&"other-clip"));
     assert_eq!(
-        data["before"]["predictions"][0]["prediction"]["facets"][0]["scope"]["subject"],
-        "acceptance-matrix"
+        data["before"]["engine_evidence"]["projection"]["scope"],
+        "whole_input"
     );
 }
 
 #[test]
 fn render_embeds_pose_grid_and_uses_no_external_urls() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     assert_self_contained(&html);
     let data = report_data(&html);
     let clips = data["clips"].as_array().expect("clips array");
@@ -1352,7 +1358,8 @@ fn render_self_contained_with_roles_findings_and_charts() {
     let mut right_foot = doc.skeleton.bones[2].clone();
     right_foot.name = "right_foot".into();
     doc.skeleton.bones.push(right_foot);
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let checks = evaluations(vec![
         Finding::new("fixture-check", Severity::Warning, "fixture finding")
@@ -1365,12 +1372,13 @@ fn render_self_contained_with_roles_findings_and_charts() {
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     assert_self_contained(&html);
     assert!(
         html.contains(r#"data-kind="gait""#),
@@ -1406,19 +1414,21 @@ fn render_self_contained_with_roles_findings_and_charts() {
 #[test]
 fn render_respects_clip_filter() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::default();
     let checks = Vec::new();
 
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: Some("missing"),
         options: full(),
-    });
+    })
+    .expect("report renders");
     assert_self_contained(&html);
     let data = report_data(&html);
     assert_eq!(
@@ -1431,12 +1441,13 @@ fn render_respects_clip_filter() {
         let html = animsmith_report::render(animsmith_report::ReportInputs {
             grids: &grids,
             roles: &roles,
-            checks: &checks,
+            source: &source,
+            evidence: &evidence_for(&source, &roles, &checks, None),
             config: &no_groups(),
-            prediction_provenance: None,
             clip: Some(name),
             options: full(),
-        });
+        })
+        .expect("report renders");
         let data = report_data(&html);
         let clips = data["clips"].as_array().expect("clips array");
         assert_eq!(clips.len(), 1);
@@ -1484,14 +1495,15 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
         let html = animsmith_report::render(animsmith_report::ReportInputs {
             grids: &grids,
             roles: &roles,
-            checks: &checks,
+            source: &source,
+            evidence: &evidence_for(&source, &roles, &checks, Some(&provenance)),
             config: &no_groups(),
-            prediction_provenance: Some(&provenance),
             clip: None,
             options: full(),
-        });
+        })
+        .expect("report renders");
         let data = report_data(&html);
-        let states = data["predictions"][0]["prediction"]["facets"]
+        let states = data["engine_evidence"]["checks"][0]["prediction"]["facets"]
             .as_array()
             .expect("facet array")
             .iter()
@@ -1503,7 +1515,7 @@ fn render_keeps_available_mixed_and_unavailable_predictions_distinct() {
         assert_eq!(data["gaps"][0]["scope"]["code"], "test:gap-scope");
         assert_eq!(data["gaps"][0]["message"], "ordinary gap");
         assert_eq!(
-            data["prediction_provenance"]["identity"],
+            data["engine_evidence"]["provenance"]["identity"],
             serde_json::to_value(provenance.identity()).expect("identity serializes")
         );
         assert!(html.contains("required prediction unavailable"));
@@ -1635,7 +1647,7 @@ fn comparison_documents(options: animsmith_report::ReportOptions) -> String {
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
     animsmith_report::render_comparison(
-        comparison_side(
+        comparison_side!(
             &before_source,
             &before_grids,
             &roles,
@@ -1643,7 +1655,7 @@ fn comparison_documents(options: animsmith_report::ReportOptions) -> String {
             &config,
             "acceptance-matrix",
         ),
-        comparison_side(
+        comparison_side!(
             &after_source,
             &after_grids,
             &roles,
@@ -1658,7 +1670,8 @@ fn comparison_documents(options: animsmith_report::ReportOptions) -> String {
 
 fn themed_documents() -> Vec<(&'static str, String)> {
     let doc = chart_roles_fixture();
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     vec![
         (
@@ -1666,12 +1679,13 @@ fn themed_documents() -> Vec<(&'static str, String)> {
             animsmith_report::render(animsmith_report::ReportInputs {
                 grids: &grids,
                 roles: &roles,
-                checks: &[],
+                source: &source,
+                evidence: &evidence_for(&source, &roles, &[], None),
                 config: &no_groups(),
-                prediction_provenance: None,
                 clip: None,
                 options: full(),
-            }),
+            })
+            .expect("report renders"),
         ),
         ("comparison", comparison_documents(full())),
     ]
@@ -1788,7 +1802,7 @@ fn embed_hides_the_same_chrome_in_both_documents_and_hides_no_evidence() {
             for evidence in [
                 "findings",
                 "gaps",
-                "predictions",
+                "engine_evidence",
                 "chart",
                 "notice",
                 "side",
@@ -1960,14 +1974,22 @@ fn both_reports_embed_one_shared_fragment_runtime() {
 #[test]
 fn both_single_clip_forms_offer_pairing_and_only_a_full_one_names_the_two_halves() {
     let doc = chart_roles_fixture();
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let config = no_groups();
     let single = |options| {
         animsmith_report::render(animsmith_report::ReportInputs {
             options,
-            ..animsmith_report::ReportInputs::new(&grids, &roles, &[], &config)
+            ..animsmith_report::ReportInputs::new(
+                &grids,
+                &roles,
+                &source,
+                &evidence_for(&source, &roles, &[], None),
+                &config,
+            )
         })
+        .expect("report renders")
     };
     let full_html = single(full());
     let evidence_html = single(evidence_only());
@@ -2203,17 +2225,19 @@ fn assert_figure_describes_itself(figure: &str, subject: &str) {
 #[test]
 fn charts_keep_their_sync_hooks_and_describe_themselves() {
     let doc = chart_roles_fixture();
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: Some("walk"),
         options: full(),
-    });
+    })
+    .expect("report renders");
     assert_self_contained(&html);
 
     let figures = chart_figures(&html);
@@ -2372,17 +2396,19 @@ fn squashed_gait_fixture() -> animsmith_core::Document {
 #[test]
 fn the_gait_chart_scales_its_two_value_axes_independently() {
     let doc = squashed_gait_fixture();
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -2469,17 +2495,19 @@ fn non_finite_samples_are_reported_as_unavailable_rather_than_plotted() {
         }],
         ..Document::default()
     };
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let path = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2545,17 +2573,19 @@ fn root_path_document(values: Vec<animsmith_core::glam::Vec3>) -> animsmith_core
 /// The root-path figure of a document whose root carries `values`.
 fn root_path_figure(values: Vec<animsmith_core::glam::Vec3>) -> String {
     let doc = root_path_document(values);
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -2903,17 +2933,19 @@ fn an_all_non_finite_series_is_named_rather_than_plotted_as_nan() {
             animsmith_core::glam::Vec3::splat(f32::NAN);
             3
         ]);
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -2962,17 +2994,19 @@ fn a_flat_series_is_centred_and_labelled_once() {
             .map(|value| animsmith_core::glam::Vec3::new(-0.1, value.y, value.z))
             .collect(),
     );
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let gait = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait")
@@ -3006,17 +3040,19 @@ fn a_flat_series_is_centred_and_labelled_once() {
 #[test]
 fn a_stationary_root_path_says_so_in_words() {
     let doc = squashed_gait_fixture();
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "hips".to_string())]);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let path = chart_figures(&html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -3043,15 +3079,22 @@ fn a_stationary_root_path_says_so_in_words() {
     // A root that stands still somewhere other than the origin says where.
     let mut parked = squashed_gait_fixture();
     parked.skeleton.bones[0].rest.translation = animsmith_core::glam::Vec3::new(2.0, 1.0, -3.5);
+    let source = synthetic_source(parked.clone());
     let parked_html = animsmith_report::render(animsmith_report::ReportInputs {
-        grids: &MetricGrids::new(&parked),
+        grids: &MetricGrids::new(source.document()),
         roles: &ResolvedRoles::from_names(&parked.skeleton, [(Role::Root, "hips".to_string())]),
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(
+            &source,
+            &ResolvedRoles::from_names(&parked.skeleton, [(Role::Root, "hips".to_string())]),
+            &[],
+            None,
+        ),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let parked_path = chart_figures(&parked_html)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -3074,15 +3117,17 @@ fn a_stationary_root_path_says_so_in_words() {
     );
 
     // A root that travels keeps the plotted ranges and gains no sentence.
+    let source = synthetic_source(chart_roles_fixture());
     let travelled = animsmith_report::render(animsmith_report::ReportInputs {
-        grids: &MetricGrids::new(&chart_roles_fixture()),
+        grids: &MetricGrids::new(source.document()),
         roles: &chart_roles(&chart_roles_fixture()),
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &chart_roles(&chart_roles_fixture()), &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let moving = chart_figures(&travelled)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "rootpath")
@@ -3131,17 +3176,19 @@ fn the_root_path_chart_plots_x_and_z_on_one_scale() {
         }],
         ..Document::default()
     };
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
 
     let figure = chart_figures(&html)
         .into_iter()
@@ -3288,7 +3335,8 @@ fn embedded_pose_bytes(html: &str, id: &str) -> Vec<u8> {
 #[test]
 fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
     let doc = chart_roles_fixture();
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let checks = evaluations(vec![
         Finding::new("fixture-check", Severity::Warning, "fixture finding")
@@ -3300,21 +3348,23 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
     let full_html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: evidence_only(),
-    });
+    })
+    .expect("report renders");
     assert_self_contained(&html);
 
     let full_data = report_data(&full_html);
@@ -3355,8 +3405,7 @@ fn an_evidence_only_report_keeps_every_finding_and_chart_without_the_motion() {
         "bones",
         "findings",
         "gaps",
-        "predictions",
-        "prediction_provenance",
+        "engine_evidence",
     ] {
         assert_eq!(data[key], full_data[key], "{key} is unchanged");
     }
@@ -3433,26 +3482,29 @@ fn an_evidence_only_report_carries_no_unplotted_sample() {
         }],
         ..Document::default()
     };
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
     let full_html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: None,
         options: evidence_only(),
-    });
+    })
+    .expect("report renders");
 
     // Every payload the document carries, not only the field the pose grid
     // used to occupy.
@@ -3518,8 +3570,7 @@ fn an_evidence_only_comparison_drops_both_pose_grids() {
             "findings",
             "gaps",
             "contexts",
-            "predictions",
-            "prediction_provenance",
+            "engine_evidence",
         ] {
             assert_eq!(data[side][key], full_data[side][key], "{side} {key}");
         }
@@ -3612,7 +3663,7 @@ fn an_evidence_only_comparison_is_not_bound_by_the_embedded_pose_budget() {
     assert!(
         matches!(
             refused,
-            animsmith_report::ComparisonError::PoseWorkExceeded { .. }
+            animsmith_report::ReportError::PoseWorkExceeded { .. }
         ),
         "{refused:?}"
     );
@@ -3694,10 +3745,26 @@ fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
     let after_grids = MetricGrids::new(after_source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
+    let before_evidence = evidence_for(&before_source, &roles, &[], None);
+    let after_evidence = evidence_for(&after_source, &roles, &[], None);
     let sides = || {
         (
-            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
-            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+            animsmith_report::ComparisonSide {
+                source: &before_source,
+                grids: &before_grids,
+                roles: &roles,
+                evidence: &before_evidence,
+                config: &config,
+                clip: "walk",
+            },
+            animsmith_report::ComparisonSide {
+                source: &after_source,
+                grids: &after_grids,
+                roles: &roles,
+                evidence: &after_evidence,
+                config: &config,
+                clip: "walk",
+            },
         )
     };
 
@@ -3707,7 +3774,7 @@ fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
     assert!(
         matches!(
             refused,
-            animsmith_report::ComparisonError::PoseWorkExceeded { .. }
+            animsmith_report::ReportError::PoseWorkExceeded { .. }
         ),
         "{refused:?}"
     );
@@ -3773,10 +3840,26 @@ fn an_evidence_only_comparison_carries_no_unplotted_sample() {
     let after_grids = MetricGrids::new(after_source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
+    let before_evidence = evidence_for(&before_source, &roles, &[], None);
+    let after_evidence = evidence_for(&after_source, &roles, &[], None);
     let sides = || {
         (
-            comparison_side(&before_source, &before_grids, &roles, &[], &config, "walk"),
-            comparison_side(&after_source, &after_grids, &roles, &[], &config, "walk"),
+            animsmith_report::ComparisonSide {
+                source: &before_source,
+                grids: &before_grids,
+                roles: &roles,
+                evidence: &before_evidence,
+                config: &config,
+                clip: "walk",
+            },
+            animsmith_report::ComparisonSide {
+                source: &after_source,
+                grids: &after_grids,
+                roles: &roles,
+                evidence: &after_evidence,
+                config: &config,
+                clip: "walk",
+            },
         )
     };
     let (before, after) = sides();
@@ -3868,17 +3951,19 @@ fn figcaption(figure: &str) -> String {
 #[test]
 fn every_single_clip_chart_caption_says_what_to_look_for() {
     let doc = chart_roles_fixture();
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let roles = chart_roles(&doc);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &[],
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &[], None),
         config: &no_groups(),
-        prediction_provenance: None,
         clip: Some("walk"),
         options: full(),
-    });
+    })
+    .expect("report renders");
     let figures = chart_figures(&html);
     let caption = |kind: &str| {
         figcaption(
@@ -3973,17 +4058,19 @@ fn the_root_path_marks_where_the_track_starts_and_ends() {
         ..Document::default()
     };
     let render_document = |doc: &Document| {
-        let grids = MetricGrids::new(doc);
+        let source = synthetic_source(doc.clone());
+        let grids = MetricGrids::new(source.document());
         let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
         animsmith_report::render(animsmith_report::ReportInputs {
             grids: &grids,
             roles: &roles,
-            checks: &[],
+            source: &source,
+            evidence: &evidence_for(&source, &roles, &[], None),
             config: &no_groups(),
-            prediction_provenance: None,
             clip: None,
             options: full(),
         })
+        .expect("report renders")
     };
     let render = |doc: &Document| {
         let html = render_document(doc);
@@ -4369,7 +4456,8 @@ fn contract_captions(
         .map(|(role, name)| (*role, (*name).to_owned()))
         .collect();
     configure(&mut config);
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let resolved = ResolvedRoles::from_names(
         &doc.skeleton,
         roles.iter().map(|(role, name)| (*role, (*name).to_owned())),
@@ -4378,12 +4466,13 @@ fn contract_captions(
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &resolved,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &resolved, &checks, None),
         config: &config,
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
     chart_figures(&html)
         .into_iter()
         .map(|figure| (attribute(&figure, "data-kind"), figcaption(&figure)))
@@ -4775,17 +4864,19 @@ fn group_figures(
     config: &animsmith_core::Config,
     clip_filter: Option<&str>,
 ) -> (String, Vec<String>) {
-    let grids = MetricGrids::new(doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let checks = matrix_evaluations(&grids, roles, config);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, roles, &checks, None),
         config,
-        prediction_provenance: None,
         clip: clip_filter,
         options: full(),
-    });
+    })
+    .expect("report renders");
     let figures = chart_figures(&html)
         .into_iter()
         .filter(|figure| attribute(figure, "data-kind") == "gait-group")
@@ -4871,17 +4962,19 @@ fn a_coherent_gait_group_is_drawn_as_one_figure_within_its_cap() {
     // The figure is drawn on the Rust side out of two scalar series per
     // member, so an evidence-only report keeps it whole, the way it keeps
     // the per-clip charts.
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let checks = matrix_evaluations(&grids, &roles, &config);
     let evidence = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &config,
-        prediction_provenance: None,
         clip: None,
         options: evidence_only(),
-    });
+    })
+    .expect("report renders");
     let evidence_figure = chart_figures(&evidence)
         .into_iter()
         .find(|figure| attribute(figure, "data-kind") == "gait-group")
@@ -5077,7 +5170,8 @@ fn a_shifted_member_is_named_outside_the_band_with_the_check_s_own_numbers() {
 
     // The same document through the check itself: the caption may only state
     // the numbers `gait-group` measured.
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let checks = matrix_evaluations(&grids, &roles, &config);
     let finding = checks
         .iter()
@@ -5325,7 +5419,8 @@ fn a_figure_draws_six_members_and_measures_every_declared_one() {
 
     // The spread the caption states is the one `gait-group` measured over
     // the same eight anchors, not over the six that got a curve.
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let checks = matrix_evaluations(&grids, &roles, &config);
     let finding = checks
         .iter()
@@ -5474,7 +5569,8 @@ fn a_short_members_cycle_is_the_axis_its_anchor_was_measured_on() {
         ..Document::default()
     };
     let roles = ring_roles(&doc);
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let grid = grids.grid(0).expect("a three-key clip has a grid");
     assert_eq!(grid.frame_count(), 3, "the fixture really is three frames");
     let evidence = gait_phase_evidence(&grid, &roles).expect("it carries a cycle");
@@ -5700,17 +5796,19 @@ fn the_document_names_each_groups_members_and_no_figure_names_a_clip() {
     );
     let roles = ring_roles(&doc);
     let config = ring_config("run-ring", &["run_forward", awkward], 0.15, 0.03);
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let checks = matrix_evaluations(&grids, &roles, &config);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &config,
-        prediction_provenance: None,
         clip: None,
         options: full(),
-    });
+    })
+    .expect("report renders");
 
     let figure = chart_figures(&html)
         .into_iter()
@@ -5787,17 +5885,19 @@ fn a_clip_filtered_report_still_draws_the_whole_group() {
         0.15,
         0.03,
     );
-    let grids = MetricGrids::new(&doc);
+    let source = synthetic_source(doc.clone());
+    let grids = MetricGrids::new(source.document());
     let checks = matrix_evaluations(&grids, &roles, &config);
     let html = animsmith_report::render(animsmith_report::ReportInputs {
         grids: &grids,
         roles: &roles,
-        checks: &checks,
+        source: &source,
+        evidence: &evidence_for(&source, &roles, &checks, None),
         config: &config,
-        prediction_provenance: None,
         clip: Some("run_left"),
         options: full(),
-    });
+    })
+    .expect("report renders");
 
     // The document itself is scoped to the selected clip.
     let data = report_data(&html);
@@ -5881,15 +5981,19 @@ fn a_half_cycle_cap_bands_the_whole_axis() {
 /// of — different members coinciding, or none of them distinguishable.
 #[test]
 fn the_extractors_member_dashes_are_the_stylesheets_own() {
-    let stylesheet = document_code(&animsmith_report::render(animsmith_report::ReportInputs {
-        grids: &MetricGrids::new(&chart_roles_fixture()),
-        roles: &chart_roles(&chart_roles_fixture()),
-        checks: &[],
-        config: &no_groups(),
-        prediction_provenance: None,
-        clip: None,
-        options: full(),
-    }));
+    let source = synthetic_source(chart_roles_fixture());
+    let stylesheet = document_code(
+        &animsmith_report::render(animsmith_report::ReportInputs {
+            grids: &MetricGrids::new(source.document()),
+            roles: &chart_roles(&chart_roles_fixture()),
+            source: &source,
+            evidence: &evidence_for(&source, &chart_roles(&chart_roles_fixture()), &[], None),
+            config: &no_groups(),
+            clip: None,
+            options: full(),
+        })
+        .expect("report renders"),
+    );
     let style = animsmith_testkit::docs_visuals::chart_style("chart-one");
     for (member, dashes) in animsmith_testkit::docs_visuals::GROUP_MEMBER_DASHES
         .iter()
@@ -5930,4 +6034,109 @@ fn the_extractors_member_dashes_are_the_stylesheets_own() {
             "the injected anchor {member} is solid: {style}"
         );
     }
+}
+
+#[test]
+fn current_evidence_owns_facet_limit_and_report_preserves_the_admitted_maximum() {
+    let (source, provenance) = prediction_provenance();
+    let facets = (0..4096)
+        .map(|index| {
+            EnginePredictionFacetV3::required_unavailable(
+                EvaluationScope::new(EvaluationScopeCode::custom("test:budget"))
+                    .subject(index.to_string()),
+                EnginePredictionBasisV2::new(Vec::new()).unwrap(),
+                vec![PredictionUnavailableReasonV2::ProjectIntentUnavailable],
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut over = facets.clone();
+    over.push(facets[0].clone());
+    assert!(matches!(
+        EnginePredictionV3::new(provenance.identity().clone(), over),
+        Err(animsmith_core::PredictionContractError::TooManyFacets {
+            found: 4097,
+            limit: 4096
+        })
+    ));
+    let prediction = EnginePredictionV3::new(provenance.identity().clone(), facets).unwrap();
+    let checks = vec![
+        CheckEvaluation::evaluated(
+            "test:engine",
+            CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+                .with_engine_prediction_v3(prediction),
+        )
+        .unwrap(),
+    ];
+    let roles = ResolvedRoles::default();
+    let evidence = evidence_for(&source, &roles, &checks, Some(&provenance));
+    let grids = MetricGrids::new(source.document());
+    let html = animsmith_report::render(animsmith_report::ReportInputs::new(
+        &grids,
+        &roles,
+        &source,
+        &evidence,
+        &no_groups(),
+    ))
+    .unwrap();
+    let data = report_data(&html);
+    assert_eq!(
+        data["engine_evidence"]["projection"]["facets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4096
+    );
+    assert_eq!(
+        data["engine_evidence"]["checks"][0],
+        serde_json::to_value(&checks[0]).unwrap()
+    );
+}
+
+#[test]
+fn ordinary_report_counts_original_engine_text_before_rendering() {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let source = synthetic_source(animsmith_gltf::load(&fixture()).unwrap());
+    let grids = MetricGrids::new(source.document());
+    let roles = ResolvedRoles::default();
+    let render = |message: String| {
+        let checks = vec![
+            CheckEvaluation::evaluated(
+                "engine-test",
+                CheckOutput::from_coverage(
+                    Vec::new(),
+                    Vec::new(),
+                    vec![CoverageGap::new(
+                        CoverageGapCode::custom("test:gap"),
+                        message,
+                    )],
+                ),
+            )
+            .unwrap(),
+        ];
+        let evidence = evidence_for(&source, &roles, &checks, None);
+        animsmith_report::render(animsmith_report::ReportInputs::new(
+            &grids,
+            &roles,
+            &source,
+            &evidence,
+            &no_groups(),
+        ))
+    };
+    let baseline = report_data(&render(String::new()).unwrap());
+    let overhead = serde_json::to_vec(&baseline["engine_evidence"])
+        .unwrap()
+        .len();
+    let exact = report_data(&render("x".repeat(LIMIT - overhead)).unwrap());
+    assert_eq!(
+        serde_json::to_vec(&exact["engine_evidence"]).unwrap().len(),
+        LIMIT
+    );
+    assert_eq!(
+        render("x".repeat(LIMIT - overhead + 1)).unwrap_err(),
+        animsmith_report::ReportError::ReportTextWorkExceeded {
+            side: "input",
+            limit: LIMIT
+        }
+    );
 }

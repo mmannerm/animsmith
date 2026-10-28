@@ -5,6 +5,35 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## HTML report engine evidence
+
+Ordinary `animsmith-report-v1` and comparison `animsmith-comparison-v2`
+presentation models carry `engine_evidence`. Its `checks` retain the exact current
+engine check records (including lifecycle, findings, coverage and original V3,
+V5 or V6 prediction wrappers); `provenance` retains the matching original wrapper.
+These are the same current validated evidence produced by CLI lint analysis.
+Historical core wire schemas remain unchanged.
+
+The separate `projection` (`animsmith-engine-display-v1`) flattens only fields
+needed for display: check id, scope/subject, state, reasons and optional machine
+result. It is a presentation view, not replacement prediction authority.
+Its `scope: "whole_input"` is explicit: clip selection filters mechanical
+findings and charts, while engine evidence keeps all source subjects, other clips
+and lifecycle rows. Source-only inputs can therefore show required unavailable
+engine evidence even when no normalized animation can be played. An absent
+profile, an inactive rule, and required unavailable prediction remain distinct.
+Full and evidence-only reports retain identical engine evidence. Successful
+report creation still exits 0 even when its evidence describes lint failures.
+
+Rendering admits at most 4,096 engine facets and 4 MiB of serialized engine
+evidence per ordinary report. Comparison retains its existing per-side row/text
+and total JSON limits, counting both original evidence and display copies before
+allocating the presentation JSON tree. These are presentation limits, not total
+process-memory or sampling bounds. Renderers require current validated evidence,
+source/grid identity, matching primary identity, and any profiled dependency
+closure. The CLI's shared analysis establishes the source/configuration/roles
+association; profile-free V19 alone does not prove closure or configuration.
+
 ## HTML report: source poses and illustrative blending
 
 The single-document report keeps source playback separate from its optional
