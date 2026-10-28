@@ -74,8 +74,13 @@ pub(crate) fn is_constant_track(track: &crate::model::Track) -> bool {
             }
             (1..track.key_count()).all(|k| {
                 track.key_quat(k).is_some_and(|q| {
-                    quaternion_angular_delta(first, q)
-                        .is_some_and(|delta| delta <= QUAT_TOLERANCE_RAD)
+                    // Cubic interpolation uses authored components, without
+                    // shortest-path sign correction. Opposite hemispheres can
+                    // create a large interior rotation even with zero tangents.
+                    (track.interpolation != crate::model::Interpolation::CubicSpline
+                        || first.dot(q) > 0.0)
+                        && quaternion_angular_delta(first, q)
+                            .is_some_and(|delta| delta <= QUAT_TOLERANCE_RAD)
                 })
             }) && (track.interpolation != crate::model::Interpolation::CubicSpline
                 || cubic_quaternion_tangents_are_zero(track))
