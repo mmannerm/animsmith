@@ -426,6 +426,17 @@ space, including each root node's own transform. Metrics that need a
 body-relative frame derive it from resolved roles such as hips and feet.
 The metric grid is computed once per clip and shared across checks,
 measurements, and reports through the lazy `MetricGrids` owner.
+Sampling checks frame, frame-by-bone, frame-by-track and retained-byte
+arithmetic before allocation. The retained-byte charge includes times, local
+TRS, model matrices and model rotations. Successful cache insertions accumulate
+the same fixed byte, frame and track-evaluation ceilings; cache hits are free
+and refusals do not consume a charge. Construction stays lazy and never evicts
+grids, because external `Rc` holders can retain their storage. These are
+engineering admission limits for one grid/owner, not process-memory or
+wall-time guarantees. Admitted sample times and arithmetic remain unchanged.
+Required measurements and reports return errors on refusal; direct check
+evaluation records scoped `measurement_unavailable` gaps. Existing specialized
+contact, gait and scale-proof limits remain independently authoritative.
 
 **Rig profiles** — checks reference semantic roles rather than bone names.
 Profiles bind those roles to source-rig names; the exact public role set,

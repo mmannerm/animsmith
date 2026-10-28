@@ -1592,6 +1592,7 @@ fn analyze_loaded_lint<'a>(
     fail_at: Severity,
     allowed: &BTreeSet<String>,
 ) -> Result<LintAnalysis<'a>, String> {
+    let path_label = path_label.into();
     let input = loaded.input().clone();
     let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
@@ -1655,7 +1656,8 @@ fn analyze_loaded_lint<'a>(
     );
     let grids = MetricGrids::new(doc);
     let indexed_measurements =
-        animsmith_core::measure::measure_document_indexed(&grids, &roles, &config.config);
+        animsmith_core::measure::measure_document_indexed(&grids, &roles, &config.config)
+            .map_err(|error| format!("{path_label}: {error}"))?;
     let ctx = CheckCtx::new(&grids, &roles, &config.config);
     let evaluations = {
         let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
@@ -1764,7 +1766,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         input,
                         RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
                         MeasurementContract::new(
-                            animsmith_core::measure::measure_document(&grids, &roles, config),
+                            animsmith_core::measure::measure_document(&grids, &roles, config)
+                                .map_err(|error| format!("{}: {error}", file.display()))?,
                             animsmith_core::measure::measure_assets(doc),
                         )
                         .map_err(|error| error.to_string())?,
@@ -2666,9 +2669,8 @@ fn load_measurements(
     let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
     let grids = MetricGrids::new(doc);
-    Ok(animsmith_core::measure::measure_document(
-        &grids, &roles, config,
-    ))
+    animsmith_core::measure::measure_document(&grids, &roles, config)
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Add `diff` consumer policy and operator remediation to neutral core errors.

@@ -90,6 +90,32 @@ It inventories clips, bones, materials, and mesh-instance nodes, including each
 instance's mesh, skin status, and primitive/material context. Use those names
 when authoring `assemble` or material texture recipes.
 
+### Sampling admission
+
+Ordinary sampling admits at most 256 MiB of pose-grid buffer payload,
+1,000,000 sampled frames and 8,000,000 frame/track evaluations. Each ceiling
+applies both to one grid and cumulatively to the shared cache for one input.
+Payload counts sample times and all three pose arrays: local transforms,
+model matrices and model rotations. Checks, measurements and HTML reuse that
+cache without charging a cached clip twice. Input loading, allocation metadata,
+consumer charts/output and separate cache owners require additional memory;
+these ceilings are not a process-memory or elapsed-time guarantee.
+
+These fixed limits are an explicit engineering policy, not a calibration
+against licensed production packs. Large valid animation libraries can be
+refused; sampling density is never silently reduced. There is no limit override.
+`measure`, `lint`, `report` (including comparisons and `--evidence-only`) and
+asset-based `diff` exit 2 if a required grid is refused. They emit no partial
+result and do not replace a report file on that refusal. Lint selection and
+severity allowances do not suppress its required measurement failure. Collection
+lint preserves its existing per-source failure mapping. JSON-report `diff`,
+`inspect` and declaration-only addressability generation do not request grids.
+
+Contact production, gait anchoring and scale proof retain their separate,
+stricter operation limits. Constant-track pruning retains candidates with
+unavailable sampling evidence; its sampling limit is per call, not an aggregate
+bound on the pruning search.
+
 ### Structural skeleton comparison
 
 `skeleton compare` establishes only declared structural compatibility evidence

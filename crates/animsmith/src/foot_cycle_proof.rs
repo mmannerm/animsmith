@@ -296,6 +296,7 @@ impl FootCycleProofRuntime for ProductionFootCycleProofRuntime {
     ) -> Result<Rc<PoseGrid>, FootCycleProofError> {
         MetricGrids::new(document)
             .grid(clip_index)
+            .map_err(|_| FootCycleProofError::new(FootCycleProofKind::MetricUnavailable))?
             .ok_or_else(|| FootCycleProofError::new(FootCycleProofKind::MetricUnavailable))
     }
 }

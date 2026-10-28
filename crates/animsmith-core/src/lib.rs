@@ -82,13 +82,13 @@
 //! let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
 //! let grids = MetricGrids::new(&doc);
 //!
-//! let measurements = measure_document(&grids, &roles, &config);
+//! let measurements = measure_document(&grids, &roles, &config)?;
 //! let ctx = CheckCtx::new(&grids, &roles, &config);
 //! let results = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)?;
 //!
 //! assert!(measurements.is_empty());
 //! assert!(results.iter().all(|result| result.findings().is_empty()));
-//! # Ok::<(), animsmith_core::EvaluationError>(())
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! [`CheckCtx::new`] consumes already-resolved roles; it does not interpret
@@ -412,7 +412,10 @@ pub use raw_transform_path_inventory::{
     RawTransformPathNodeRowV1, RawTransformPathResolutionV1, RawTransformPathRowAddressabilityV1,
     RawTransformPathSyntaxErrorV1, RawTransformPathV1,
 };
-pub use sample::{PoseGrid, TrackSample, default_frame_count, sample_clip, sample_track};
+pub use sample::{
+    MAX_SAMPLING_BYTES, MAX_SAMPLING_FRAMES, MAX_SAMPLING_TRACK_EVALUATIONS, PoseGrid,
+    SamplingError, TrackSample, default_frame_count, sample_clip, sample_track,
+};
 pub use scale::{
     ProofResidualKind, ScaleBoneRestField, ScaleCandidate, ScaleCapabilityCoverage,
     ScaleCapabilityFacts, ScaleError, ScaleFieldDisposition, ScaleFieldPlan, ScaleFieldTarget,

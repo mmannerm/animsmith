@@ -231,18 +231,21 @@ fn prune_constant_tracks_impl(
 
     let frames = default_frame_count(clip);
     let original = sample_clip(skeleton, clip, frames);
-    if !finite_grid(&original) {
-        return PruneConstantTracksOutcome {
-            removed: Vec::new(),
-            retained: candidates
-                .into_iter()
-                .map(|record| ConstantTrackRetainedRecord {
-                    record,
-                    reason: ConstantTrackRetentionReason::SamplingUnavailable,
-                })
-                .collect(),
-        };
-    }
+    let original = match original {
+        Ok(grid) if finite_grid(&grid) => grid,
+        _ => {
+            return PruneConstantTracksOutcome {
+                removed: Vec::new(),
+                retained: candidates
+                    .into_iter()
+                    .map(|record| ConstantTrackRetainedRecord {
+                        record,
+                        reason: ConstantTrackRetentionReason::SamplingUnavailable,
+                    })
+                    .collect(),
+            };
+        }
+    };
 
     let source = clip.clone();
     let duplicate_channels = duplicate_track_channels(&source);
@@ -287,7 +290,16 @@ fn prune_constant_tracks_impl(
             .filter(|(index, _)| *index != record.original_track_index && !accepted.contains(index))
             .map(|(_, track)| track.clone())
             .collect();
-        let trial_grid = sample_clip(skeleton, &trial, frames);
+        let trial_grid = match sample_clip(skeleton, &trial, frames) {
+            Ok(grid) => grid,
+            Err(_) => {
+                retained.push(ConstantTrackRetainedRecord {
+                    record,
+                    reason: ConstantTrackRetentionReason::SamplingUnavailable,
+                });
+                continue;
+            }
+        };
         if !finite_grid(&trial_grid) {
             retained.push(ConstantTrackRetainedRecord {
                 record,
@@ -1214,12 +1226,15 @@ pub fn align_gait_anchor(
         }
     };
 
-    let measure = |c: &Clip| -> Option<(f64, Option<f64>, f64)> {
-        let grid = sample_clip_at_times(skeleton, c, sampling_times.clone());
-        let m = foot_cycle_metrics(&grid, roles, crate::metrics::MIN_STRIDE_STEP_M)?;
-        Some((m.gait_phase?, m.loop_seam_ratio, m.lr_amplitude_m))
+    let measure = |c: &Clip| -> Result<Option<(f64, Option<f64>, f64)>, String> {
+        let grid = sample_clip_at_times(skeleton, c, &sampling_times)
+            .map_err(|error| error.to_string())?;
+        Ok(
+            foot_cycle_metrics(&grid, roles, crate::metrics::MIN_STRIDE_STEP_M)
+                .and_then(|m| Some((m.gait_phase?, m.loop_seam_ratio, m.lr_amplitude_m))),
+        )
     };
-    let Some((phase_before, _, amplitude)) = measure(clip) else {
+    let Some((phase_before, _, amplitude)) = measure(clip)? else {
         return Err(
             "no usable stride anchor (hips/foot roles unresolved or clip too short)".into(),
         );
@@ -1261,7 +1276,7 @@ pub fn align_gait_anchor(
             sampling_times.len(),
             frame_offset,
         );
-        let Some((phase_after, seam_after, _)) = measure(&candidate) else {
+        let Some((phase_after, seam_after, _)) = measure(&candidate)? else {
             continue;
         };
         // Rank by wrap cleanliness; a missing seam (no stride at the
@@ -1351,7 +1366,8 @@ fn verify_in_place_gait_trajectory(
     }
     let sampling_times =
         verify_trajectory_frame_grid(clip, role, bone, bone_name, skeleton.bones.len(), fps)?;
-    let grid = sample_clip_at_times(skeleton, clip, sampling_times.clone());
+    let grid =
+        sample_clip_at_times(skeleton, clip, &sampling_times).map_err(|error| error.to_string())?;
     if grid.frame_count() < 3 {
         return Err(format!(
             "cannot gait-anchor clip {:?} under the in-place policy: selected {role} bone \

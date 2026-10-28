@@ -68,9 +68,21 @@ impl Check for TimeComplement {
 
                 let measurement_scope =
                     EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT).subject(member);
-                let Some(metrics) = ctx
-                    .grid(index)
-                    .and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M))
+                let grid = match ctx.grid(index) {
+                    Ok(grid) => grid,
+                    Err(error) => {
+                        gaps.push(
+                            CoverageGap::new(
+                                CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                                error.to_string(),
+                            )
+                            .scope(measurement_scope),
+                        );
+                        continue;
+                    }
+                };
+                let Some(metrics) =
+                    grid.and_then(|grid| foot_cycle_metrics(&grid, ctx.roles, MIN_STRIDE_STEP_M))
                 else {
                     gaps.push(
                         CoverageGap::new(

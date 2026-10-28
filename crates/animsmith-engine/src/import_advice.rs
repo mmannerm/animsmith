@@ -621,9 +621,10 @@ impl EngineImportAdviceV1 {
                 let document = unity_document(profile, generic)?;
                 let roles = resolve_configured_roles(&source.document().skeleton, &config.rig);
                 let grids = MetricGrids::new(source.document());
-                let measurements =
-                    animsmith_core::measure::measure_document(&grids, &roles, config);
-                match build_clip_evidence(source, &measurements, config) {
+                let clips = animsmith_core::measure::measure_document(&grids, &roles, config)
+                    .map_err(|_| EngineImportAdviceRefusalReasonV1::MeasurementUnavailable)
+                    .and_then(|measurements| build_clip_evidence(source, &measurements, config));
+                match clips {
                     Ok(clips) => match unity_clip_advice(profile, source.document(), &clips) {
                         Ok(unity_clips) => {
                             let payload = if generic {

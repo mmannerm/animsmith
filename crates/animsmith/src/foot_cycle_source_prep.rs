@@ -135,6 +135,9 @@ impl FootCyclePreparationRuntime for ProductionFootCyclePreparationRuntime {
     ) -> Result<Rc<PoseGrid>, FootCycleSourcePrepError> {
         MetricGrids::new(loaded.document())
             .grid(clip_index)
+            .map_err(|_| {
+                FootCycleSourcePrepError::new(FootCycleSourcePrepKind::RootEvidenceUnavailable)
+            })?
             .ok_or_else(|| {
                 FootCycleSourcePrepError::new(FootCycleSourcePrepKind::RootEvidenceUnavailable)
             })

@@ -513,12 +513,13 @@ mod tests {
     #[test]
     fn duration_time_and_scale_admission_are_finite() {
         let doc = document();
-        let grid = animsmith_core::sample::sample_clip(&doc.skeleton, &doc.clips[0], 3);
+        let grid = animsmith_core::sample::sample_clip(&doc.skeleton, &doc.clips[0], 3).unwrap();
         for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             let mut clip = doc.clips[0].clone();
             clip.duration_s = f64::from(value);
             assert_eq!(encode(&clip, &grid), Err("non-finite duration"));
-            let mut timed = animsmith_core::sample::sample_clip(&doc.skeleton, &doc.clips[0], 3);
+            let mut timed =
+                animsmith_core::sample::sample_clip(&doc.skeleton, &doc.clips[0], 3).unwrap();
             timed.times[1] = value;
             assert_eq!(encode(&doc.clips[0], &timed), Err("non-finite sample time"));
             let mut scaled = document();
@@ -542,7 +543,10 @@ mod tests {
         doc.clips.push(second);
         let source = crate::test_support::source(doc.clone());
         let grids = MetricGrids::new(source.document());
-        let originals = [grids.grid(0).unwrap(), grids.grid(1).unwrap()];
+        let originals = [
+            grids.grid(0).unwrap().unwrap(),
+            grids.grid(1).unwrap().unwrap(),
+        ];
         let scope = work::Scope::start();
         let full = payload_from_grids(&source, &grids, false, None);
         let trace = scope.finish();

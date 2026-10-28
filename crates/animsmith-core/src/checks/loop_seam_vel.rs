@@ -57,11 +57,20 @@ impl Check for LoopSeamVelocity {
             let max_velocity_delta_mps = effective_cap(ctx.config, expectations);
             let scope =
                 EvaluationScope::new(EvaluationScopeCode::LOOP_SEAM_VELOCITY).subject(&clip.name);
-            let Some(metrics) = ctx
-                .grid(clip_index)
-                .as_deref()
-                .and_then(loop_continuity_metrics)
-            else {
+            let grid = match ctx.grid(clip_index) {
+                Ok(grid) => grid,
+                Err(error) => {
+                    gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            error.to_string(),
+                        )
+                        .scope(scope),
+                    );
+                    continue;
+                }
+            };
+            let Some(metrics) = grid.as_deref().and_then(loop_continuity_metrics) else {
                 gaps.push(
                     CoverageGap::new(
                         CoverageGapCode::MEASUREMENT_UNAVAILABLE,

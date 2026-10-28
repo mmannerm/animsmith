@@ -151,7 +151,10 @@ fn public_measurements_distinguish_no_phase_subject_from_derivation_failure() {
             .iter()
             .position(|clip| clip.name == name)
             .expect("named flat clip");
-        let grid = grids.grid(clip_index).expect("analytic metric grid");
+        let grid = grids
+            .grid(clip_index)
+            .expect("fixture fits sampling limits")
+            .expect("analytic metric grid");
         let raw = foot_cycle_metrics(&grid, &roles, MIN_STRIDE_STEP_M)
             .expect("flat bilateral cycle remains measurable");
         assert_eq!(raw.lr_amplitude_m, 0.0);
@@ -171,7 +174,10 @@ fn public_measurements_distinguish_no_phase_subject_from_derivation_failure() {
             .position(|clip| clip.name == name)
             .expect("named positive-swing clip");
         let raw = foot_cycle_metrics(
-            &grids.grid(clip_index).expect("positive-swing metric grid"),
+            &grids
+                .grid(clip_index)
+                .expect("fixture fits sampling limits")
+                .expect("positive-swing metric grid"),
             &roles,
             MIN_STRIDE_STEP_M,
         )
@@ -191,7 +197,8 @@ fn public_measurements_distinguish_no_phase_subject_from_derivation_failure() {
         }}
     }))
     .expect("consumer gait confidence policy");
-    let measured = measure_document(&grids, &roles, &config);
+    let measured = measure_document(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
 
     for name in ["stationary", "common_mode", "constant_offset"] {
         let clip = &measured[name];

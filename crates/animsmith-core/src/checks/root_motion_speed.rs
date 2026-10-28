@@ -64,9 +64,20 @@ impl Check for RootMotionSpeed {
                 gaps.push(gap.scope(scope));
                 continue;
             }
-            let measured = ctx
-                .grid(index)
-                .and_then(|grid| root_motion_speed_mps(&grid, ctx.roles));
+            let grid = match ctx.grid(index) {
+                Ok(grid) => grid,
+                Err(error) => {
+                    gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            error.to_string(),
+                        )
+                        .scope(scope),
+                    );
+                    continue;
+                }
+            };
+            let measured = grid.and_then(|grid| root_motion_speed_mps(&grid, ctx.roles));
             let Some(measured) = measured else {
                 gaps.push(
                     CoverageGap::new(

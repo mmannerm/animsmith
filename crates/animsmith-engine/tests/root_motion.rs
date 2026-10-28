@@ -305,7 +305,8 @@ fn fixture(
         ResolvedRoles::from_names(&source.document().skeleton, [(Role::Root, "Root".into())]);
     let config = Config::default();
     let grids = MetricGrids::new(source.document());
-    let mut measurements = measure_document_indexed(&grids, &roles, &config);
+    let mut measurements = measure_document_indexed(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
     for measurement in &mut measurements {
         let trajectory = measurement
             .root_trajectory
@@ -759,7 +760,8 @@ fn non_fbx_non_unity_tuple_is_not_applicable() {
         ResolvedRoles::from_names(&source.document().skeleton, [(Role::Root, "Root".into())]);
     let config = Config::default();
     let grids = MetricGrids::new(source.document());
-    let measurements = measure_document_indexed(&grids, &roles, &config);
+    let measurements = measure_document_indexed(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
     let check = EngineRootMotionCheck::new(&source, None, &roles, &measurements).unwrap();
     assert_eq!(
         check.applicability(&CheckCtx::new(&grids, &roles, &config)),
@@ -1248,7 +1250,8 @@ fn path_failures_and_explicit_root_identity_fail_closed() {
         [(Role::Hips, "Root".into())],
     );
     let grids = MetricGrids::new(hips_only.source.document());
-    hips_only.measurements = measure_document_indexed(&grids, &hips_only.roles, &hips_only.config);
+    hips_only.measurements = measure_document_indexed(&grids, &hips_only.roles, &hips_only.config)
+        .expect("fixture measurements fit sampling limits");
     replace_intent_root(&mut hips_only, None);
     let hips_record = evaluate(&hips_only);
     let facet = &hips_record.engine_prediction_v6().unwrap().facets()[0];
@@ -1271,7 +1274,8 @@ fn path_failures_and_explicit_root_identity_fail_closed() {
     missing_root.roles = ResolvedRoles::default();
     let grids = MetricGrids::new(missing_root.source.document());
     missing_root.measurements =
-        measure_document_indexed(&grids, &missing_root.roles, &missing_root.config);
+        measure_document_indexed(&grids, &missing_root.roles, &missing_root.config)
+            .expect("fixture measurements fit sampling limits");
     replace_intent_root(&mut missing_root, None);
     let missing_record = evaluate(&missing_root);
     assert_eq!(

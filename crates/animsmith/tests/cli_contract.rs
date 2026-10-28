@@ -6286,7 +6286,8 @@ fn embedded_contract_types_emit_the_published_v16_envelope() {
         None,
         checks,
         animsmith_core::MeasurementContract::new(
-            animsmith_core::measure::measure_document(&grids, &roles, &config),
+            animsmith_core::measure::measure_document(&grids, &roles, &config)
+                .expect("fixture measurements fit sampling limits"),
             animsmith_core::measure::measure_assets(&doc),
         )
         .expect("measured evidence is finite"),

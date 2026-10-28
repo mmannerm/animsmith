@@ -14,6 +14,165 @@
 use crate::model::{Clip, Interpolation, Skeleton, Track, TrackValues, Transform};
 use glam::{Mat4, Quat, Vec3};
 
+/// Maximum retained buffer payload for one sampled grid or metric-grid cache.
+///
+/// This engineering admission ceiling includes sample times and all three
+/// pose arrays. It excludes allocation metadata, the document, other owners,
+/// and consumer scratch/output storage; it is not a process-memory guarantee.
+pub const MAX_SAMPLING_BYTES: usize = 256 * 1024 * 1024;
+/// Maximum sampled frames for one grid or cumulatively for one metric cache.
+pub const MAX_SAMPLING_FRAMES: usize = 1_000_000;
+/// Maximum frame/track pairs for one grid or cumulatively for one metric cache.
+///
+/// Each pair may search its track timeline; this is not an elapsed-time bound.
+pub const MAX_SAMPLING_TRACK_EVALUATIONS: usize = 8_000_000;
+
+/// A sampled grid was refused before it could provide usable evidence.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SamplingError {
+    /// A dimension product, retained byte count, or cache sum was unrepresentable.
+    #[error("sampling size arithmetic overflow")]
+    SizeOverflow,
+    /// A fixed per-grid or cumulative cache admission ceiling was exceeded.
+    #[error("sampling {resource} budget exceeded: required {required}, limit {limit}")]
+    LimitExceeded {
+        /// The bounded quantity and whether it belongs to the grid or cache.
+        resource: &'static str,
+        /// Required count or bytes.
+        required: usize,
+        /// Inclusive admission ceiling.
+        limit: usize,
+    },
+    /// The allocator could not reserve an admitted buffer.
+    #[error("sampling could not allocate {elements} elements for {buffer}")]
+    AllocationFailed {
+        /// The buffer whose reservation failed.
+        buffer: &'static str,
+        /// Requested element count.
+        elements: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SamplingLimits {
+    pub(crate) bytes: usize,
+    pub(crate) frames: usize,
+    pub(crate) track_evaluations: usize,
+}
+
+impl SamplingLimits {
+    pub(crate) const DEFAULT: Self = Self {
+        bytes: MAX_SAMPLING_BYTES,
+        frames: MAX_SAMPLING_FRAMES,
+        track_evaluations: MAX_SAMPLING_TRACK_EVALUATIONS,
+    };
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct SamplingCost {
+    frames: usize,
+    pose_cells: usize,
+    track_evaluations: usize,
+    bytes: usize,
+}
+
+impl SamplingCost {
+    pub(crate) fn checked(
+        frames: usize,
+        bones: usize,
+        tracks: usize,
+    ) -> Result<Self, SamplingError> {
+        let pose_cells = frames
+            .checked_mul(bones)
+            .ok_or(SamplingError::SizeOverflow)?;
+        let track_evaluations = frames
+            .checked_mul(tracks)
+            .ok_or(SamplingError::SizeOverflow)?;
+        let bytes_per_cell = size_of::<Transform>() + size_of::<Mat4>() + size_of::<Quat>();
+        let bytes = pose_cells
+            .checked_mul(bytes_per_cell)
+            .and_then(|poses| {
+                frames
+                    .checked_mul(size_of::<f32>())
+                    .and_then(|times| poses.checked_add(times))
+            })
+            .filter(|&bytes| bytes <= isize::MAX as usize)
+            .ok_or(SamplingError::SizeOverflow)?;
+        Ok(Self {
+            frames,
+            pose_cells,
+            track_evaluations,
+            bytes,
+        })
+    }
+
+    pub(crate) fn checked_add(self, other: Self) -> Result<Self, SamplingError> {
+        Ok(Self {
+            frames: self
+                .frames
+                .checked_add(other.frames)
+                .ok_or(SamplingError::SizeOverflow)?,
+            pose_cells: self
+                .pose_cells
+                .checked_add(other.pose_cells)
+                .ok_or(SamplingError::SizeOverflow)?,
+            track_evaluations: self
+                .track_evaluations
+                .checked_add(other.track_evaluations)
+                .ok_or(SamplingError::SizeOverflow)?,
+            bytes: self
+                .bytes
+                .checked_add(other.bytes)
+                .ok_or(SamplingError::SizeOverflow)?,
+        })
+    }
+
+    pub(crate) fn admit(self, limits: SamplingLimits, cache: bool) -> Result<(), SamplingError> {
+        for (resource, required, limit) in [
+            (
+                if cache { "cache frames" } else { "grid frames" },
+                self.frames,
+                limits.frames,
+            ),
+            (
+                if cache {
+                    "cache retained bytes"
+                } else {
+                    "grid retained bytes"
+                },
+                self.bytes,
+                limits.bytes,
+            ),
+            (
+                if cache {
+                    "cache track evaluations"
+                } else {
+                    "grid track evaluations"
+                },
+                self.track_evaluations,
+                limits.track_evaluations,
+            ),
+        ] {
+            if required > limit {
+                return Err(SamplingError::LimitExceeded {
+                    resource,
+                    required,
+                    limit,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+fn reserved<T>(elements: usize, buffer: &'static str) -> Result<Vec<T>, SamplingError> {
+    let mut result = Vec::new();
+    result
+        .try_reserve_exact(elements)
+        .map_err(|_| SamplingError::AllocationFailed { buffer, elements })?;
+    Ok(result)
+}
+
 /// Model-space and local poses for every (frame, bone) of one clip.
 #[derive(Debug)]
 pub struct PoseGrid {
@@ -114,19 +273,32 @@ pub fn default_frame_count(clip: &Clip) -> usize {
 /// values. This tolerant behaviour is distinct from strict operations, which
 /// should call [`crate::validate_document_shape`] at their own boundary.
 ///
+/// # Errors
+///
+/// Returns [`SamplingError`] before sampling if checked dimensions exceed the
+/// fixed frame, buffer-payload or track-evaluation ceiling, or a buffer cannot
+/// be reserved. Requests of zero or one frame still sample two endpoints.
+/// Independent calls have independent budgets; this does not bound a caller's
+/// repeated search or the storage of several grids retained by that caller.
+///
 /// # Panics
 ///
 /// Panics if a skeleton bone's parent index is outside
 /// [`Skeleton::bones`]. Loader crates also order parents before children;
 /// hand-built documents must preserve both invariants for correct FK.
-pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid {
+pub fn sample_clip(
+    skeleton: &Skeleton,
+    clip: &Clip,
+    frames: usize,
+) -> Result<PoseGrid, SamplingError> {
     let frames = frames.max(2);
+    let cost = SamplingCost::checked(frames, skeleton.bones.len(), clip.tracks.len())?;
+    cost.admit(SamplingLimits::DEFAULT, false)?;
     let duration = clip.duration_s as f32;
-    let times: Vec<f32> = (0..frames)
-        .map(|i| duration * i as f32 / (frames - 1) as f32)
-        .collect();
+    let mut times = reserved(frames, "sample times")?;
+    times.extend((0..frames).map(|i| duration * i as f32 / (frames - 1) as f32));
 
-    sample_clip_at_times(skeleton, clip, times)
+    sample_clip_with_times(skeleton, clip, times, cost)
 }
 
 /// Sample a clip at caller-provided times and FK to model space.
@@ -134,11 +306,33 @@ pub fn sample_clip(skeleton: &Skeleton, clip: &Clip, frames: usize) -> PoseGrid 
 /// Strict transforms use this internal boundary after validating their own
 /// authored grid. Keeping those exact binary32 times avoids synthesizing a
 /// nearby uniform time through a second floating-point formula.
-pub(crate) fn sample_clip_at_times(skeleton: &Skeleton, clip: &Clip, times: Vec<f32>) -> PoseGrid {
+pub(crate) fn sample_clip_at_times(
+    skeleton: &Skeleton,
+    clip: &Clip,
+    times: &[f32],
+) -> Result<PoseGrid, SamplingError> {
+    let cost = SamplingCost::checked(times.len(), skeleton.bones.len(), clip.tracks.len())?;
+    cost.admit(SamplingLimits::DEFAULT, false)?;
+    let mut owned_times = reserved(times.len(), "sample times")?;
+    owned_times.extend_from_slice(times);
+    sample_clip_with_times(skeleton, clip, owned_times, cost)
+}
+
+fn sample_clip_with_times(
+    skeleton: &Skeleton,
+    clip: &Clip,
+    times: Vec<f32>,
+    cost: SamplingCost,
+) -> Result<PoseGrid, SamplingError> {
     let frames = times.len();
     let nb = skeleton.bones.len();
 
-    let mut local = vec![Transform::IDENTITY; frames * nb];
+    let mut local = reserved(cost.pose_cells, "local poses")?;
+    local.resize(cost.pose_cells, Transform::IDENTITY);
+    let mut model = reserved(cost.pose_cells, "model poses")?;
+    model.resize(cost.pose_cells, Mat4::IDENTITY);
+    let mut model_rotation = reserved(cost.pose_cells, "model rotations")?;
+    model_rotation.resize(cost.pose_cells, Quat::IDENTITY);
     for f in 0..frames {
         for (b, bone) in skeleton.bones.iter().enumerate() {
             local[f * nb + b] = bone.rest;
@@ -165,8 +359,6 @@ pub(crate) fn sample_clip_at_times(skeleton: &Skeleton, clip: &Clip, times: Vec<
         }
     }
 
-    let mut model = vec![Mat4::IDENTITY; frames * nb];
-    let mut model_rotation = vec![Quat::IDENTITY; frames * nb];
     for f in 0..frames {
         for (b, bone) in skeleton.bones.iter().enumerate() {
             let m = local[f * nb + b].to_mat4();
@@ -182,13 +374,13 @@ pub(crate) fn sample_clip_at_times(skeleton: &Skeleton, clip: &Clip, times: Vec<
         }
     }
 
-    PoseGrid {
+    Ok(PoseGrid {
         times,
         bone_count: nb,
         local,
         model,
         model_rotation,
-    }
+    })
 }
 
 /// One track's sampled value at a time.
@@ -359,7 +551,7 @@ mod tests {
             duration_s: 1.0,
             tracks: Vec::new(),
         };
-        let grid = sample_clip(&skeleton, &clip, 2);
+        let grid = sample_clip(&skeleton, &clip, 2).unwrap();
 
         let _ = grid.local(0, grid.bone_count());
     }
@@ -386,7 +578,7 @@ mod tests {
             }],
         };
 
-        let grid = sample_clip(&skeleton, &clip, 2);
+        let grid = sample_clip(&skeleton, &clip, 2).unwrap();
         assert_eq!(grid.local(0, 0), Transform::IDENTITY);
         assert_eq!(grid.local(1, 0), Transform::IDENTITY);
     }
@@ -453,5 +645,88 @@ mod tests {
             vec![Vec3::ZERO, Vec3::ONE, Vec3::ZERO], // 3 of the 6 a cubic pair needs
         );
         sample_track(&t, 0.5);
+    }
+
+    #[test]
+    fn sampling_cost_counts_all_three_arrays_and_enforces_each_ceiling() {
+        let cost = SamplingCost::checked(3, 2, 4).unwrap();
+        assert_eq!(cost.pose_cells, 6);
+        assert_eq!(cost.track_evaluations, 12);
+        // Three f32 times, six (40-byte TRS + 64-byte matrix + 16-byte quat) cells.
+        assert_eq!(cost.bytes, 732);
+        let exact = SamplingLimits {
+            bytes: 732,
+            frames: 3,
+            track_evaluations: 12,
+        };
+        assert!(cost.admit(exact, false).is_ok());
+        for limits in [
+            SamplingLimits {
+                bytes: 731,
+                ..exact
+            },
+            SamplingLimits { frames: 2, ..exact },
+            SamplingLimits {
+                track_evaluations: 11,
+                ..exact
+            },
+        ] {
+            assert!(matches!(
+                cost.admit(limits, false),
+                Err(SamplingError::LimitExceeded { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn production_sampling_boundaries_are_checked_without_allocating_grids() {
+        // Eight-bone grids need 964 bytes/frame. These adjacent frame counts
+        // straddle the literal 256 MiB ceiling while staying under the frame cap.
+        assert_eq!(
+            SamplingCost::checked(278_460, 8, 0).unwrap().bytes,
+            268_435_440
+        );
+        assert!(
+            SamplingCost::checked(278_460, 8, 0)
+                .unwrap()
+                .admit(SamplingLimits::DEFAULT, false)
+                .is_ok()
+        );
+        assert!(
+            SamplingCost::checked(278_461, 8, 0)
+                .unwrap()
+                .admit(SamplingLimits::DEFAULT, false)
+                .is_err()
+        );
+        assert!(
+            SamplingCost::checked(1_000_000, 0, 0)
+                .unwrap()
+                .admit(SamplingLimits::DEFAULT, false)
+                .is_ok()
+        );
+        assert!(
+            SamplingCost::checked(1_000_001, 0, 0)
+                .unwrap()
+                .admit(SamplingLimits::DEFAULT, false)
+                .is_err()
+        );
+        assert!(
+            SamplingCost::checked(2, 0, 4_000_000)
+                .unwrap()
+                .admit(SamplingLimits::DEFAULT, false)
+                .is_ok()
+        );
+        assert!(
+            SamplingCost::checked(2, 0, 4_000_001)
+                .unwrap()
+                .admit(SamplingLimits::DEFAULT, false)
+                .is_err()
+        );
+        for dimensions in [(usize::MAX, 2, 0), (2, 0, usize::MAX), (usize::MAX, 0, 0)] {
+            assert_eq!(
+                SamplingCost::checked(dimensions.0, dimensions.1, dimensions.2).unwrap_err(),
+                SamplingError::SizeOverflow
+            );
+        }
     }
 }

@@ -74,7 +74,7 @@ trait ContactMetricGridRuntime {
         &mut self,
         document: &animsmith_core::Document,
         clip_index: usize,
-    ) -> Option<Rc<PoseGrid>>;
+    ) -> Result<Option<Rc<PoseGrid>>, animsmith_core::SamplingError>;
 }
 
 struct ProductionContactMetricGridRuntime;
@@ -98,7 +98,7 @@ impl ContactMetricGridRuntime for ProductionContactMetricGridRuntime {
         &mut self,
         document: &animsmith_core::Document,
         clip_index: usize,
-    ) -> Option<Rc<PoseGrid>> {
+    ) -> Result<Option<Rc<PoseGrid>>, animsmith_core::SamplingError> {
         MetricGrids::new(document).grid(clip_index)
     }
 }
@@ -579,7 +579,9 @@ fn build_contact_metric_grid_after_preflight(
     checked_metric_grid_work(frame_count, bone_count, track_count).ok_or_else(|| {
         incomplete_refusal("metric grid exceeds the 1000000-cell allocation or sampling-work limit")
     })?;
-    Ok(runtime.build_grid(document, clip_index))
+    runtime
+        .build_grid(document, clip_index)
+        .map_err(|_| incomplete_refusal("metric grid sampling was refused"))
 }
 
 fn reserve_retained_run(retained_runs: &mut usize) -> Result<(), producer::Rejection> {
@@ -770,7 +772,7 @@ mod tests {
             &mut self,
             document: &animsmith_core::Document,
             clip_index: usize,
-        ) -> Option<Rc<PoseGrid>> {
+        ) -> Result<Option<Rc<PoseGrid>>, animsmith_core::SamplingError> {
             self.grids_built += 1;
             ProductionContactMetricGridRuntime.build_grid(document, clip_index)
         }

@@ -271,6 +271,9 @@ pub struct ComparisonSide<'a> {
 /// Refusal returned before report HTML is produced.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ReportError {
+    /// A required pose grid or the shared metric cache exceeded sampling admission.
+    #[error(transparent)]
+    Sampling(#[from] animsmith_core::SamplingError),
     /// The declared clip was absent from one input.
     #[error("{side} clip {clip:?} was not found")]
     ClipNotFound {
@@ -434,8 +437,8 @@ pub fn preflight_comparison(
             clip: after_clip_name.to_owned(),
         })?;
     // The pose budget bounds what the document will embed. An evidence-only
-    // report embeds no poses, so the pair it can describe is not limited by
-    // a grid it will never carry; every other bound still applies.
+    // report embeds no poses, so it skips only this output bound. Its charts
+    // and evidence still require grids admitted by the shared sampler later.
     if !options.evidence_only {
         comparison_pose_bytes(before_frames, before.skeleton.bones.len(), "before")?;
         comparison_pose_bytes(after_frames, after.skeleton.bones.len(), "after")?;
@@ -523,14 +526,14 @@ pub fn render_comparison(
     let after_clip = &after_doc.clips[preflight.after_clip_index];
     let before_grid = before
         .grids
-        .grid(preflight.before_clip_index)
+        .grid(preflight.before_clip_index)?
         .ok_or_else(|| ReportError::UnavailableSampleGrid {
             side: "before",
             clip: before.clip.to_owned(),
         })?;
     let after_grid = after
         .grids
-        .grid(preflight.after_clip_index)
+        .grid(preflight.after_clip_index)?
         .ok_or_else(|| ReportError::UnavailableSampleGrid {
             side: "after",
             clip: after.clip.to_owned(),
@@ -1682,7 +1685,7 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
     // The cross-clip figures come first: a group figure is evidence about
     // its members rather than about one clip, so it opens the Charts column
     // rather than sitting under whichever clip happens to be shown.
-    let (mut charts_html, group_members) = gait_group_charts(grids, roles, config, clip_filter);
+    let (mut charts_html, group_members) = gait_group_charts(grids, roles, config, clip_filter)?;
     for (clip_index, clip) in doc.clips.iter().enumerate() {
         if clip_filter.is_some_and(|f| f != clip.name) {
             continue;
@@ -1690,7 +1693,7 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
         if let Some(preflight) = &mut blend_preflight {
             preflight.include(clip);
         }
-        let Some(grid) = grids.grid(clip_index) else {
+        let Some(grid) = grids.grid(clip_index)? else {
             continue;
         };
         #[cfg(test)]
@@ -2087,7 +2090,7 @@ fn gait_group_charts(
     roles: &ResolvedRoles,
     config: &Config,
     clip_filter: Option<&str>,
-) -> (String, Vec<Value>) {
+) -> Result<(String, Vec<Value>), ReportError> {
     let doc = grids.document();
     let drawable = |group: &GaitGroup| {
         group.clips.iter().any(|name| {
@@ -2106,10 +2109,10 @@ fn gait_group_charts(
         .iter()
         .filter(|(_, group)| drawable(group))
     {
-        html.push_str(&gait_group_chart(name, group, grids, roles, &mut evidence));
+        html.push_str(&gait_group_chart(name, group, grids, roles, &mut evidence)?);
         membership.push(json!({ "name": name, "members": group.clips }));
     }
-    (html, membership)
+    Ok((html, membership))
 }
 
 /// One declared gait group's members on a single figure.
@@ -2132,7 +2135,7 @@ fn gait_group_chart<'a>(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
     evidence: &mut BTreeMap<usize, Option<Rc<GaitPhaseEvidence>>>,
-) -> String {
+) -> Result<String, ReportError> {
     let doc = grids.document();
     let mut members: Vec<GroupMember<'a>> = Vec::with_capacity(group.clips.len());
     for clip_name in &group.clips {
@@ -2141,17 +2144,18 @@ fn gait_group_chart<'a>(
         // series is one per judged frame.
         let has_colour = members.len() < GROUP_SERIES_CLASSES.len();
         let index = doc.clips.iter().position(|clip| &clip.name == clip_name);
-        let measured = index.and_then(|index| {
-            evidence
-                .entry(index)
-                .or_insert_with(|| {
-                    grids
-                        .grid(index)
-                        .and_then(|grid| gait_phase_evidence(&grid, roles))
-                        .map(Rc::new)
-                })
-                .clone()
-        });
+        let measured = if let Some(index) = index {
+            if let std::collections::btree_map::Entry::Vacant(entry) = evidence.entry(index) {
+                let measured = grids
+                    .grid(index)?
+                    .and_then(|grid| gait_phase_evidence(&grid, roles))
+                    .map(Rc::new);
+                entry.insert(measured);
+            }
+            evidence.get(&index).cloned().flatten()
+        } else {
+            None
+        };
         // One classifier serves this figure and the `gait-group` check, so
         // the caption cannot present a member as measured where the check
         // recorded a coverage gap.
@@ -2209,7 +2213,7 @@ fn gait_group_chart<'a>(
         // Every member is absent, unsampled, or non-finite throughout. The
         // caption still names each one and its state, the way the root path
         // reports a trajectory it cannot plot.
-        return Chart {
+        return Ok(Chart {
             subject,
             kind: GAIT_GROUP_KIND,
             title: GAIT_GROUP_TITLE,
@@ -2229,7 +2233,7 @@ fn gait_group_chart<'a>(
             body: String::new(),
             trailer: String::new(),
         }
-        .render();
+        .render());
     };
 
     let plot = Plot::for_legend(legend.len());
@@ -2328,7 +2332,7 @@ fn gait_group_chart<'a>(
     } else {
         format!("{names} {min:.2} to {max:.2} {UNIT}")
     };
-    Chart {
+    Ok(Chart {
         subject,
         kind: GAIT_GROUP_KIND,
         title: GAIT_GROUP_TITLE,
@@ -2342,7 +2346,7 @@ fn gait_group_chart<'a>(
         body,
         trailer: String::new(),
     }
-    .render()
+    .render())
 }
 
 /// Where a member's sample sits on the shared source-phase axis: sample `k`
@@ -3478,7 +3482,7 @@ mod tests {
         .unwrap();
         let grids = MetricGrids::new(doc);
         let ctx = CheckCtx::new(&grids, &roles, &config);
-        assert!(ctx.grid(0).is_some());
+        assert!(ctx.grid(0).unwrap().is_some());
         let shared = render(ReportInputs {
             options,
             ..ReportInputs::new(&grids, &roles, &source, &evidence, &config)

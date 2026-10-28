@@ -97,8 +97,8 @@ fn clip(tracks: Vec<Track>) -> Clip {
 
 fn assert_original_grid_equal(skeleton: &Skeleton, original: &Clip, final_clip: &Clip) {
     let frames = default_frame_count(original);
-    let a = sample_clip(skeleton, original, frames);
-    let b = sample_clip(skeleton, final_clip, frames);
+    let a = sample_clip(skeleton, original, frames).expect("fixture fits sampling limits");
+    let b = sample_clip(skeleton, final_clip, frames).expect("fixture fits sampling limits");
     assert_eq!(a.frame_count(), b.frame_count());
     for frame in 0..a.frame_count() {
         for bone in 0..a.bone_count() {

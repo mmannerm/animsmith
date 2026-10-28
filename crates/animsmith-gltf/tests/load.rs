@@ -165,7 +165,7 @@ fn fixture_is_lint_clean() {
 fn fixture_pose_grid_fk_is_sane() {
     let doc = animsmith_gltf::load(&fixture()).expect("fixture loads");
     let clip = &doc.clips[0];
-    let grid = sample_clip(&doc.skeleton, clip, 5);
+    let grid = sample_clip(&doc.skeleton, clip, 5).expect("fixture fits sampling limits");
 
     // At t=0 the foot sits at hips(0,1,0) + foot offset(0,-1,0) = origin.
     let foot0 = grid.model_position(0, 2);
@@ -184,7 +184,8 @@ fn measurements_match_fixture() {
     let config = Config::default();
     let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &ResolvedRoles::default(), &config);
+        animsmith_core::measure::measure_document(&grids, &ResolvedRoles::default(), &config)
+            .expect("fixture measurements fit sampling limits");
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "root"]);
