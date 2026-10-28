@@ -1660,7 +1660,7 @@ fn assembly_constant_track_pruning_is_opt_in_protected_and_deterministic() {
                                 Quat::IDENTITY,
                                 Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
                                 Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
-                                -Quat::IDENTITY,
+                                Quat::IDENTITY, // same-sign constant; antipodal cubic keys cross zero
                                 Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
                             ]),
                         },
@@ -2439,7 +2439,16 @@ fn assembly_preserves_authored_cubic_motion_with_and_without_pruning() {
                 [0.0, 0.0, 0.0, 1.0],
                 [-0.0, 0.0, 0.0, 0.0],
                 [0.0; 4],
-                [0.0, -(angle * 0.5).sin(), 0.0, -(angle * 0.5).cos()],
+                if angle < 0.001 {
+                    [
+                        0.0,
+                        -f32::from_bits(0x3983_126f),
+                        0.0,
+                        -f32::from_bits(0x3f7f_ffff),
+                    ]
+                } else {
+                    [0.0, -(angle * 0.5).sin(), 0.0, -(angle * 0.5).cos()]
+                },
                 [0.0; 4],
             ];
             write_rotation_cleanup_fixture(dir.path(), "CUBICSPLINE", &values, prune);
@@ -2460,9 +2469,10 @@ fn assembly_preserves_authored_cubic_motion_with_and_without_pruning() {
             assert_eq!(component_bits(&emitted), component_bits(&values));
             let midpoint = raw_cubic_midpoint(&emitted);
             let expected = if angle < 0.001 {
-                // The tiny angle rounds the authored second w to -1 in f32;
-                // the midpoint still turns 180 degrees, despite close endpoints.
-                [0.0, -1.0, 0.0, 0.0]
+                // Literal binary32 input yields raw midpoint
+                // [0,-0.0001250000059371814,0,2^-25], about 179.97 degrees
+                // from identity despite endpoint distance below 0.001 radians.
+                [0.0, -0.9999999715782945, 0.0, 0.00023841856100102586]
             } else {
                 [0.0, -0.125f64.cos(), 0.0, 0.125f64.sin()]
             };

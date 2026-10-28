@@ -3317,8 +3317,8 @@ fn prepare_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
                     .map(|component| f64::from(component).powi(2))
                     .sum::<f64>()
                     .sqrt();
-                let tolerance = f64::from(animsmith_core::checks::quat_norm::NORM_TOLERANCE);
-                if (norm - 1.0).abs() > tolerance {
+                let tolerance = animsmith_core::QUAT_NORM_TOLERANCE;
+                if (norm - 1.0).abs() > f64::from(tolerance) {
                     return Err(format!(
                         "clip {:?} has non-unit CUBICSPLINE quaternion at bone {} key {key} (norm {norm}, tolerance {tolerance}); re-export with unit value keys because normalization would change the curve",
                         clip.name, track.bone

@@ -1526,16 +1526,42 @@ fn v4_rebases_every_cubic_slot_for_a_factor_greater_than_one() {
         [0.0, 0.0, 0.25, 0.0],
     ];
     let clip_path = dir.path().join("inputs/clip.glb");
-    let mut source = animsmith_gltf::load(&clip_path).unwrap();
-    let rotation = source.clips[0]
-        .tracks
-        .iter_mut()
-        .find(|track| track.property == Property::Rotation)
-        .unwrap();
-    rotation.interpolation = Interpolation::CubicSpline;
-    rotation.times = vec![0.0, 1.0];
-    rotation.values = TrackValues::Quats(rotations.into_iter().map(Quat::from_array).collect());
-    animsmith_gltf::write::write(&source, &clip_path).unwrap();
+    // Append raw components without another model round-trip, which would
+    // create a second generated mesh-holder node in this already-staged asset.
+    let bytes = std::fs::read(&clip_path).unwrap();
+    let mut container = gltf::binary::Glb::from_slice(&bytes).unwrap();
+    let mut json: Value = serde_json::from_slice(&container.json).unwrap();
+    let sampler = json["animations"][0]["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|channel| channel["target"]["path"] == "rotation")
+        .unwrap()["sampler"]
+        .as_u64()
+        .unwrap() as usize;
+    let accessor = json["animations"][0]["samplers"][sampler]["output"]
+        .as_u64()
+        .unwrap() as usize;
+    json["animations"][0]["samplers"][sampler]["interpolation"] = Value::from("CUBICSPLINE");
+    let bin = container.bin.as_mut().unwrap().to_mut();
+    let offset = bin.len();
+    bin.extend(
+        rotations
+            .iter()
+            .flatten()
+            .flat_map(|value| value.to_le_bytes()),
+    );
+    json["buffers"][0]["byteLength"] = Value::from(bin.len());
+    let view = json["bufferViews"].as_array().unwrap().len();
+    json["bufferViews"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"buffer":0,"byteOffset":offset,"byteLength":96}));
+    json["accessors"][accessor]["bufferView"] = Value::from(view);
+    json["accessors"][accessor]["byteOffset"] = Value::from(0);
+    json["accessors"][accessor]["count"] = Value::from(6);
+    container.json = serde_json::to_vec(&json).unwrap().into();
+    std::fs::write(&clip_path, container.to_vec().unwrap()).unwrap();
     let raw_rotation = |path: &Path| {
         let bytes = std::fs::read(path).unwrap();
         let gltf = gltf::Gltf::from_slice(&bytes).unwrap();
