@@ -202,6 +202,7 @@ def _parser_binary() -> Path:
         [
             "cargo", "build", "-p", "animsmith", "--example",
             "animation_pack_markdown_ast", "--no-default-features",
+            "--target-dir", "target/no-default-features",
             "--message-format=json-render-diagnostics",
         ],
         cwd=root,
