@@ -18,8 +18,8 @@ guard_status=$?
 set -e
 test "$guard_status" -ne 0
 grep -Fq 'bevy-readback lock bevy_app must be 0.19.0 (got 0.19.1)' <<< "$guard_output"
-cargo build -p animsmith --bin animsmith >/dev/null
-cargo +1.95.0 build --manifest-path tools/bevy-readback/Cargo.toml --features test-support >/dev/null
+cargo build --locked -p animsmith --bin animsmith >/dev/null
+cargo +1.95.0 build --locked --manifest-path tools/bevy-readback/Cargo.toml --features test-support >/dev/null
 cli=target/debug/animsmith
 probe=tools/bevy-readback/target/debug/animsmith-bevy-readback
 config=examples/bevy-v3.animsmith.toml
@@ -32,7 +32,7 @@ mkfifo "$work/prediction.fifo"
 readback_status 2 "$work/fifo.stdout" timeout 2 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/prediction.fifo"
 test ! -s "$work/fifo.stdout"
 "$probe" --asset-root "$work" --asset fixture.glb --prediction "$work/glb.json" > "$work/glb.readback.json"
-jq -e '.conformance.state == "exact" and .harness.rust_toolchain == "rustc 1.95.0 (59807616e 2026-04-14)" and .harness.bevy_animation_feature == true and .harness.load_animations == true and .observation.terminal.state == "loaded" and (.harness.updates >= 1 and .harness.updates <= 4096) and .observation.primary_verified == true and .observation.dependencies_verified == true and .observation.default_scene == 0 and (.observation.nodes | length) == 2 and (.observation.skins | length) == 0 and (.observation.inverse_bind_matrices | length) == 0 and (.observation.targets | length) == 1 and (.observation.warnings | length) >= 1 and (.observation.warnings_truncated == false)' "$work/glb.readback.json" >/dev/null
+jq -e '.conformance.state == "exact" and .harness.rust_toolchain == "rustc 1.95.0 (59807616e 2026-04-14)" and .harness.bevy_animation_feature == true and .harness.load_animations == true and .observation.terminal.state == "loaded" and (.harness.updates >= 1 and .harness.updates <= 4096) and .observation.primary_verified == true and .observation.dependencies_verified == true and .observation.default_scene == 0 and (.observation.nodes | length) == 3 and (.observation.skins | length) == 0 and (.observation.inverse_bind_matrices | length) == 0 and (.observation.targets | length) == 1 and (.observation.warnings | length) >= 1 and (.observation.warnings_truncated == false)' "$work/glb.readback.json" >/dev/null
 cp examples/assets/clip.glb "$work/race.glb"
 predict "$work/race.glb" "$work/race.json"
 ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_AFTER_SNAPSHOT=1 "$probe" --asset-root "$work" --asset race.glb --prediction "$work/race.json" > "$work/race.readback.json"
@@ -54,7 +54,22 @@ predict "$work/unattached-skin.gltf" "$work/unattached-skin.json"
 "$probe" --asset-root "$work" --asset unattached-skin.gltf --prediction "$work/unattached-skin.json" > "$work/unattached-skin.readback.json"
 jq -e '.conformance.state == "exact" and (.observation.skins | length) == 0 and .observation.inverse_bind_matrices == [{"index":0,"label":"Skin0/InverseBindMatrices"}] and (.observation.named_skin_winners | length) == 0' "$work/unattached-skin.readback.json" >/dev/null
 uri="$(jq -r '.buffers[0].uri' crates/animsmith-gltf/testdata/rig.gltf)"
+# Closure keys belong to the primary's parent, including in the staged tree
+# consumed by the actual Bevy loader. A root-level decoy is never a fallback.
+mkdir "$work/nested"
+printf '%s' "${uri#*,}" | base64 -d > "$work/nested/buffer.bin"
+jq '.buffers[0].uri = "buffer.bin"' crates/animsmith-gltf/testdata/rig.gltf > "$work/nested/rig.gltf"
+predict "$work/nested/rig.gltf" "$work/nested.json"
+"$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json" > "$work/nested.readback.json"
+jq -e '.conformance.state == "exact" and .observation.terminal.state == "loaded" and .observation.primary_verified == true and .observation.dependencies_verified == true and (.observation.animations | length) == 1 and (.observation.nodes | length) == 3 and (.observation.targets | length) == 2' "$work/nested.readback.json" >/dev/null
+printf 'wrong root-level buffer' > "$work/buffer.bin"
+ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_DEPENDENCY_AFTER_SNAPSHOT=nested/buffer.bin "$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json" > "$work/nested-race.readback.json"
+jq -e '.conformance.state == "exact" and .observation.terminal.state == "loaded" and .observation.primary_verified == true and .observation.dependencies_verified == true and (.observation.animations | length) == 1 and (.observation.targets | length) == 2' "$work/nested-race.readback.json" >/dev/null
+test "$(wc -c < "$work/nested/buffer.bin")" -gt "$(jq -r '.buffers[0].byteLength' "$work/nested/rig.gltf")"
+rm "$work/nested/buffer.bin"
 printf '%s' "${uri#*,}" | base64 -d > "$work/buffer.bin"
+readback_status 1 "$work/nested-missing.stdout" "$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json"
+test ! -s "$work/nested-missing.stdout"
 jq '.buffers[0].uri = "buffer.bin"' crates/animsmith-gltf/testdata/rig.gltf > "$work/dependency.gltf"
 predict "$work/dependency.gltf" "$work/dependency.json"
 ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_DEPENDENCY_AFTER_SNAPSHOT=buffer.bin "$probe" --asset-root "$work" --asset dependency.gltf --prediction "$work/dependency.json" > "$work/dependency-race.readback.json"
