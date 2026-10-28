@@ -74,7 +74,12 @@ slot and target property before decoding. Key times require `SCALAR`/`FLOAT`,
 translation and scale require `VEC3`/`FLOAT`, and rotation retains all five
 decodable glTF component encodings as `VEC4`, while morph-weight output retains
 the same five as `SCALAR`; mismatches return a located `LoadError` rather than
-panicking or reinterpreting same-sized bytes.
+panicking or reinterpreting same-sized bytes. Dense and sparse sampler views
+must also fit both their declarations and the resolved buffer bytes. A short
+input or output returns `LoadError::AnimationAccessorLayout` naming its clip,
+node, slot and accessor instead of silently dropping the track.
+Valid morph-weight channels remain unmodeled, but their sampler encodings,
+layouts and resolved bytes must still pass these checks.
 
 For glTF/GLB measurement, the loader also provides a source-resource sidecar:
 source-order material definitions, semantic texture bindings, texture-to-image
