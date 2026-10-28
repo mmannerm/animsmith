@@ -423,6 +423,15 @@ renames *over* a link rather than through it. Passing a symlinked input
 alongside a destination naming its target is refused before anything is
 written. A symlinked input that aliases neither destination is accepted.
 
+`transform` requires finite positive `--fps` and `--hold-extend` values.
+`--slice START:END` requires finite bounds with the end after the start;
+negative starts remain supported. Slice and hold check every resulting f32
+key timeline before changing tracks. A finite positive hold can still be too
+small to advance the last key time (for example, `1e-20` seconds at time 1).
+Unrepresentable or non-increasing times are operator errors (exit 2), with no
+output publication or earlier per-clip success text. Source bytes and any
+existing output remain unchanged on these refusals.
+
 `transform --drop-duplicate-loop-endpoint` is the narrow mechanical transform
 for an inclusive DCC cycle export that copied frame 0 to the final frame. It
 accepts only a strict authored-key candidate: all channels must have one common

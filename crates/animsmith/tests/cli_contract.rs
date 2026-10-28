@@ -4800,6 +4800,144 @@ fn transform_summary_reports_a_loaded_clip_omitted_from_the_artifact() {
     );
 }
 
+fn write_timing_transform_glb(path: &std::path::Path) {
+    let clip = |name: &str, times: Vec<f32>| Clip {
+        name: name.into(),
+        duration_s: f64::from(*times.last().unwrap()),
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            values: TrackValues::Vec3s(
+                (0..times.len())
+                    .map(|i| Vec3::splat(i as f32 + 1.0))
+                    .collect(),
+            ),
+            times,
+        }],
+    };
+    let document = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: vec![clip("early", vec![0.0]), clip("late", vec![0.0, 1.0])],
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&document, path).unwrap();
+}
+
+#[test]
+fn transform_tiny_hold_preserves_source_and_output_without_earlier_success_text() {
+    let dir = unique_temp_dir("transform-tiny-hold");
+    let input = dir.path().join("input.glb");
+    let output = dir.path().join("output.glb");
+    write_timing_transform_glb(&input);
+    let original = std::fs::read(&input).unwrap();
+    for prior_output in [None, Some(b"previous output".as_slice())] {
+        if let Some(bytes) = prior_output {
+            std::fs::write(&output, bytes).unwrap();
+        }
+        let result = animsmith()
+            .current_dir(dir.path())
+            .arg("transform")
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .arg("--hold-extend=1e-20")
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2), "{}", stderr(&result));
+        assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+        assert!(
+            stderr(&result).contains("clip \"late\": hold extension refused"),
+            "{}",
+            stderr(&result)
+        );
+        assert!(
+            stderr(&result).contains("f32 timeline"),
+            "{}",
+            stderr(&result)
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), original);
+        match prior_output {
+            Some(bytes) => assert_eq!(std::fs::read(&output).unwrap(), bytes),
+            None => assert!(!output.exists()),
+        }
+    }
+}
+
+#[test]
+fn transform_rejects_invalid_numeric_controls_before_output_changes() {
+    let dir = unique_temp_dir("transform-invalid-timing");
+    let input = dir.path().join("input.glb");
+    let output = dir.path().join("output.glb");
+    write_timing_transform_glb(&input);
+    let original = std::fs::read(&input).unwrap();
+    std::fs::write(&output, b"previous output").unwrap();
+    for args in [
+        vec!["--hold-extend=-0.25"],
+        vec!["--slice=0:1", "--fps=nan"],
+        vec!["--fps=0"],
+        vec!["--slice=0:inf"],
+    ] {
+        let result = animsmith()
+            .current_dir(dir.path())
+            .arg("transform")
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{args:?}: {}",
+            stderr(&result)
+        );
+        assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+        assert!(stderr(&result).contains("finite"), "{}", stderr(&result));
+        assert_eq!(std::fs::read(&input).unwrap(), original);
+        assert_eq!(std::fs::read(&output).unwrap(), b"previous output");
+    }
+}
+
+#[test]
+fn transform_hold_emits_the_next_representable_f32_time() {
+    let dir = unique_temp_dir("transform-adjacent-hold");
+    let input = dir.path().join("input.glb");
+    let output = dir.path().join("output.glb");
+    write_timing_transform_glb(&input);
+    let original = std::fs::read(&input).unwrap();
+    let result = animsmith()
+        .current_dir(dir.path())
+        .arg("transform")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .arg("--hold-extend=0.00000011920928955078125")
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+    let written = animsmith_gltf::load(&output).unwrap();
+    let late = written
+        .clips
+        .iter()
+        .find(|clip| clip.name == "late")
+        .unwrap();
+    assert_eq!(
+        late.tracks[0].times,
+        [0.0, 1.0, f32::from_bits(1.0f32.to_bits() + 1)]
+    );
+    assert_eq!(late.tracks[0].key_vec3(2), Some(Vec3::splat(2.0)));
+    assert_eq!(std::fs::read(&input).unwrap(), original);
+}
+
 #[test]
 fn duplicate_loop_endpoint_cli_detects_trims_and_exposes_changed_contracts() {
     let dir = unique_temp_dir("duplicate-loop-endpoint");

@@ -989,6 +989,70 @@ fn quaternion_key_delta(track: &Track, first: usize, other: usize) -> Option<f32
     Some(2.0 * sin_half_angle.atan2(w.abs()))
 }
 
+/// A slice or hold cannot emit a finite, strictly increasing key timeline.
+#[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
+pub enum TransformTimingError {
+    /// A rate or extension must be finite and strictly positive.
+    #[error("{argument} must be finite and positive, got {value}")]
+    InvalidArgument {
+        /// Name of the invalid argument.
+        argument: &'static str,
+        /// Supplied value.
+        value: f64,
+    },
+    /// Slice endpoints must be finite and ordered; equal endpoints are allowed.
+    #[error("slice bounds must be finite with start <= end, got {start_s}:{end_s}")]
+    InvalidWindow {
+        /// Supplied start time in seconds.
+        start_s: f64,
+        /// Supplied end time in seconds.
+        end_s: f64,
+    },
+    /// Slice bounds, duration or half-frame epsilon cannot be represented.
+    #[error("slice window and epsilon cannot be represented by finite f32 key times")]
+    UnrepresentableWindow,
+    /// A hold cannot preserve an invalid declared clip duration.
+    #[error("clip duration must be finite and nonnegative, got {duration_s}")]
+    InvalidDuration {
+        /// Declared duration in seconds.
+        duration_s: f64,
+    },
+    /// A retained or appended key time is non-finite or negative.
+    #[error("track {track} key {key} cannot emit a finite nonnegative key time")]
+    InvalidKeyTime {
+        /// Index of the track in the clip.
+        track: usize,
+        /// Source key index, or the new key index for a hold.
+        key: usize,
+    },
+    /// A key would coincide with or precede the previous emitted key.
+    #[error("track {track} key {key} does not advance the emitted f32 timeline")]
+    NonIncreasingTime {
+        /// Index of the track in the clip.
+        track: usize,
+        /// Source key index, or the new key index for a hold.
+        key: usize,
+    },
+}
+
+fn validate_emitted_times(
+    track: usize,
+    times: impl IntoIterator<Item = (usize, f32)>,
+) -> Result<(), TransformTimingError> {
+    let mut previous = None;
+    for (key, time) in times {
+        if !time.is_finite() || time < 0.0 {
+            return Err(TransformTimingError::InvalidKeyTime { track, key });
+        }
+        if previous.is_some_and(|previous| time <= previous) {
+            return Err(TransformTimingError::NonIncreasingTime { track, key });
+        }
+        previous = Some(time);
+    }
+    Ok(())
+}
+
 /// Keep only the keys inside `[start, end]` seconds (with a half-frame
 /// epsilon at `fps` absorbing float drift from earlier retimings) and
 /// retime them so the window starts at 0. Cubic tangent triplets move
@@ -1001,25 +1065,69 @@ fn quaternion_key_delta(track: &Track, first: usize, other: usize) -> Option<f32
 /// so the output has at most one key at 0 and one at the end, stays
 /// time-monotonic, and round-trips its declared duration.
 ///
+/// Equal bounds allow a one-frame window; a negative start is also allowed.
+/// Every track's resulting timeline is analyzed before any track is changed.
+///
+/// # Errors
+///
+/// Returns [`TransformTimingError`] for invalid numeric arguments or key times
+/// that cannot remain finite, nonnegative and strictly increasing after
+/// retiming and boundary deduplication. The clip is unchanged on error.
+///
 /// # Panics
 ///
 /// Panics if a hand-built track violates the loader invariant that
 /// `values` contains one value per key for linear/step tracks, or one
 /// tangent-value-tangent triplet per key for cubic-spline tracks.
-pub fn slice(clip: &mut Clip, start_s: f64, end_s: f64, fps: f64) {
+pub fn slice(
+    clip: &mut Clip,
+    start_s: f64,
+    end_s: f64,
+    fps: f64,
+) -> Result<(), TransformTimingError> {
+    if !fps.is_finite() || fps <= 0.0 {
+        return Err(TransformTimingError::InvalidArgument {
+            argument: "fps",
+            value: fps,
+        });
+    }
+    if !start_s.is_finite() || !end_s.is_finite() || end_s < start_s {
+        return Err(TransformTimingError::InvalidWindow { start_s, end_s });
+    }
     let eps = (0.5 / fps) as f32;
     let (start, end) = (start_s as f32, end_s as f32);
-    let duration = (end - start).max(0.0);
-    for track in &mut clip.tracks {
+    let duration = end - start;
+    let declared_duration = end_s - start_s;
+    let (lower, upper) = (start - eps, end + eps);
+    if !declared_duration.is_finite()
+        || [start, end, eps, duration, lower, upper]
+            .iter()
+            .any(|value| !value.is_finite())
+        || (end_s > start_s && duration == 0.0)
+    {
+        return Err(TransformTimingError::UnrepresentableWindow);
+    }
+    let mut plans = Vec::with_capacity(clip.tracks.len());
+    for (track_index, track) in clip.tracks.iter().enumerate() {
         // (key index, retimed+clamped time), in original key order.
         let mut kept: Vec<(usize, f32)> = (0..track.key_count())
-            .filter(|&k| track.times[k] >= start - eps && track.times[k] <= end + eps)
-            .map(|k| (k, (track.times[k] - start).clamp(0.0, duration)))
-            .collect();
+            .filter(|&k| track.times[k] >= lower && track.times[k] <= upper)
+            .map(|key| {
+                let time = track.times[key] - start;
+                if !time.is_finite() {
+                    return Err(TransformTimingError::InvalidKeyTime {
+                        track: track_index,
+                        key,
+                    });
+                }
+                Ok((key, time.clamp(0.0, duration)))
+            })
+            .collect::<Result<_, _>>()?;
 
         // Drop boundary duplicates: at t=0 keep the last (closest to
         // `start`); at t=duration keep the first (closest to `end`).
-        // Interior times are already distinct and monotonic.
+        // Retiming can collapse distinct interior keys in f32; validate those
+        // after the existing boundary-only deduplication.
         kept.retain({
             let times: Vec<f32> = kept.iter().map(|&(_, t)| t).collect();
             let mut i = 0;
@@ -1036,7 +1144,11 @@ pub fn slice(clip: &mut Clip, start_s: f64, end_s: f64, fps: f64) {
                 keep
             }
         });
+        validate_emitted_times(track_index, kept.iter().copied())?;
+        plans.push(kept);
+    }
 
+    for (track, kept) in clip.tracks.iter_mut().zip(plans) {
         track.times = kept.iter().map(|&(_, t)| t).collect();
         let per_key = match track.interpolation {
             Interpolation::CubicSpline => 3,
@@ -1059,25 +1171,65 @@ pub fn slice(clip: &mut Clip, start_s: f64, end_s: f64, fps: f64) {
             }
         }
     }
-    clip.duration_s = (end_s - start_s).max(0.0);
+    clip.duration_s = declared_duration;
     clip.tracks.retain(|t| t.key_count() > 0);
+    Ok(())
 }
 
 /// Append one key per track duplicating its final value `hold_s`
 /// seconds after its last key (a linear hold — charge/block poses).
 /// The clip duration extends to the longest held end.
 ///
+/// Empty tracks are unchanged. Every nonempty track's actual f32 endpoint is
+/// checked before changing any times, values, tangents or the clip duration.
+///
+/// # Errors
+///
+/// Returns [`TransformTimingError`] for a nonpositive/non-finite hold, an
+/// invalid duration, or an emitted timeline that is not finite, nonnegative
+/// and strictly increasing. A positive hold may be too small to advance a
+/// track's last f32 time. The clip is unchanged on error.
+///
 /// # Panics
 ///
 /// Panics if a hand-built track violates the loader invariant that each
 /// key has a corresponding stored value (or cubic-spline triplet).
-pub fn hold_extend(clip: &mut Clip, hold_s: f64) {
-    for track in &mut clip.tracks {
-        let Some(&last) = track.times.last() else {
+pub fn hold_extend(clip: &mut Clip, hold_s: f64) -> Result<(), TransformTimingError> {
+    if !hold_s.is_finite() || hold_s <= 0.0 {
+        return Err(TransformTimingError::InvalidArgument {
+            argument: "hold_s",
+            value: hold_s,
+        });
+    }
+    if !clip.duration_s.is_finite() || clip.duration_s < 0.0 {
+        return Err(TransformTimingError::InvalidDuration {
+            duration_s: clip.duration_s,
+        });
+    }
+    let mut endpoints = Vec::with_capacity(clip.tracks.len());
+    let mut duration = clip.duration_s;
+    for (track_index, track) in clip.tracks.iter().enumerate() {
+        let endpoint = track.times.last().map(|last| last + hold_s as f32);
+        if let Some(end) = endpoint {
+            validate_emitted_times(
+                track_index,
+                track
+                    .times
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .chain(std::iter::once((track.key_count(), end))),
+            )?;
+            duration = duration.max(f64::from(end));
+        }
+        endpoints.push(endpoint);
+    }
+    for (track, endpoint) in clip.tracks.iter_mut().zip(endpoints) {
+        let Some(end) = endpoint else {
             continue;
         };
         let key = track.key_count() - 1;
-        track.times.push(last + hold_s as f32);
+        track.times.push(end);
         let value_index = track.value_index(key);
         match &mut track.values {
             TrackValues::Vec3s(v) => {
@@ -1108,8 +1260,9 @@ pub fn hold_extend(clip: &mut Clip, hold_s: f64) {
                 }
             }
         }
-        clip.duration_s = clip.duration_s.max((last + hold_s as f32) as f64);
     }
+    clip.duration_s = duration;
+    Ok(())
 }
 
 /// Outcome of [`align_gait_anchor`].

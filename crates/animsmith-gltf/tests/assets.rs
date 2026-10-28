@@ -396,7 +396,7 @@ fn transform_pass_preserves_geometry() {
 
     // Mutate the clip the way `transform` does; hold-extend appends one
     // key (2 → 3), so the emitted sampler input proves the pass ran.
-    animsmith_core::transform::hold_extend(&mut doc.clips[0], 0.5);
+    animsmith_core::transform::hold_extend(&mut doc.clips[0], 0.5).expect("representable hold");
     animsmith_gltf::write::write(&doc, &path).expect("writes");
 
     let bytes = std::fs::read(&path).unwrap();
