@@ -78,6 +78,8 @@ panicking or reinterpreting same-sized bytes. Dense and sparse sampler views
 must also fit both their declarations and the resolved buffer bytes. A short
 input or output returns `LoadError::AnimationAccessorLayout` naming its clip,
 node, slot and accessor instead of silently dropping the track.
+Valid morph-weight channels remain unmodeled, but their sampler encodings,
+layouts and resolved bytes must still pass these checks.
 
 For glTF/GLB measurement, the loader also provides a source-resource sidecar:
 source-order material definitions, semantic texture bindings, texture-to-image
