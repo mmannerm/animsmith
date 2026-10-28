@@ -209,6 +209,15 @@ each declared gait group with a member in the file — one left-minus-right
 foot-height series per member with its measured stride anchor. Nothing in any
 of them is per bone.
 
+`--clip NAME` uses the normalized display names shown by `inspect`; duplicate
+authored glTF names remain selectable by their distinct display names. The
+comparison report retains its stricter authored-name correspondence checks.
+An ordinary selector must uniquely name a normalized clip. A missing or ambiguous
+name exits 2 without writing the report or replacing an existing output.
+Omit the selector to retain source-only diagnostics even when no normalized
+clip can be shown. The success summary counts emitted clip entries; a
+comparison counts its two selected source clips.
+
 `--clip NAME` and the gait-group figure meet deliberately. The clip filter
 scopes the document to one clip: its pose grid, its findings and its own two
 charts. A gait group is a contract between clips, so the figure for a group

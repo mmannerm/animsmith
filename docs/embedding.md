@@ -223,7 +223,10 @@ cargo run -p animsmith --example embed
    For HTML, pass `ReportInputs::new(&grids, &roles, &source, &evidence, &config)`
    to `animsmith_report::render`. Comparison uses two `ComparisonSide` values
    with the same source/evidence/configuration association and explicit clip
-   names. Both renderers return `Result<String, ReportError>`. Source/grids
+   names. Both renderers return `Result<RenderedReport, ReportError>`; use
+   `.html` for the document and `.clip_count` for the emitted ordinary clips
+   or the two selected comparison sides. Explicit ordinary selectors must
+   resolve uniquely; omit the selector to include source-only diagnostics. Source/grids
    pointer identity, primary evidence identity and any profiled dependency
    closure must agree; the caller also establishes the association with roles
    and configuration, including profile-free evidence. The configuration lets
@@ -241,7 +244,9 @@ exact profile, override, and unresolved-role contracts.
 
 The current report API intentionally replaces the earlier independent `checks`
 and `prediction_provenance` inputs with validated V19 `evidence` plus `source`.
-`render` now returns a `Result`, and the shared error type is `ReportError`
+Both renderers now return `RenderedReport` inside a `Result` instead of a
+plain HTML string; read `.html` and `.clip_count` explicitly. The shared error
+type is `ReportError`
 (formerly `ComparisonError`). Update these callers together; no historical
 attachment conversion or compatibility alias is provided.
 
