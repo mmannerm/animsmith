@@ -11934,3 +11934,188 @@ fn inspect_reports_every_selectable_mesh_instance_and_material() {
         )
     );
 }
+
+/// Self-authored bytes: two times, identity, then a scaled negative identity.
+/// The short-view variant names the second quaternion's bytes as an unrelated
+/// sentinel accessor; only the declared view changes, not the physical buffer.
+fn accessor_bounds_glb(rotation_view_length: usize, loaded_length: usize) -> Vec<u8> {
+    let mut document = json!({
+        "asset": { "version": "2.0" },
+        "buffers": [{ "byteLength": 40 }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+            { "buffer": 0, "byteOffset": 8, "byteLength": rotation_view_length }
+        ],
+        "accessors": [
+            { "bufferView": 0, "componentType": 5126, "count": 2,
+              "type": "SCALAR", "min": [0], "max": [1] },
+            { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4" }
+        ],
+        "nodes": [{ "name": "root" }],
+        "animations": [{
+            "name": "bounds",
+            "samplers": [{ "input": 0, "output": 1 }],
+            "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+        }],
+        "scenes": [{ "nodes": [0] }],
+        "scene": 0
+    });
+    if rotation_view_length == 16 {
+        document["bufferViews"].as_array_mut().unwrap().push(json!({
+            "buffer": 0, "byteOffset": 24, "byteLength": 16
+        }));
+        document["accessors"].as_array_mut().unwrap().push(json!({
+            "name": "untouched-sentinel", "bufferView": 2,
+            "componentType": 5126, "count": 1, "type": "VEC4"
+        }));
+    }
+    let mut json = serde_json::to_vec(&document).unwrap();
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    let mut bin: Vec<u8> = [0.0f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -2.0]
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect();
+    bin.truncate(loaded_length);
+    let mut glb = b"glTF".to_vec();
+    for word in [
+        2,
+        (28 + json.len() + bin.len()) as u32,
+        json.len() as u32,
+        0x4e4f534a,
+    ] {
+        glb.extend_from_slice(&word.to_le_bytes());
+    }
+    glb.extend_from_slice(&json);
+    glb.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x004e4942u32.to_le_bytes());
+    glb.extend_from_slice(&bin);
+    glb
+}
+
+#[test]
+fn accessor_bounds_fix_preserves_an_adjacent_named_accessor_outside_the_view() {
+    let dir = unique_temp_dir("fix-view-boundary");
+    let input = dir.path().join("short-view.glb");
+    let fixed = dir.path().join("fixed.glb");
+    let before = accessor_bounds_glb(16, 40);
+    std::fs::write(&input, &before).unwrap();
+
+    // Both repairs would change the sentinel if they trusted the whole buffer.
+    for write in [false, true] {
+        let mut command = animsmith();
+        command.arg("fix").arg(&input);
+        if write {
+            command.arg("-o").arg(&fixed);
+        } else {
+            command.arg("--dry-run");
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let out = stdout(&output);
+        assert!(out.contains("skipped[quat-norm]"), "{out}");
+        assert!(out.contains("skipped[quat-flip]"), "{out}");
+        assert!(
+            out.contains("requiring byte extent 32 beyond buffer view 1's byteLength 16"),
+            "{out}"
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), before);
+        if write {
+            // Includes the JSON declaration, named sentinel, length and every
+            // other byte, not just the quaternion values that happen to decode.
+            assert_eq!(std::fs::read(&fixed).unwrap(), before);
+        } else {
+            assert!(!fixed.exists());
+        }
+    }
+}
+
+#[test]
+fn accessor_bounds_inspect_refuses_short_actual_input_and_output_bytes() {
+    let dir = unique_temp_dir("inspect-buffer-boundary");
+    let input = dir.path().join("short-buffer.glb");
+    for (loaded_length, slot, accessor, view_end) in [(4, "input", 0, 8), (8, "output", 1, 40)] {
+        let before = accessor_bounds_glb(32, loaded_length);
+        std::fs::write(&input, &before).unwrap();
+        let output = animsmith().arg("inspect").arg(&input).output().unwrap();
+        assert_eq!(output.status.code(), Some(2), "{}", stdout(&output));
+        assert!(
+            stderr(&output).contains(&format!(
+                "clip 'bounds' node 0 sampler {slot}: accessor {accessor} reads its elements \
+                 from buffer view {accessor}, whose byte extent ends at {view_end} \
+                 beyond loaded buffer 0's {loaded_length} bytes"
+            )),
+            "{}",
+            stderr(&output)
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), before);
+    }
+
+    // The repair caller keeps its skip policy for that same missing payload.
+    let fixed = dir.path().join("fixed.glb");
+    let before = std::fs::read(&input).unwrap();
+    let output = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("-o")
+        .arg(&fixed)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains("beyond loaded buffer 0's 8 bytes"));
+    assert_eq!(std::fs::read(&fixed).unwrap(), before);
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+}
+
+#[test]
+fn accessor_bounds_valid_control_loads_and_repairs_only_the_authored_keys() {
+    let dir = unique_temp_dir("valid-accessor-boundary");
+    let input = dir.path().join("valid.glb");
+    let fixed = dir.path().join("fixed.glb");
+    let before = accessor_bounds_glb(32, 40);
+    std::fs::write(&input, &before).unwrap();
+    let output = animsmith().arg("inspect").arg(&input).output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stdout(&output).contains("bounds: 1.000s, 1 tracks, 2 keys max"));
+
+    let output = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+    assert!(!fixed.exists());
+
+    let output = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("-o")
+        .arg(&fixed)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let mut expected = before.clone();
+    let second_key = expected.len() - 16;
+    for (component, value) in [-0.0f32, -0.0, -0.0, 1.0].iter().enumerate() {
+        expected[second_key + component * 4..second_key + (component + 1) * 4]
+            .copy_from_slice(&value.to_le_bytes());
+    }
+    assert_eq!(std::fs::read(&fixed).unwrap(), expected);
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+
+    let output = animsmith()
+        .arg("fix")
+        .arg(&fixed)
+        .arg("--in-place")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(
+        std::fs::read(&fixed).unwrap(),
+        expected,
+        "second repair is a byte no-op"
+    );
+}

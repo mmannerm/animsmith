@@ -582,7 +582,9 @@ accessor's element, so an unwalkable layout passes parsing and reaches the
 reader.
 
 The same layout defect on an **animation sampler** is refused too, naming
-the clip and channel instead of a mesh:
+the clip and channel instead of a mesh. Both input times and output values
+must fit their declared views and the buffer bytes actually loaded; a truncated
+payload is an operator error (exit 2), never an empty animation:
 
 ```console
 $ animsmith lint poisoned-track.gltf
@@ -778,6 +780,11 @@ animsmith fix clip.glb -o fixed.glb
 animsmith fix clip.glb --in-place
 animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 ```
+
+Before changing a rotation accessor, `fix` checks that its entire declared
+view and strided elements fit both the declaration and the loaded buffer.
+An unsafe layout is reported as a skipped track and left byte-identical,
+including any adjacent accessor; bytes outside its view are never repair data.
 
 ## Engine profiles and importer settings
 
