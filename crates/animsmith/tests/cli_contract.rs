@@ -4880,9 +4880,16 @@ fn transform_rejects_invalid_numeric_controls_before_output_changes() {
     let original = std::fs::read(&input).unwrap();
     std::fs::write(&output, b"previous output").unwrap();
     for args in [
+        vec!["--hold-extend=0"],
         vec!["--hold-extend=-0.25"],
+        vec!["--hold-extend=nan"],
+        vec!["--hold-extend=inf"],
         vec!["--slice=0:1", "--fps=nan"],
         vec!["--fps=0"],
+        vec!["--fps=-30"],
+        vec!["--fps=inf"],
+        vec!["--slice=nan:1"],
+        vec!["--slice=1:0"],
         vec!["--slice=0:inf"],
     ] {
         let result = animsmith()

@@ -2143,6 +2143,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         .ok_or_else(|| format!("--slice wants START:END, got {spec}"))?;
                     let a: f64 = a.parse().map_err(|e| format!("--slice start: {e}"))?;
                     let b: f64 = b.parse().map_err(|e| format!("--slice end: {e}"))?;
+                    // Unlike inclusive assembly frame windows, CLI slices need distinct endpoints.
                     if !a.is_finite() || !b.is_finite() || b <= a {
                         return Err(format!(
                             "--slice bounds must be finite and end must be after start ({spec})"
