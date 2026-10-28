@@ -15,6 +15,8 @@
 //!   a quaternion leaves the rotation it represents unchanged, so
 //!   walking each track and negating keys until the whole track is
 //!   hemisphere-consistent is lossless.
+//!   The dot product uses f64 arithmetic to avoid intermediate f32 overflow
+//!   or underflow; sign repair preserves each component's magnitude.
 //!
 //! Scope: float32 VEC4 rotation outputs. `quat-flip` handles CUBICSPLINE
 //! tracks by negating the whole `[in-tangent, value, out-tangent]`
@@ -236,7 +238,8 @@ impl FixSession {
                 let value_element = k * layout.per_key + layout.value_offset;
                 let q = read_rotation(buffer, layout, value_element);
                 if let Some(p) = prev {
-                    let dot: f32 = p.iter().zip(&q).map(|(a, b)| a * b).sum();
+                    let dot = DQuat::from_array(p.map(f64::from))
+                        .dot(DQuat::from_array(q.map(f64::from)));
                     if dot < 0.0 {
                         for e in (k * layout.per_key)..(k * layout.per_key + layout.per_key) {
                             let negated = read_rotation(buffer, layout, e).map(|v| -v);

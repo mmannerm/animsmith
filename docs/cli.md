@@ -769,7 +769,7 @@ adding one. Repairs have stable ids so scripts can pin exact behavior:
 | Repair id | Behavior |
 |---|---|
 | `quat-norm` | Unit-normalizes finite, non-zero LINEAR/STEP quaternion keys, including subnormal and very large magnitudes, using `f64` arithmetic. This preserves the represented rotation after normalization. Exactly zero and nonfinite keys remain skipped. CUBICSPLINE tracks are skipped to preserve tangents. |
-| `quat-flip` | Normalizes adjacent quaternion keys to the same hemisphere. This is lossless because `q` and `-q` represent the same rotation. |
+| `quat-flip` | Normalizes adjacent quaternion keys to the same hemisphere. The sign comparison uses `f64` to avoid intermediate overflow or underflow, including when this repair is selected alone; component magnitudes are unchanged. This is lossless because `q` and `-q` represent the same rotation. |
 
 By default `fix` runs every repair. `--repair id[,id]` pins an exact
 list (`animsmith fix --help` names the valid ids). `fix` writes only
