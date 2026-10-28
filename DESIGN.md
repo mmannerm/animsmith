@@ -12,6 +12,9 @@ remain in force, including the command decisions and Appendices C–F. Historica
 crate inventories, examples and implementation sequences are not evidence of
 current availability. Use the architecture, CLI/API references and live tracker
 to establish what ships; retain these decisions when assessing correctness.
+Schema identities in a decision refer to the revision it describes, not a
+promise that it is the latest emitted version. The [output reference](docs/output.md)
+owns current identities; historical wire contracts remain immutable.
 Origin: extracted from a private game project's animation pipeline
 (design session 2026-07-03); that project — "the incubating project"
 below — is the first consumer, not the scope.
