@@ -1296,8 +1296,10 @@ fn validate_track_lengths(
 /// animation channels, geometry or animation accessors typed for an element
 /// the selected reader cannot decode or laid out so it cannot walk them, or
 /// node graphs that cannot be represented as a skeleton forest. Decoded
-/// accessor arrays cumulatively exceeding 16,777,216 elements or 256 MiB
-/// return [`LoadError::DecodedAccessorBudget`] before iteration/materialization.
+/// accessor arrays cumulatively exceeding the provisional 256 MiB decoded-byte
+/// ceiling return [`LoadError::DecodedAccessorBudget`] before iteration/materialization.
+/// This engineering ceiling is not a total-memory bound and has not been
+/// validated against licensed production assets.
 pub fn load(path: &Path) -> Result<Document, LoadError> {
     load_source(path).map(LoadedSource::into_document)
 }
@@ -3325,9 +3327,14 @@ fn extract_assets(
             })
             .unwrap_or_default();
         let skin_ibms = if let Some(skin) = skin.as_ref() {
-            let matrices = &source_skeleton.skins[skin.index()]
-                .inverse_bind_accessor
-                .matrices;
+            let source_skin = source_skeleton.skins.get(skin.index()).ok_or_else(|| {
+                LoadError::Malformed(format!(
+                    "node {} skin {}: source-skeleton skin binding is missing",
+                    node.index(),
+                    skin.index()
+                ))
+            })?;
+            let matrices = &source_skin.inverse_bind_accessor.matrices;
             if let Some(accessor) = skin.inverse_bind_matrices() {
                 budget.admit::<Mat4>(
                     accessor.index(),

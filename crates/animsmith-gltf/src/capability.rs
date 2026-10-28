@@ -2695,18 +2695,18 @@ mod tests {
     #[test]
     fn clip_track_projection_applies_decoded_budget_only_to_retained_arrays() {
         let bytes = crate::decoded_budget::tests::repeated_animation(true);
-        let capture = |elements| {
+        let capture = |bytes_limit| {
             capture_source_with_budget(
                 Path::new("projected.gltf"),
                 &bytes,
                 CapturePolicy::ClipTracks,
-                &mut crate::DecodedAccessorBudget::new(elements, 64),
+                &mut crate::DecodedAccessorBudget::new(bytes_limit),
             )
         };
-        let loaded = capture(8).expect("discarded sparse geometry spends no budget");
+        let loaded = capture(64).expect("discarded sparse geometry spends no budget");
         assert!(loaded.clip_track_projection_required);
         assert_eq!(loaded.loaded_source.document().clips[0].tracks.len(), 2);
-        assert!(matches!(capture(7), Err(GltfScalePreflightError::Load(
+        assert!(matches!(capture(63), Err(GltfScalePreflightError::Load(
             LoadError::DecodedAccessorBudget { accessor: 1, location, .. }
         )) if location == "animation 0 channel 1 node 1 output"));
     }

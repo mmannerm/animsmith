@@ -1,7 +1,7 @@
 use super::*;
 use crate::{LoadedSource, load_source_bytes_with_budget, read_external_file};
 use base64::Engine as _;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -13,13 +13,13 @@ fn encoded(mut root: Value, bytes: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&root).unwrap()
 }
 
-fn load(bytes: &[u8], elements: usize, storage: usize) -> Result<LoadedSource, LoadError> {
+fn load(bytes: &[u8], storage: usize) -> Result<LoadedSource, LoadError> {
     load_source_bytes_with_budget(
         Path::new("budget.gltf"),
         bytes,
         None,
         read_external_file,
-        &mut DecodedAccessorBudget::new(elements, storage),
+        &mut DecodedAccessorBudget::new(storage),
     )
 }
 
@@ -56,8 +56,8 @@ fn sparse_zeros_and_repeated_uninstanced_primitives_count_each_array() {
         ]}, {"primitives":[{"mode":1,"attributes":{"POSITION":1}}]}]
     });
     let source = encoded(root, &bytes);
-    refused(load(&source, 5, 72), 0, "mesh 0 primitive 1 POSITION");
-    let loaded = load(&source, 6, 72).unwrap();
+    refused(load(&source, 71), 0, "mesh 0 primitive 1 POSITION");
+    let loaded = load(&source, 72).unwrap();
     assert!(loaded.document().assets.instances.is_empty());
     let meshes = &loaded.document().assets.meshes;
     assert_eq!(
@@ -101,9 +101,9 @@ fn decoded_storage_counts_widened_attributes_and_indices() {
     );
     // 108 source bytes expand to 180 decoded bytes. Both failures are in
     // later arrays, so neither per-accessor nor source-byte accounting suffices.
-    refused(load(&source, 18, 167), 4, "mesh 0 primitive 0 WEIGHTS_0");
-    refused(load(&source, 18, 179), 5, "mesh 0 primitive 0 indices");
-    let loaded = load(&source, 18, 180).unwrap();
+    refused(load(&source, 167), 4, "mesh 0 primitive 0 WEIGHTS_0");
+    refused(load(&source, 179), 5, "mesh 0 primitive 0 indices");
+    let loaded = load(&source, 180).unwrap();
     let primitive = &loaded.document().assets.meshes[0].primitives[0];
     assert_eq!(primitive.uvs, [[0.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
     assert_eq!(primitive.joints, [[0, 1, 2, 3]; 3]);
@@ -149,12 +149,8 @@ pub(crate) fn repeated_animation(project_geometry: bool) -> Vec<u8> {
 #[test]
 fn channels_sharing_a_sampler_charge_every_timeline_and_output() {
     let source = repeated_animation(false);
-    refused(
-        load(&source, 7, 64),
-        1,
-        "animation 0 channel 1 node 1 output",
-    );
-    let loaded = load(&source, 8, 64).unwrap();
+    refused(load(&source, 63), 1, "animation 0 channel 1 node 1 output");
+    let loaded = load(&source, 64).unwrap();
     let tracks = &loaded.document().clips[0].tracks;
     assert_eq!(tracks.len(), 2);
     for track in tracks {
@@ -190,13 +186,13 @@ fn source_skins_and_each_instance_copy_share_one_budget() {
         }),
         &bytes,
     );
-    refused(load(&source, 3, 548), 0, "skin 1 inverseBindMatrices");
+    refused(load(&source, 255), 0, "skin 1 inverseBindMatrices");
     refused(
-        load(&source, 10, 548),
+        load(&source, 547),
         0,
         "node 3 skin 1 inverseBindMatrices copy",
     );
-    let loaded = load(&source, 11, 548).unwrap();
+    let loaded = load(&source, 548).unwrap();
     let expected = [Mat4::IDENTITY, Mat4::from_translation(Vec3::X)];
     for skin in &loaded.document().assets.source_skeleton.skins {
         assert_eq!(skin.inverse_bind_accessor.matrices, expected);
@@ -211,19 +207,59 @@ fn source_skins_and_each_instance_copy_share_one_budget() {
 }
 
 #[test]
+fn default_admits_exactly_256_mib_then_refuses_one_more_decoded_value() {
+    // Admission only: no reader or allocation. Literal f32 counts pin the
+    // documented 256 MiB policy independently of the implementation constant.
+    let mut budget = DecodedAccessorBudget::default();
+    budget.admit::<f32>(0, 67_108_864, "full").unwrap();
+    assert!(budget.admit::<f32>(0, 1, "one more value").is_err());
+}
+
+#[test]
 fn arithmetic_overflow_is_refused_without_allocating() {
-    let mut budget = DecodedAccessorBudget::new(usize::MAX, usize::MAX);
-    assert!(budget.admit::<[u8; 2]>(0, usize::MAX, "overflow").is_err());
+    let mut budget = DecodedAccessorBudget::new(usize::MAX);
     assert!(
         budget
-            .admit::<u8>(0, isize::MAX as usize + 1, "allocation")
+            .admit::<u32>(0, usize::MAX, "multiply overflow")
             .is_err()
     );
-    budget.admit::<u8>(0, 1, "small").unwrap();
-    assert!(
-        budget
-            .admit::<u8>(0, usize::MAX, "aggregate overflow")
-            .is_err()
+    let largest = isize::MAX as usize / 4;
+    assert!(budget.admit::<u32>(0, largest + 1, "allocation").is_err());
+    budget.admit::<u32>(0, largest, "first array").unwrap();
+    budget.admit::<u32>(0, largest, "second array").unwrap();
+    assert!(budget.admit::<u32>(0, 2, "aggregate overflow").is_err());
+}
+
+#[test]
+fn quaternion_outputs_charge_four_components() {
+    let mut bytes = Vec::new();
+    for value in [0.0_f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0] {
+        bytes.extend(value.to_le_bytes());
+    }
+    let source = encoded(
+        json!({
+            "bufferViews":[{"buffer":0,"byteLength":8},{"buffer":0,"byteOffset":8,"byteLength":32}],
+            "accessors":[
+                {"bufferView":0,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},
+                {"bufferView":1,"componentType":5126,"count":2,"type":"VEC4"}
+            ],
+            "nodes":[{}],
+            "animations":[{"samplers":[{"input":0,"output":1}],"channels":[
+                {"sampler":0,"target":{"node":0,"path":"rotation"}}
+            ]}]
+        }),
+        &bytes,
+    );
+    // Eight timeline bytes plus two sixteen-byte quaternions.
+    refused(load(&source, 39), 1, "animation 0 channel 0 node 0 output");
+    let loaded = load(&source, 40).unwrap();
+    let animsmith_core::TrackValues::Quats(values) = &loaded.document().clips[0].tracks[0].values
+    else {
+        panic!("rotation must retain quaternion values");
+    };
+    assert_eq!(
+        values,
+        &[Quat::IDENTITY, Quat::from_xyzw(0.0, 0.0, 1.0, 0.0)]
     );
 }
 
@@ -238,11 +274,11 @@ fn unavailable_inverse_binds_do_not_spend_budget() {
         }),
         &[0_u8; 68],
     );
-    refused(load(&source, 1, 64), 0, "skin 0 inverseBindMatrices");
+    refused(load(&source, 64), 0, "skin 0 inverseBindMatrices");
     let mut truncated: Value = serde_json::from_slice(&source).unwrap();
     // Keep the declared lengths, but make the actual sparse value unavailable.
     truncated["buffers"][0]["uri"] = json!("data:application/octet-stream;base64,AAAAAA==");
-    let loaded = load(&serde_json::to_vec(&truncated).unwrap(), 0, 0).unwrap();
+    let loaded = load(&serde_json::to_vec(&truncated).unwrap(), 0).unwrap();
     let bind = &loaded.document().assets.source_skeleton.skins[0].inverse_bind_accessor;
     assert_eq!(
         bind.status,

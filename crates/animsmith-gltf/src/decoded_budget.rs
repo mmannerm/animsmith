@@ -2,30 +2,27 @@
 
 use crate::LoadError;
 
-/// Engineering safety ceilings, not format limits or a bound on total RSS.
-/// Counting elements also bounds sparse iteration when most values are implicit.
-const MAX_ELEMENTS: usize = 16_777_216;
+/// Provisional engineering ceiling, not a format limit or total RSS bound.
+/// Every decoded element type used here is at least four bytes, so this also
+/// bounds aggregate iteration to 67,108,864 elements (below sparse u32 counters).
+/// The ceiling has not been validated against licensed production assets.
 const MAX_BYTES: usize = 256 * 1024 * 1024;
 
 pub(crate) struct DecodedAccessorBudget {
-    elements: usize,
     bytes: usize,
-    max_elements: usize,
     max_bytes: usize,
 }
 
 impl Default for DecodedAccessorBudget {
     fn default() -> Self {
-        Self::new(MAX_ELEMENTS, MAX_BYTES)
+        Self::new(MAX_BYTES)
     }
 }
 
 impl DecodedAccessorBudget {
-    pub(crate) fn new(max_elements: usize, max_bytes: usize) -> Self {
+    pub(crate) fn new(max_bytes: usize) -> Self {
         Self {
-            elements: 0,
             bytes: 0,
-            max_elements,
             max_bytes,
         }
     }
@@ -41,15 +38,11 @@ impl DecodedAccessorBudget {
         location: &str,
     ) -> Result<(), LoadError> {
         let bytes = count.checked_mul(std::mem::size_of::<T>());
-        let elements = self.elements.checked_add(count);
         let total_bytes = bytes.and_then(|bytes| self.bytes.checked_add(bytes));
-        match (elements, total_bytes, bytes) {
-            (Some(elements), Some(total), Some(bytes))
-                if elements <= self.max_elements
-                    && total <= self.max_bytes
-                    && bytes <= isize::MAX as usize =>
+        match (total_bytes, bytes) {
+            (Some(total), Some(bytes))
+                if total <= self.max_bytes && bytes <= isize::MAX as usize =>
             {
-                self.elements = elements;
                 self.bytes = total;
                 Ok(())
             }
@@ -57,11 +50,9 @@ impl DecodedAccessorBudget {
                 accessor,
                 location: location.to_owned(),
                 problem: format!(
-                    "requested {count} elements of {} decoded bytes each after {} elements / {} bytes; limits {} elements / {} bytes (checked allocation arithmetic)",
+                    "requested {count} elements of {} decoded bytes each after {} bytes; limit {} bytes (checked allocation arithmetic)",
                     std::mem::size_of::<T>(),
-                    self.elements,
                     self.bytes,
-                    self.max_elements,
                     self.max_bytes,
                 ),
             }),

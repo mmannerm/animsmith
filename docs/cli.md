@@ -59,17 +59,19 @@ for a `--no-default-features` build: `fbx` means the binary reads FBX input,
 stamps on itself, so treat it as identification rather than as proof — run the
 command you depend on when a build's capabilities have to be established.
 
-## glTF decoded-array limits
+## glTF decoded-array limit
 
-A glTF/GLB load is limited to 16,777,216 decoded accessor elements and 256 MiB
-of decoded array storage across the load. These fixed safety ceilings count
-sparse implicit values, repeated accessor materializations, widened output
-types, and per-instance inverse-bind copies. They do not limit total process
-memory, and there is no CLI setting to raise them. Small valid sparse accessors
+A glTF/GLB load is limited to 256 MiB of decoded array storage across the load.
+This provisional engineering ceiling counts sparse implicit values, repeated
+accessor materializations, widened output
+types, and per-instance inverse-bind copies. It also bounds aggregate iteration
+because each decoded element occupies at least four bytes. The ceiling has not
+been validated against licensed production assets and does not limit total
+process memory. There is no CLI setting to raise it. Small valid sparse accessors
 remain supported; unused declarations do not spend this budget.
 
 An ordinary command reports the source slot and accessor and exits 2 when a
-load exceeds either ceiling. Producer preflights retain their existing source
+load exceeds the ceiling. Producer preflights retain their existing source
 refusal behavior. Collection loading retains its versioned coarse
 `malformed_input` unavailable reason for non-I/O load failures, including this
 resource refusal; no new wire reason is introduced. See the
