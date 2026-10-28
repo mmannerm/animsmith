@@ -11986,10 +11986,11 @@ mod report_current_engine {
         let data = payload(&html, "report-data");
         assert!(
             stdout(&output).contains(&format!(
-                "({} clip(s),",
-                data["clips"].as_array().unwrap().len()
+                "({} clip(s), {} finding(s),",
+                data["clips"].as_array().unwrap().len(),
+                data["findings"].as_array().unwrap().len(),
             )),
-            "summary must describe emitted clips: {}",
+            "summary must describe emitted clips and findings: {}",
             stdout(&output)
         );
         data
@@ -12027,7 +12028,12 @@ mod report_current_engine {
             serde_json::from_slice(&std::fs::read(fixture("rig.gltf")).unwrap()).unwrap();
         for (case, selector, diagnostic, evidence_only) in [
             ("missing", "absent", "was not found", false),
-            ("source-only", "absent", "was not found", true),
+            (
+                "source-only",
+                "walk",
+                "has no available metric sample grid",
+                true,
+            ),
         ] {
             if case == "source-only" {
                 write_source_animation_inventory_gltf(&input, &[Some("walk")]);
@@ -12094,7 +12100,23 @@ mod report_current_engine {
             "name": "unsampled", "channels": [], "samplers": []
         }));
         write_json(&before, &source);
+        let config = dir.path().join("counts.toml");
+        std::fs::write(
+            &config,
+            "[clips.other]\nduration_s = { value = 99.0, tolerance = 0.0 }\n",
+        )
+        .unwrap();
+        let selected = report(&before, &config, &["--clip", "walk"]);
+        assert!(
+            selected["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|finding| finding["clip"] != "other")
+        );
         let ordinary = animsmith()
+            .arg("--config")
+            .arg(&config)
             .arg("report")
             .arg(&before)
             .arg("-o")
@@ -12115,7 +12137,20 @@ mod report_current_engine {
             .map(|clip| clip["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, ["walk", "other", "third"]);
+        assert!(
+            data["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["clip"] == "other")
+        );
+        assert!(
+            data["findings"].as_array().unwrap().len()
+                > selected["findings"].as_array().unwrap().len()
+        );
         let output = animsmith()
+            .arg("--config")
+            .arg(&config)
             .arg("report")
             .arg(&before)
             .arg("--compare-after")
@@ -12143,6 +12178,22 @@ mod report_current_engine {
         );
         assert_eq!(data["correspondence"]["before_clip"], "walk");
         assert_eq!(data["correspondence"]["after_clip"], "walk");
+        let before_findings = data["before"]["findings"].as_array().unwrap();
+        let after_findings = data["after"]["findings"].as_array().unwrap();
+        assert!(
+            before_findings
+                .iter()
+                .chain(after_findings)
+                .all(|finding| finding["clip"] != "other")
+        );
+        assert!(
+            stdout(&output).contains(&format!(
+                "(2 clip(s), {} finding(s),",
+                before_findings.len() + after_findings.len()
+            )),
+            "{}",
+            stdout(&output)
+        );
     }
 
     #[test]

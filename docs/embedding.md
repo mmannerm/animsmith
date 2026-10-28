@@ -225,9 +225,9 @@ cargo run -p animsmith --example embed
    with the same source/evidence/configuration association and explicit clip
    names. Both renderers return `Result<RenderedReport, ReportError>`; use
    `.html` for the document and `.clip_count` for the emitted ordinary clips
-   or the two selected comparison sides. Explicit ordinary selectors must
-   resolve uniquely; omit the selector to include source-only diagnostics. Source/grids
-   pointer identity, primary evidence identity and any profiled dependency
+   or the two selected comparison sides; `.finding_count` counts entries in the
+   filtered finding lists. Explicit ordinary selectors must resolve uniquely to a clip with an available metric grid; omit the selector
+   to include source-only diagnostics. Source/grids pointer identity, primary evidence identity and any profiled dependency
    closure must agree; the caller also establishes the association with roles
    and configuration, including profile-free evidence. The configuration lets
    the report draw declared gait groups even when they emit no finding.
@@ -245,9 +245,8 @@ exact profile, override, and unresolved-role contracts.
 The current report API intentionally replaces the earlier independent `checks`
 and `prediction_provenance` inputs with validated V19 `evidence` plus `source`.
 Both renderers now return `RenderedReport` inside a `Result` instead of a
-plain HTML string; read `.html` and `.clip_count` explicitly. The shared error
-type is `ReportError`
-(formerly `ComparisonError`). Update these callers together; no historical
+plain HTML string; read `.html`, `.clip_count` and `.finding_count` explicitly.
+The shared error type is `ReportError` (formerly `ComparisonError`). Update these callers together; no historical
 attachment conversion or compatibility alias is provided.
 
 ## Compose the outputs you need

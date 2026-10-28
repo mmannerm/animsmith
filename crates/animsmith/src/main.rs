@@ -875,7 +875,6 @@ fn main() -> ExitCode {
 #[cfg(feature = "report")]
 fn write_report(
     output: &Path,
-    finding_count: usize,
     report: animsmith_report::RenderedReport,
 ) -> Result<ExitCode, String> {
     std::fs::write(output, &report.html)
@@ -883,7 +882,7 @@ fn write_report(
     publish::emit_text(&render::render_report_written(
         output,
         report.clip_count,
-        finding_count,
+        report.finding_count,
         report.html.len(),
     ));
     Ok(ExitCode::SUCCESS)
@@ -2012,8 +2011,6 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 Severity::Error,
                 &BTreeSet::new(),
             )?;
-            let evaluations = analysis.report.checks();
-            let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
             let report = match comparison_after {
                 None => animsmith_report::render(animsmith_report::ReportInputs {
                     source: &loaded.source,
@@ -2061,13 +2058,6 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         report_options,
                     )
                     .map_err(|error| error.to_string())?;
-                    let finding_count = finding_count
-                        + after_analysis
-                            .report
-                            .checks()
-                            .iter()
-                            .map(|check| check.findings().len())
-                            .sum::<usize>();
                     let mut comparison_inputs = vec![
                         ("before input", file.as_path()),
                         ("after input", after_path.as_path()),
@@ -2079,13 +2069,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     publish::emit_text(&render::render_report_written(
                         &output,
                         report.clip_count,
-                        finding_count,
+                        report.finding_count,
                         report.html.len(),
                     ));
                     return Ok(ExitCode::SUCCESS);
                 }
             };
-            write_report(&output, finding_count, report)
+            write_report(&output, report)
         }
         Cmd::Transform {
             input,

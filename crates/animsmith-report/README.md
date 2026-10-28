@@ -36,10 +36,11 @@ Malformed clips omit their own blend capability. This added-data budget does
 not bound all report memory.
 Both renderers return `Result<RenderedReport, ReportError>`: `.html` is the
 self-contained document and `.clip_count` is its emitted clip count (two
-selected sides for a comparison). They check source/evidence identity and
-presentation bounds before rendering. An explicit ordinary clip selector
-must resolve uniquely; omit it to retain source-only diagnostics even when
-no normalized clip has a metric grid.
+selected sides for a comparison); `.finding_count` counts the filtered
+finding lists. They check source/evidence identity and presentation bounds
+before rendering. An explicit ordinary clip selector
+must resolve uniquely to a clip with an available metric grid; omit it to
+retain source-only diagnostics even when no normalized clip has a metric grid.
 See the [blend presentation contract](https://github.com/mmannerm/animsmith/blob/main/docs/output.md#html-report-source-poses-and-illustrative-blending)
 for the exact math, work bounds, omission rules and camera limitations.
 

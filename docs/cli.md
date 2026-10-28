@@ -213,10 +213,12 @@ of them is per bone.
 authored glTF names remain selectable by their distinct display names. The
 comparison report retains its stricter authored-name correspondence checks.
 An ordinary selector must uniquely name a normalized clip. A missing or ambiguous
-name exits 2 without writing the report or replacing an existing output.
+name, or a selected clip without an available sample grid, exits 2 without
+writing the report or replacing an existing output.
 Omit the selector to retain source-only diagnostics even when no normalized
 clip can be shown. The success summary counts emitted clip entries; a
-comparison counts its two selected source clips.
+comparison counts its two selected source clips. Finding counts describe the
+filtered finding lists in the report; whole-input engine evidence stays intact.
 
 `--clip NAME` and the gait-group figure meet deliberately. The clip filter
 scopes the document to one clip: its pose grid, its findings and its own two

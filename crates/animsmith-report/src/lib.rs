@@ -268,16 +268,20 @@ pub struct ComparisonSide<'a> {
     pub clip: &'a str,
 }
 
-/// Self-contained HTML and the number of source clips actually included.
+/// Self-contained HTML and counts of the emitted clip and finding entries.
 #[derive(Debug)]
 pub struct RenderedReport {
     /// Complete HTML document, ready to store or serve.
     pub html: String,
     /// Emitted ordinary clip entries, or the two selected comparison sides.
     ///
-    /// Ordinary clips without an available metric grid are not included.
+    /// Without a selector, clips without an available metric grid are omitted.
     /// Whole-input engine evidence may describe additional source clips.
     pub clip_count: usize,
+    /// Entries in the report's filtered finding lists, summed across comparison sides.
+    ///
+    /// Whole-input engine attachments may retain additional unselected findings.
+    pub finding_count: usize,
 }
 
 /// Refusal returned before report HTML is produced.
@@ -549,7 +553,7 @@ pub fn render_comparison(
         })?;
 
     let bones = comparison_bones(before_doc);
-    let before_side = comparison_side_json(
+    let (before_side, before_finding_count) = comparison_side_json(
         before,
         before_clip.name.as_str(),
         before_clip.duration_s,
@@ -557,7 +561,7 @@ pub fn render_comparison(
         "before",
         options,
     )?;
-    let after_side = comparison_side_json(
+    let (after_side, after_finding_count) = comparison_side_json(
         after,
         after_clip.name.as_str(),
         after_clip.duration_s,
@@ -623,6 +627,7 @@ pub fn render_comparison(
     };
     Ok(RenderedReport {
         clip_count: 2,
+        finding_count: before_finding_count + after_finding_count,
         html: format!(
             "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
@@ -1080,7 +1085,7 @@ fn comparison_side_json(
     grid: &PoseGrid,
     side_name: &'static str,
     options: ReportOptions,
-) -> Result<Value, ReportError> {
+) -> Result<(Value, usize), ReportError> {
     let frames = grid.frame_count();
     let bones = side.grids.document().skeleton.bones.len();
     let mut positions = Vec::new();
@@ -1146,17 +1151,21 @@ fn comparison_side_json(
     // comparison of the same clip. The viewer supplies only the measured
     // numbers around them.
     let contract = clip_contract(side.evidence.checks(), clip_name);
-    Ok(json!({
-        "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
-        "dependency_closure_identity": closure_identity,
-        "guidance": {
-            "root_path": contract.root_path_guidance(SHARED_PATH_MARKS),
-            "gait": contract.gait_guidance(true),
-        },
-        "clip": clip,
-        "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
-        "findings":findings,"gaps":gaps,"engine_evidence":engine,
-    }))
+    let finding_count = anchored_findings.len();
+    Ok((
+        json!({
+            "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
+            "dependency_closure_identity": closure_identity,
+            "guidance": {
+                "root_path": contract.root_path_guidance(SHARED_PATH_MARKS),
+                "gait": contract.gait_guidance(true),
+            },
+            "clip": clip,
+            "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
+            "findings":findings,"gaps":gaps,"engine_evidence":engine,
+        }),
+        finding_count,
+    ))
 }
 
 /// The sampled pose grid as base64, or nothing at all for an evidence-only
@@ -1654,8 +1663,9 @@ impl<'a> ReportInputs<'a> {
 /// even when no normalized clip has an available grid.
 ///
 /// # Errors
-/// Refuses absent or ambiguous explicit clip names before rendering, grids
-/// from another source, evidence with a different primary identity
+/// Refuses absent or ambiguous explicit clip names, an explicitly selected
+/// clip without a metric grid, grids from another source, evidence with a
+/// different primary identity
 /// or profiled dependency closure, and engine evidence above the presentation
 /// row/text bounds. Callers must supply the roles and configuration used for
 /// analysis; profile-free evidence does not independently bind those values.
@@ -1714,6 +1724,12 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<RenderedReport, ReportError> {
             preflight.include(clip);
         }
         let Some(grid) = grids.grid(clip_index) else {
+            if selected_clip.is_some() {
+                return Err(ReportError::UnavailableSampleGrid {
+                    side: "input",
+                    clip: clip.name.clone(),
+                });
+            }
             continue;
         };
         #[cfg(test)]
@@ -1813,6 +1829,7 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<RenderedReport, ReportError> {
         .collect();
 
     let clip_count = clips_json.len();
+    let finding_count = findings_json.len();
     let mut data = json!({
         "file": doc.source.path,
         "profile": roles.profile,
@@ -1875,6 +1892,7 @@ pub fn render(inputs: ReportInputs<'_>) -> Result<RenderedReport, ReportError> {
 
     Ok(RenderedReport {
         clip_count,
+        finding_count,
         html: format!(
             "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\

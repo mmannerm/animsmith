@@ -6184,7 +6184,7 @@ fn ordinary_report_counts_original_engine_text_before_rendering() {
 }
 
 #[test]
-fn emitted_clip_count_tracks_selection_and_omits_unavailable_grids() {
+fn emitted_counts_track_selection_and_omit_unavailable_grids() {
     let mut doc = animsmith_gltf::load(&fixture()).unwrap();
     let mut other = doc.clips[0].clone();
     other.name = "other".into();
@@ -6195,11 +6195,17 @@ fn emitted_clip_count_tracks_selection_and_omits_unavailable_grids() {
     let source = synthetic_source(doc);
     let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::default();
-    let evidence = evidence_for(&source, &roles, &[], None);
+    let checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "walk-only").clip("walk"),
+        Finding::new("fixture-check", Severity::Warning, "other-only").clip("other"),
+        Finding::new("fixture-check", Severity::Warning, "global"),
+    ]);
+    let evidence = evidence_for(&source, &roles, &checks, None);
     let config = no_groups();
     let inputs = animsmith_report::ReportInputs::new(&grids, &roles, &source, &evidence, &config);
     let all = animsmith_report::render(inputs).unwrap();
     assert_eq!(all.clip_count, 3);
+    assert_eq!(all.finding_count, 3);
     let names: Vec<_> = report_data(&all.html)["clips"]
         .as_array()
         .unwrap()
@@ -6215,17 +6221,25 @@ fn emitted_clip_count_tracks_selection_and_omits_unavailable_grids() {
     .unwrap();
     assert_eq!(selected.clip_count, 1);
     assert_eq!(report_data(&selected.html)["clips"][0]["name"], "other");
+    assert_eq!(selected.finding_count, 2);
+    let messages: Vec<_> = report_data(&selected.html)["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| finding["message"].clone())
+        .collect();
+    assert_eq!(messages, ["other-only", "global"]);
     let unsampled = animsmith_report::render(animsmith_report::ReportInputs {
         clip: Some("unsampled"),
         ..inputs
     })
-    .unwrap();
-    assert_eq!(unsampled.clip_count, 0);
-    assert!(
-        report_data(&unsampled.html)["clips"]
-            .as_array()
-            .unwrap()
-            .is_empty()
+    .unwrap_err();
+    assert_eq!(
+        unsampled,
+        animsmith_report::ReportError::UnavailableSampleGrid {
+            side: "input",
+            clip: "unsampled".into()
+        }
     );
 }
 
@@ -6250,4 +6264,56 @@ fn ordinary_explicit_clip_name_rejects_duplicates() {
             clip: "walk".into()
         }
     );
+}
+
+#[test]
+fn comparison_finding_count_sums_only_the_two_selected_lists() {
+    let before = animsmith_gltf::load_source(&fixture()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let after_path = directory.path().join("after.gltf");
+    let mut after_json: Value = serde_json::from_slice(&std::fs::read(fixture()).unwrap()).unwrap();
+    after_json["asset"]["generator"] = serde_json::json!("distinct comparison count fixture");
+    std::fs::write(&after_path, serde_json::to_vec(&after_json).unwrap()).unwrap();
+    let after = animsmith_gltf::load_source(&after_path).unwrap();
+    let before_grids = MetricGrids::new(before.document());
+    let after_grids = MetricGrids::new(after.document());
+    let roles = ResolvedRoles::default();
+    let config = no_groups();
+    let before_checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "before selected").clip("walk"),
+        Finding::new("fixture-check", Severity::Warning, "before omitted").clip("idle"),
+        Finding::new("fixture-check", Severity::Warning, "before global"),
+    ]);
+    let after_checks = evaluations(vec![
+        Finding::new("fixture-check", Severity::Warning, "after selected").clip("walk"),
+        Finding::new("fixture-check", Severity::Warning, "after omitted").clip("idle"),
+    ]);
+    let report = animsmith_report::render_comparison(
+        comparison_side!(
+            &before,
+            &before_grids,
+            &roles,
+            &before_checks,
+            &config,
+            "walk"
+        ),
+        comparison_side!(&after, &after_grids, &roles, &after_checks, &config, "walk"),
+        evidence_only(),
+    )
+    .unwrap();
+    assert_eq!(report.clip_count, 2);
+    assert_eq!(report.finding_count, 3);
+    let data = embedded_json(&report.html, "comparison-report-data");
+    for (side, expected) in [
+        ("before", vec!["before selected", "before global"]),
+        ("after", vec!["after selected"]),
+    ] {
+        let messages: Vec<_> = data[side]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| finding["message"].as_str().unwrap())
+            .collect();
+        assert_eq!(messages, expected);
+    }
 }

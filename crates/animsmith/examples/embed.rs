@@ -135,8 +135,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &grids, &roles, &source, &evidence, &config,
         ))?;
         println!(
-            "HTML report: {} clips, {} bytes",
+            "HTML report: {} clips, {} findings, {} bytes",
             report.clip_count,
+            report.finding_count,
             report.html.len()
         );
     }
