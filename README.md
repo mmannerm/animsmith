@@ -214,6 +214,8 @@ the default development branch.
 
 ## Contributing
 
+For crate ownership and data flow, see [Current architecture](https://github.com/mmannerm/animsmith/blob/main/docs/architecture.md).
+
 See the
 [contributor guide](https://github.com/mmannerm/animsmith/blob/main/CONTRIBUTING.md)
 for the contribution flow and the

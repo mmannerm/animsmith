@@ -133,7 +133,7 @@ This crate has no public feature flags. The workspace MSRV is Rust 1.88.
 ## More Detail
 
 - [API reference on docs.rs](https://docs.rs/animsmith-engine)
-- [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
+- [Current architecture](https://github.com/mmannerm/animsmith/blob/main/docs/architecture.md)
 
 ## License
 

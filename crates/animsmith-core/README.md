@@ -222,7 +222,7 @@ and Appendix D of the
 - [API reference on docs.rs](https://docs.rs/animsmith-core)
 - [Embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 - [Raw asset to game-ready pipeline scenarios](https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md)
-- [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
+- [Current architecture](https://github.com/mmannerm/animsmith/blob/main/docs/architecture.md)
 - [CLI crate and examples](https://github.com/mmannerm/animsmith/tree/main/crates/animsmith)
 
 ## License
