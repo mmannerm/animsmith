@@ -233,6 +233,20 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   *Semantic* defects — NaN times or values, non-unit quaternions,
   hemisphere flips, seam pops — load fine and are judged by the checks;
   sampling is panic-free under them by construction.
+- **Decoded glTF accessor admission** uses one private budget per load,
+  including the narrower clip-track capability projection. The initial safety
+  ceiling of 256 MiB of decoded array storage bounds aggregate widened/repeated
+  materializations and sparse implicit-value walks: every decoded element is at
+  least four bytes, so at most 67,108,864 elements can be walked. A separate
+  element ceiling would refuse some inputs already within the byte budget.
+  Checked admission precedes iteration, collection and per-instance clones;
+  optional readers may first establish byte availability in constant space.
+  Unavailable inverse binds retain their evidence status, and unused declarations
+  spend no budget. Source-skeleton matrices are decoded once per skin, reused
+  for bone bindings in source order, and charged again for each instance copy.
+  This is a provisional engineering resource policy, not a format limit or
+  total-process memory bound; licensed production assets were unavailable to
+  validate its headroom. See the [loader contract](crates/animsmith-gltf/README.md).
 - `fix` intentionally requires either `-o/--output` or `--in-place` for
   writes; `--dry-run` is the check mode — it inspects only and exits `1`
   when repairs are pending, mirroring `lint`. Repairs are addressed by
