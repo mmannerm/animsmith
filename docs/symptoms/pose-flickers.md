@@ -16,8 +16,9 @@ Rotation is stored as quaternions, and engines are stricter about the maths
 than exporters are. A key that is not unit length skews skinning, two adjacent
 keys on opposite hemispheres make an engine interpolate the long way round,
 and one non-finite float poisons every pose that interpolates through it.
-Nothing here is an artistic decision — it is the representation of the
-rotation, which is why these are the checks that need no configuration at all.
+These checks need no configuration. Correcting a cubic curve still requires
+an authoring decision because equivalent endpoint rotations can enclose
+different motion.
 
 ## What AnimSmith measures
 
@@ -98,9 +99,11 @@ are what this comparison has to show.
 
 ## What to do
 
-1. **Non-unit or flipped rotation keys.** Run `animsmith fix`. The repair is
-   byte-surgical: meshes, skins, materials and textures pass through
+1. **Non-unit or flipped LINEAR/STEP rotation keys.** Run `animsmith fix`.
+   The repair is byte-surgical: meshes, skins, materials and textures pass through
    byte-identical, and `animsmith diff` reports no measurement moved.
+   CUBICSPLINE tracks needing repair are skipped to preserve their authored
+   curves; correct those in the DCC and re-export.
 2. **A NaN or Inf anywhere.** There is no safe automatic repair for a value
    that carries no information. Find the step that produced it — a divide in a
    constraint, a bad bake, a corrupted transfer — and re-export.
@@ -109,8 +112,9 @@ are what this comparison has to show.
    an unauthored pose for the gap.
 
 Who fixes it: AnimSmith repairs the representation, and the DCC owns the data.
-`fix` closes the two quaternion classes; a non-finite value, a broken timeline
-or a bad bake goes back to the export that produced it. The gate closes when
+`fix` handles the two quaternion classes on LINEAR/STEP tracks. Cubic curves,
+non-finite values, broken timelines and bad bakes go back to the export that
+produced them. The gate closes when
 the repaired copy re-lints clean and its `diff` against the original shows no
 measurement moved.
 
@@ -140,16 +144,17 @@ about the math even when exporters are not.
 - **Non-unit quaternions skew skinning.** Rotation keys must be unit
   quaternions. Engines renormalize inconsistently (or not at all); a
   non-unit key skews blend weights and skinning. The `quat-norm` check
-  catches it, and `animsmith fix` repairs it losslessly — scaling a
-  finite, non-zero quaternion back to unit length preserves the
+  catches it, and `animsmith fix` repairs LINEAR/STEP keys losslessly — scaling
+  a finite, non-zero quaternion back to unit length preserves the
   rotation it represents.
 - **Hemisphere flips spin the long way around.** A quaternion and its
   negation represent the same rotation, but interpolation between them
   does not: adjacent keys on opposite hemispheres (`dot < 0`) make
   engines that slerp without neighborhood correction take the long way
   — a visible 360°-minus-θ spin between two keys. The `quat-flip`
-  check catches it; `animsmith fix` repairs it losslessly by negating
-  keys until each track is hemisphere-consistent.
+  check catches it; `animsmith fix` repairs LINEAR/STEP tracks losslessly by
+  negating keys until each track is hemisphere-consistent. Cubic tracks are
+  skipped because negating keys and their tangents can change interior motion.
 - **Key times must move forward.** glTF requires strictly increasing
   key times, and engines misbehave without them. A first key that
   starts late is its own hazard: the engine clamp-holds an unauthored

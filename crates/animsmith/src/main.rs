@@ -226,7 +226,7 @@ enum Cmd {
     },
     /// Repair safe mechanical glTF/GLB defects.
     #[command(
-        long_about = "Repair mechanical clip defects in place, byte-surgically: only the offending animation bytes change; meshes, skins, materials, and textures pass through untouched. Currently fixes non-unit quaternions (the `quat-norm` check) and quaternion hemisphere flips (the `quat-flip` check) on glTF/GLB inputs."
+        long_about = "Repair mechanical clip defects in place, byte-surgically: only the offending animation bytes change; meshes, skins, materials, and textures pass through untouched. Currently fixes non-unit quaternions (the `quat-norm` check) and quaternion hemisphere flips (the `quat-flip` check) on LINEAR/STEP glTF/GLB tracks. CUBICSPLINE rotation tracks needing repair are skipped to preserve the authored curve."
     )]
     Fix {
         /// Input .glb or .gltf file.
