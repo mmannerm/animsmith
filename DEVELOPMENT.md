@@ -116,10 +116,12 @@ that same line.
 The animation-pack report validator also builds its Markdown parser helper in
 `target/no-default-features`, explicitly overriding an ambient
 `CARGO_TARGET_DIR`. It runs the executable reported by Cargo's compiler-artifact
-JSON. The validator tests exercise that lookup in a fresh process and check
-that the configured default CLI retains its bytes and glTF, FBX, and report
-capabilities; this Python invocation is checked by behavior, not the shell
-command scan above.
+JSON. A fresh-process test proves this ownership by checking the returned
+executable path while a different ambient target directory is set. Separate
+byte and capability probes confirm that the configured default CLI stays
+unchanged and admits glTF, FBX, and report commands. These tests cover the
+Python invocation through real execution; the shell command scan above does
+not inspect it.
 
 In that build, glTF inspect, measure, lint, transform, fix, scale, diff,
 `generate addressability`, and `collection transform-foot-cycle` stay
