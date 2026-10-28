@@ -203,9 +203,12 @@ fn fix_quat_norm_preserves_orientation_across_finite_f32_magnitudes() {
     // Squaring the largest finite component overflows f32; squaring the
     // smallest positive subnormal underflows it. Both describe a 90-degree
     // turn about Z, independently of their magnitude.
-    let values = [f32::MAX, f32::from_bits(1)]
+    let values = [f32::MAX, 1e20, f32::from_bits(1)]
         .map(|magnitude| Quat::from_xyzw(0.0, 0.0, magnitude, magnitude));
-    animsmith_gltf::write::write(&doc_with_quats(values.to_vec()), &dirty).unwrap();
+    let mut doc = doc_with_quats(values.to_vec());
+    doc.clips[0].tracks[0].times = vec![0.0, 0.5, 1.0];
+    animsmith_gltf::write::write(&doc, &dirty).unwrap();
+    animsmith_gltf::load(&dirty).expect("fixture has a valid animation layout");
     let before = std::fs::read(&dirty).unwrap();
     let gltf = gltf::Gltf::from_slice(&before).unwrap();
     let accessor = gltf
@@ -219,9 +222,9 @@ fn fix_quat_norm_preserves_orientation_across_finite_f32_magnitudes() {
     let view = accessor.view().unwrap();
     let bin_start = 28 + u32::from_le_bytes(before[12..16].try_into().unwrap()) as usize;
     let rotation = bin_start + view.offset() + accessor.offset();
-    assert_eq!(accessor.count(), 2);
+    assert_eq!(accessor.count(), 3);
     assert_eq!(view.stride().unwrap_or(16), 16);
-    let source_values = (0..2)
+    let source_values = (0..3)
         .map(|key| {
             std::array::from_fn::<_, 4, _>(|component| {
                 let at = rotation + key * 16 + component * 4;
@@ -232,17 +235,17 @@ fn fix_quat_norm_preserves_orientation_across_finite_f32_magnitudes() {
     assert_eq!(source_values, values.map(|value| value.to_array()));
 
     let dry_run = FixSession::inspect(&dirty, Repair::QuatNorm).unwrap();
-    assert_eq!(dry_run.total_fixed(), 2);
+    assert_eq!(dry_run.total_fixed(), 3);
     assert!(dry_run.skipped.is_empty());
     assert_eq!(std::fs::read(&dirty).unwrap(), before);
     let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).unwrap();
-    assert_eq!(report.total_fixed(), 2);
+    assert_eq!(report.total_fixed(), 3);
     assert!(report.skipped.is_empty());
     let after = std::fs::read(&fixed).unwrap();
     assert_eq!(before.len(), after.len());
     assert_eq!(&before[..rotation], &after[..rotation]);
-    assert_eq!(&before[rotation + 32..], &after[rotation + 32..]);
-    for key in 0..2 {
+    assert_eq!(&before[rotation + 48..], &after[rotation + 48..]);
+    for key in 0..3 {
         let got: [f32; 4] = std::array::from_fn(|component| {
             let at = rotation + key * 16 + component * 4;
             f32::from_le_bytes(after[at..at + 4].try_into().unwrap())
@@ -255,13 +258,37 @@ fn fix_quat_norm_preserves_orientation_across_finite_f32_magnitudes() {
         assert!((norm_squared - 1.0).abs() < 1e-7);
     }
     assert_eq!(std::fs::read(&dirty).unwrap(), before);
-    assert_eq!(
-        FixSession::apply_to_path(&fixed, &again, Repair::QuatNorm)
-            .unwrap()
-            .total_fixed(),
-        0
-    );
+    let second = FixSession::apply_to_path(&fixed, &again, Repair::QuatNorm).unwrap();
+    assert_eq!(second.total_fixed(), 0);
+    assert!(second.skipped.is_empty());
     assert_eq!(std::fs::read(again).unwrap(), after);
+}
+
+#[test]
+fn quat_norm_lint_and_repair_agree_at_the_exporter_tolerance() {
+    // The first norm is 1.0009999849337754 (inside the tolerance), but
+    // f32 accumulation rounds it above the upper bound. The second norm
+    // is 0.998999997470073 (outside), but f32 rounds it inside the bound.
+    for (components, needs_repair) in [
+        ([0.31336492, 0.07204579, -0.73901117, 0.5936963], false),
+        ([-0.14611353, 0.7752295, -0.49427742, -0.3624374], true),
+    ] {
+        let mut doc = doc_with_quats(vec![Quat::from_array(components); 2]);
+        doc.clips[0].tracks[0].times = vec![0.0, 1.0];
+        assert_eq!(lint_norm_count(&doc), usize::from(needs_repair));
+        let dir = unique_temp_dir("quat-norm-tolerance-agreement");
+        let dirty = dir.path().join("dirty.glb");
+        let fixed = dir.path().join("fixed.glb");
+        animsmith_gltf::write::write(&doc, &dirty).unwrap();
+        let expected = if needs_repair { 2 } else { 0 };
+        let dry_run = FixSession::inspect(&dirty, Repair::QuatNorm).unwrap();
+        assert_eq!(dry_run.total_fixed(), expected);
+        assert!(dry_run.skipped.is_empty());
+        let report = FixSession::apply_to_path(&dirty, &fixed, Repair::QuatNorm).unwrap();
+        assert_eq!(report.total_fixed(), expected);
+        assert!(report.skipped.is_empty());
+        assert_eq!(lint_norm_count(&animsmith_gltf::load(&fixed).unwrap()), 0);
+    }
 }
 
 #[test]

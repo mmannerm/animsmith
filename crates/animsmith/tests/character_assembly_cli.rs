@@ -2610,10 +2610,16 @@ fn assembly_preserves_in_band_cubic_magnitudes_and_refuses_curve_changing_cleanu
 
 #[test]
 fn assembly_normalizes_finite_linear_and_step_quaternions_without_overflow_or_underflow() {
-    for interpolation in ["LINEAR", "STEP"] {
+    for (interpolation, magnitude) in [
+        ("LINEAR", f32::MAX),
+        ("LINEAR", 1e20),
+        ("LINEAR", f32::from_bits(1)),
+        ("STEP", f32::MAX),
+        ("STEP", 1e20),
+        ("STEP", f32::from_bits(1)),
+    ] {
         let dir = tempfile::tempdir().unwrap();
-        let authored =
-            [f32::MAX, f32::from_bits(1)].map(|magnitude| [0.0, 0.0, magnitude, magnitude]);
+        let authored = [[0.0, 0.0, magnitude, magnitude]; 2];
         write_rotation_cleanup_fixture(dir.path(), interpolation, &authored, false);
         let source_path = dir.path().join("inputs/clips.glb");
         let source = std::fs::read(&source_path).unwrap();

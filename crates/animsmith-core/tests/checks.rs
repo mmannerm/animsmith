@@ -100,6 +100,28 @@ fn assert_single(doc: &Document, check_id: &str, severity: Severity) {
 }
 
 #[test]
+fn quaternion_norm_reports_a_finite_magnitude_for_finite_f32_components() {
+    let mut doc = clean_doc();
+    let TrackValues::Quats(values) = &mut doc.clips[0].tracks[0].values else {
+        panic!("rotation track");
+    };
+    values[1] = Quat::from_xyzw(0.0, 0.0, f32::MAX, f32::MAX);
+    let findings = lint(&doc);
+    let finding = findings
+        .iter()
+        .find(|finding| finding.check_id == "quat-norm")
+        .unwrap();
+    let json = serde_json::to_value(finding).unwrap();
+    let measured = json["measured"]
+        .as_f64()
+        .expect("finite norm stays a JSON number");
+    let expected = f64::from(f32::MAX) * std::f64::consts::SQRT_2;
+    assert!((measured / expected - 1.0).abs() < 1e-14);
+    assert_eq!(json["bone"], "spine");
+    assert_eq!(json["time_s"], 0.5);
+}
+
+#[test]
 fn clean_document_has_no_findings() {
     let findings = lint(&clean_doc());
     assert!(findings.is_empty(), "clean doc flagged: {findings:#?}");

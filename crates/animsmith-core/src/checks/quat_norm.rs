@@ -28,15 +28,15 @@ impl Check for QuatNorm {
             }
             // Worst key wins; tangent elements of cubic tracks are not
             // quaternions and are skipped.
-            let mut worst: Option<(usize, f32)> = None;
+            let mut worst: Option<(usize, f64)> = None;
             for k in 0..track.key_count() {
                 let Some(q) = track.key_quat(k) else { continue };
                 if !q.is_finite() {
                     continue; // the nan check owns this
                 }
-                let len = q.length();
-                if (len - 1.0).abs() > NORM_TOLERANCE
-                    && worst.is_none_or(|(_, w): (usize, f32)| (len - 1.0).abs() > (w - 1.0).abs())
+                let len = q.as_dquat().length();
+                if (len - 1.0).abs() > f64::from(NORM_TOLERANCE)
+                    && worst.is_none_or(|(_, w): (usize, f64)| (len - 1.0).abs() > (w - 1.0).abs())
                 {
                     worst = Some((k, len));
                 }
@@ -51,7 +51,7 @@ impl Check for QuatNorm {
                     .clip(clip)
                     .bone(bone)
                     .time(track.times[k])
-                    .measured(len as f64)
+                    .measured(len)
                     .expected(1.0f64),
                 );
             }
