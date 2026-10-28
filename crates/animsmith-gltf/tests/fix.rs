@@ -528,18 +528,27 @@ fn clean_cubic_rotation_is_not_reported_as_skipped() {
 }
 
 #[test]
-fn hemisphere_repair_keeps_linear_and_step_keys_byte_surgical() {
+fn cubic_skip_keeps_other_linear_and_step_repairs_byte_surgical() {
     for interpolation in [Interpolation::Linear, Interpolation::Step] {
         let dir = unique_temp_dir("hemisphere-control");
         let input = dir.path().join("flipped.glb");
         let fixed = dir.path().join("fixed.glb");
-        animsmith_gltf::write::write(&hemisphere_doc(interpolation, true), &input).unwrap();
+        let mut doc = hemisphere_doc(interpolation, true);
+        let mut cubic = hemisphere_doc(Interpolation::CubicSpline, true).clips[0].tracks[0].clone();
+        cubic.bone = 0;
+        // The skipped cubic track comes first on a different bone: skipping
+        // it must still let the following LINEAR/STEP track be repaired.
+        doc.clips[0].tracks.insert(0, cubic);
+        animsmith_gltf::write::write(&doc, &input).unwrap();
         let before = std::fs::read(&input).unwrap();
         let report = FixSession::apply_to_path(&input, &fixed, Repair::QuatFlip).unwrap();
         assert_eq!(report.total_fixed(), 1, "{interpolation:?}");
-        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert_eq!(
+            report.skipped,
+            ["sway/root: cubic rotation output (quat-flip skipped to preserve the curve)"]
+        );
         let repaired = animsmith_gltf::load(&fixed).unwrap();
-        let track = &repaired.clips[0].tracks[0];
+        let track = &repaired.clips[0].tracks[1];
         assert_eq!(track.interpolation, interpolation);
         assert_eq!(
             track.key_quat(1).unwrap().to_array(),
@@ -553,7 +562,7 @@ fn hemisphere_repair_keeps_linear_and_step_keys_byte_surgical() {
             .next()
             .unwrap()
             .samplers()
-            .next()
+            .nth(1)
             .unwrap()
             .output();
         let view = output.view().unwrap();
@@ -565,9 +574,13 @@ fn hemisphere_repair_keeps_linear_and_step_keys_byte_surgical() {
             expected[second_key + component * 4..second_key + (component + 1) * 4]
                 .copy_from_slice(&value.to_le_bytes());
         }
-        assert_eq!(first_output, expected, "only the flipped key changes");
+        assert_eq!(
+            first_output, expected,
+            "only the LINEAR/STEP key changes; cubic bytes stay authored"
+        );
         let second = FixSession::apply_to_path(&fixed, &fixed, Repair::QuatFlip).unwrap();
         assert_eq!(second.total_fixed(), 0);
+        assert_eq!(second.skipped, report.skipped);
         assert_eq!(std::fs::read(&fixed).unwrap(), first_output);
     }
 }
