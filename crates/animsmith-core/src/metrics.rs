@@ -5,6 +5,7 @@
 //! (verified there against Blender pose-matrix FK to <0.01×) — the
 //! algorithms are kept semantically identical so the numbers reproduce.
 
+use crate::checks::constant_track::quaternion_angular_delta;
 use crate::model::{Clip, Document, Property, Track};
 use crate::profile::{ResolvedRoles, Role};
 use crate::sample::{PoseGrid, sample_clip};
@@ -892,26 +893,22 @@ pub fn root_motion_speed_mps(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<f
 }
 
 /// Maximum angular deviation (degrees) of a rotation track from its
-/// first keyed rotation.
+/// first keyed rotation. Finite nonzero keys are compared as orientations,
+/// independently of their component magnitudes. An unusable first key returns
+/// `None`; unusable later keys do not contribute to the range. This keyed fact
+/// does not measure interior motion caused by cubic tangents.
 pub fn rotation_range_deg(track: &Track) -> Option<f64> {
     if track.property != Property::Rotation {
         return None;
     }
     let first = track.key_quat(0)?;
-    if !first.is_finite() || first.length_squared() == 0.0 {
-        return None;
-    }
-    let first = first.normalize();
+    quaternion_angular_delta(first, first)?;
     let mut max_deg = 0.0f64;
     for k in 1..track.key_count() {
         if let Some(q) = track.key_quat(k)
-            && q.is_finite()
-            && q.length_squared() > 0.0
+            && let Some(angle) = quaternion_angular_delta(first, q)
         {
-            let deg = first.angle_between(q.normalize()).to_degrees() as f64;
-            if deg.is_finite() {
-                max_deg = max_deg.max(deg);
-            }
+            max_deg = max_deg.max(angle.to_degrees() as f64);
         }
     }
     Some(max_deg)
