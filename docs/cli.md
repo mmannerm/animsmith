@@ -775,9 +775,13 @@ accessors packed into one buffer view remain repairable; stride gaps are
 conservatively included in each accessor's protected range.
 
 An unresolved source range or unmodeled extension makes ownership unavailable,
-so `fix` skips all quaternion repairs for that file and names the cause. For
-example, `EXT_meshopt_compression` can name compressed bytes independently of
-accessors and currently produces this skip. Recognized extensions with no new
+so `fix` skips all quaternion repairs for that file and names the cause.
+Duplicate normalized external buffer URIs also skip repairs: the writer cannot
+safely publish independently patched copies of the same resource. This check
+uses the existing URI keys; destination-path and filesystem alias handling are
+separate from source storage ownership. For example, `EXT_meshopt_compression`
+can name compressed bytes independently of accessors and currently produces
+this skip. Recognized extensions with no new
 storage owners, such as `KHR_materials_unlit`, remain accepted; Draco's direct
 buffer views are protected without decoding their contents. No accessors are
 copied or repointed, and skipped payloads and JSON remain byte-identical.

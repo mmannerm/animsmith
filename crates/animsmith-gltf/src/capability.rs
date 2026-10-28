@@ -2455,7 +2455,7 @@ pub(crate) fn json_pointer_child(pointer: &str, token: &str) -> String {
     format!("{pointer}/{}", json_pointer_token(token))
 }
 
-fn json_pointer_token(token: &str) -> String {
+pub(crate) fn json_pointer_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
 

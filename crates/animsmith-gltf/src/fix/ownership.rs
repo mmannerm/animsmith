@@ -2,12 +2,14 @@
 //! overlap scanning stay shared with capability inspection; scale's acceptance
 //! rules and dimensionless classification cannot authorize quaternion writes.
 
-use crate::LoadError;
 use crate::capability::{
     OwnedRange, RangeOwner, as_index, declared_view_range, image_payload_ranges,
-    json_pointer_child, overlapping_ranges, preserved_accessor_ranges, raw_json_bytes,
+    json_pointer_child, json_pointer_token, overlapping_ranges, preserved_accessor_ranges,
+    raw_json_bytes,
 };
+use crate::{LoadError, safe_external_buffer_path};
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 
 pub(super) enum Ownership {
     Known(Vec<Option<String>>),
@@ -46,6 +48,21 @@ impl Ownership {
 
 fn inspect(root: &Value, buffers: &[Vec<u8>]) -> Result<Vec<Option<String>>, String> {
     let object = root.as_object().ok_or("source root is not an object")?;
+    // The writer publishes one Vec per declared buffer. Even disjoint ranges
+    // cannot authorize writes when a later alias can overwrite that Vec.
+    let mut external_keys = BTreeMap::new();
+    for (index, buffer) in array(root, "buffers").iter().enumerate() {
+        if let Some(uri) = buffer.get("uri").and_then(Value::as_str)
+            && !uri.starts_with("data:")
+        {
+            let key = safe_external_buffer_path(uri).map_err(|error| error.to_string())?;
+            if let Some(previous) = external_keys.insert(key, index) {
+                return Err(format!(
+                    "/buffers/{index}/uri aliases /buffers/{previous}/uri"
+                ));
+            }
+        }
+    }
     let accessors = array(root, "accessors");
     let uses = accessor_uses(root, accessors.len())?;
     let mut ranges = Vec::new();
@@ -72,7 +89,7 @@ fn inspect(root: &Value, buffers: &[Vec<u8>]) -> Result<Vec<Option<String>>, Str
             }
         }
     }
-    extension_ranges(root, "", object, &mut ranges)?;
+    extension_ranges(root, &mut Vec::new(), object, &mut ranges)?;
     let overlaps = overlapping_ranges(&mut ranges);
     Ok(uses
         .into_iter()
@@ -236,36 +253,66 @@ fn known_extension(name: &str) -> bool {
     )
 }
 
-fn extension_ranges(
-    value: &Value,
-    pointer: &str,
+enum PathSegment<'a> {
+    Key(&'a str),
+    Index(usize),
+}
+
+// Only error paths need rendered pointers. Borrow keys during traversal so a
+// wide array beneath a long metadata key does not repeatedly copy that key.
+fn source_pointer(path: &[PathSegment<'_>]) -> String {
+    let mut pointer = String::new();
+    for segment in path {
+        pointer.push('/');
+        match segment {
+            PathSegment::Key(key) => pointer.push_str(&json_pointer_token(key)),
+            PathSegment::Index(index) => pointer.push_str(&index.to_string()),
+        }
+    }
+    pointer
+}
+
+fn extension_ranges<'a>(
+    value: &'a Value,
+    path: &mut Vec<PathSegment<'a>>,
     root: &Map<String, Value>,
     ranges: &mut Vec<OwnedRange>,
 ) -> Result<(), String> {
     match value {
         Value::Object(object) => {
             if let Some(extensions) = object.get("extensions").and_then(Value::as_object) {
+                path.push(PathSegment::Key("extensions"));
                 for (name, payload) in extensions {
-                    let location = json_pointer_child(&format!("{pointer}/extensions"), name);
+                    path.push(PathSegment::Key(name));
                     if !known_extension(name) {
-                        return Err(format!("{location} has unmodeled payload ownership"));
+                        return Err(format!(
+                            "{} has unmodeled payload ownership",
+                            source_pointer(path)
+                        ));
                     }
                     if name == "KHR_draco_mesh_compression" {
-                        let view = as_index(payload.get("bufferView"))
-                            .ok_or_else(|| format!("{location}/bufferView is unresolved"))?;
-                        let (buffer, start, end) = declared_view_range(root, view)
-                            .ok_or_else(|| format!("{location}/bufferView is unresolved"))?;
+                        let unresolved =
+                            || format!("{}/bufferView is unresolved", source_pointer(path));
+                        let view = as_index(payload.get("bufferView")).ok_or_else(unresolved)?;
+                        let (buffer, start, end) =
+                            declared_view_range(root, view).ok_or_else(unresolved)?;
                         ranges.push((buffer, start, end, RangeOwner::ExtensionView(view), false));
                     }
+                    path.pop();
                 }
+                path.pop();
             }
             for (key, child) in object {
-                extension_ranges(child, &json_pointer_child(pointer, key), root, ranges)?;
+                path.push(PathSegment::Key(key));
+                extension_ranges(child, path, root, ranges)?;
+                path.pop();
             }
         }
         Value::Array(values) => {
             for (index, child) in values.iter().enumerate() {
-                extension_ranges(child, &format!("{pointer}/{index}"), root, ranges)?;
+                path.push(PathSegment::Index(index));
+                extension_ranges(child, path, root, ranges)?;
+                path.pop();
             }
         }
         _ => {}

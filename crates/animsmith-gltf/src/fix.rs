@@ -59,8 +59,8 @@ pub struct TrackFix {
 pub struct FixReport {
     /// Rotation tracks that were patched.
     pub tracks: Vec<TrackFix>,
-    /// Tracks that needed repair but were skipped (data URI, cubic,
-    /// quantized, sparse, or malformed accessors), with reasons.
+    /// Tracks skipped because interpolation, encoding, layout, or source storage
+    /// ownership prevents a safe repair, with reasons.
     pub skipped: Vec<String>,
 }
 

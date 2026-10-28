@@ -12080,6 +12080,7 @@ fn fix_ownership_admits_disjoint_packed_and_compatible_shared_rotation_controls(
             "packed",
             "shared rotation",
             "material extension",
+            "wide metadata",
             "adjacent image",
             "later conflict",
         ] {
@@ -12097,6 +12098,8 @@ fn fix_ownership_admits_disjoint_packed_and_compatible_shared_rotation_controls(
             } else if control == "material extension" {
                 root["extensionsUsed"] = json!(["KHR_materials_unlit"]);
                 root["materials"] = json!([{"extensions":{"KHR_materials_unlit":{}}}]);
+            } else if control == "wide metadata" {
+                root["extras"] = json!({"x".repeat(65_536): vec![0; 4096]});
             } else if control == "adjacent image" {
                 root["images"] = json!([{"bufferView":2,"mimeType":"image/png"}]);
             } else if control == "later conflict" {
@@ -12192,6 +12195,7 @@ fn fix_ownership_admits_disjoint_packed_and_compatible_shared_rotation_controls(
 fn fix_ownership_protects_unreferenced_sparse_image_and_extension_payloads() {
     for owner in [
         "unreferenced",
+        "another rotation",
         "sparse values",
         "empty sparse base",
         "strided sparse values",
@@ -12199,18 +12203,29 @@ fn fix_ownership_protects_unreferenced_sparse_image_and_extension_payloads() {
         "enclosing image",
         "draco",
         "unknown",
+        "undeclared extension",
         "deep metadata",
         "unresolved",
         "orphan sampler",
     ] {
         let (mut root, mut blob) = ownership_fixture(false, false, false);
         let reason = match owner {
-            "unreferenced" | "unresolved" => {
+            "unreferenced" | "unresolved" | "another rotation" => {
                 let mut accessor = root["accessors"][1].clone();
                 if owner == "unresolved" {
                     accessor["byteOffset"] = json!(100);
                 }
                 root["accessors"].as_array_mut().unwrap().push(accessor);
+                if owner == "another rotation" {
+                    root["animations"][0]["samplers"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"input":0,"output":3}));
+                    root["animations"][0]["channels"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"sampler":1,"target":{"node":1,"path":"rotation"}}));
+                }
                 if owner == "unresolved" {
                     "/accessors/3 has unresolved storage"
                 } else {
@@ -12278,6 +12293,10 @@ fn fix_ownership_protects_unreferenced_sparse_image_and_extension_payloads() {
                 root["extensionsUsed"] = json!(["EXT_meshopt_compression"]);
                 root["bufferViews"][2]["extensions"] = json!({"EXT_meshopt_compression":{"buffer":0,"byteOffset":24,"byteLength":16,"byteStride":12,"count":3,"mode":"ATTRIBUTES"}});
                 "ownership unavailable: /extensionsUsed/0 declares unmodeled extension EXT_meshopt_compression"
+            }
+            "undeclared extension" => {
+                root["meshes"][0]["primitives"][0]["extensions"] = json!({"VENDOR/a~b":{}});
+                "/meshes/0/primitives/0/extensions/VENDOR~1a~0b has unmodeled payload ownership"
             }
             "deep metadata" => {
                 let mut metadata = json!({});
@@ -12352,4 +12371,92 @@ fn fix_ownership_rejects_same_index_tangent_and_incompatible_rotation_uses() {
         "quat-flip",
         "with incompatible rotation interpolation",
     );
+}
+
+#[test]
+fn fix_ownership_preserves_external_aliases_and_repairs_distinct_resources() {
+    // A later unpatched alias used to erase the repair; a later patched alias
+    // used to corrupt POSITION. URI decoding must identify both spellings.
+    for rotation_buffer in [0, 1] {
+        for uri in ["data.bin", "data%2ebin", "separate.bin"] {
+            let alias = uri != "separate.bin";
+            let (mut root, blob) = ownership_fixture(true, false, false);
+            root["buffers"] = json!([
+                {"uri":"data.bin","byteLength":blob.len()},
+                {"uri":uri,"byteLength":blob.len()}
+            ]);
+            root["bufferViews"][1]["buffer"] = json!(rotation_buffer);
+            root["bufferViews"][2]["buffer"] = json!(1 - rotation_buffer);
+            let dir = unique_temp_dir("fix-ownership-external");
+            let input = dir.path().join("scene.gltf");
+            let output_dir = dir.path().join("output");
+            std::fs::create_dir(&output_dir).unwrap();
+            let json = serde_json::to_vec_pretty(&root).unwrap();
+            std::fs::write(&input, &json).unwrap();
+            std::fs::write(dir.path().join("data.bin"), &blob).unwrap();
+            if !alias {
+                std::fs::write(dir.path().join("separate.bin"), &blob).unwrap();
+            }
+            for write in [false, true] {
+                let mut command = animsmith();
+                command
+                    .arg("fix")
+                    .arg(&input)
+                    .args(["--repair", "quat-flip"]);
+                if write {
+                    command.arg("-o").arg(output_dir.join("scene.gltf"));
+                } else {
+                    command.arg("--dry-run");
+                }
+                let result = command.output().unwrap();
+                assert_eq!(
+                    result.status.code(),
+                    Some(if write || alias { 0 } else { 1 }),
+                    "{}",
+                    stderr(&result)
+                );
+                if alias {
+                    assert!(
+                        stdout(&result).contains(
+                            "ownership unavailable: /buffers/1/uri aliases /buffers/0/uri"
+                        )
+                    );
+                    assert!(
+                        !stdout(&result).contains("fixed[")
+                            && !stdout(&result).contains("would fix[")
+                    );
+                } else {
+                    assert!(stdout(&result).contains("1 key(s)"));
+                    assert!(!stdout(&result).contains("skipped["));
+                }
+            }
+            assert_eq!(std::fs::read(&input).unwrap(), json);
+            assert_eq!(std::fs::read(output_dir.join("scene.gltf")).unwrap(), json);
+            for (index, name) in ["data.bin", "separate.bin"].into_iter().enumerate() {
+                if alias && index == 1 {
+                    continue;
+                }
+                assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), blob);
+                let after = std::fs::read(output_dir.join(name)).unwrap();
+                let mut expected = blob.clone();
+                if !alias && index == rotation_buffer {
+                    for (component, value) in [-0.6f32, -0.0, -0.0, 0.8].into_iter().enumerate() {
+                        expected[24 + component * 4..28 + component * 4]
+                            .copy_from_slice(&value.to_le_bytes());
+                    }
+                }
+                assert_eq!(after, expected, "{uri}, rotation buffer {rotation_buffer}");
+                if alias || index != rotation_buffer {
+                    let xs: [f32; 3] = std::array::from_fn(|vertex| {
+                        f32::from_le_bytes(
+                            after[24 + vertex * 12..28 + vertex * 12]
+                                .try_into()
+                                .unwrap(),
+                        )
+                    });
+                    assert_eq!(xs, [0.6, -0.8, 0.0]);
+                }
+            }
+        }
+    }
 }
