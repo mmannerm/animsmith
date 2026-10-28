@@ -69,16 +69,13 @@ pub(crate) fn is_constant_track(track: &crate::model::Track) -> bool {
             let Some(first) = track.key_quat(0) else {
                 return false;
             };
-            if !first.is_finite() || first.length_squared() == 0.0 {
-                return false;
-            }
             (1..track.key_count()).all(|k| {
                 track.key_quat(k).is_some_and(|q| {
                     // Cubic interpolation uses authored components, without
                     // shortest-path sign correction. Opposite hemispheres can
                     // create a large interior rotation even with zero tangents.
                     (track.interpolation != crate::model::Interpolation::CubicSpline
-                        || first.dot(q) > 0.0)
+                        || first.as_dquat().dot(q.as_dquat()) > 0.0)
                         && quaternion_angular_delta(first, q)
                             .is_some_and(|delta| delta <= QUAT_TOLERANCE_RAD)
                 })
@@ -93,7 +90,12 @@ pub(crate) fn is_constant_track(track: &crate::model::Track) -> bool {
 /// Using `acos(dot)` loses too much precision around this check's milliradian
 /// threshold on some f32 targets. The relative quaternion's vector magnitude
 /// keeps that small-angle evidence for the `atan2` formulation.
+/// Widen before squaring or normalizing: every finite f32 component, including
+/// a subnormal, has a representable square in f64. Only the bounded final angle
+/// is narrowed back to the caller's existing f32 tolerance domain.
 pub(crate) fn quaternion_angular_delta(first: Quat, other: Quat) -> Option<f32> {
+    let first = first.as_dquat();
+    let other = other.as_dquat();
     if !first.is_finite()
         || !other.is_finite()
         || first.length_squared() == 0.0
@@ -103,8 +105,8 @@ pub(crate) fn quaternion_angular_delta(first: Quat, other: Quat) -> Option<f32> 
     }
     let delta = first.normalize().conjugate() * other.normalize();
     let [x, y, z, w] = delta.to_array();
-    let sin_half_angle = glam::Vec3::new(x, y, z).length();
-    let angle = 2.0 * sin_half_angle.atan2(w.abs());
+    let sin_half_angle = glam::DVec3::new(x, y, z).length();
+    let angle = (2.0 * sin_half_angle.atan2(w.abs())) as f32;
     angle.is_finite().then_some(angle)
 }
 
@@ -122,7 +124,8 @@ fn cubic_quaternion_tangents_are_zero(track: &crate::model::Track) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{QUAT_TOLERANCE_RAD, quaternion_angular_delta};
+    use super::{QUAT_TOLERANCE_RAD, is_constant_track, quaternion_angular_delta};
+    use crate::model::{Interpolation, Property, Track, TrackValues};
     use glam::Quat;
 
     #[test]
@@ -141,5 +144,74 @@ mod tests {
             quaternion_angular_delta(Quat::IDENTITY, -(step * step)),
             quaternion_angular_delta(Quat::IDENTITY, step * step)
         );
+    }
+
+    #[test]
+    fn known_rotation_angle_survives_the_finite_f32_magnitude_range() {
+        for scale in [1.0, 1e20, 1e-30, f32::from_bits(1), f32::MAX] {
+            let first = Quat::from_xyzw(scale, scale, scale, scale);
+            let other = Quat::from_xyzw(scale, -scale, -scale, -scale);
+            // Unit endpoints are [1,1,1,1]/2 and [1,-1,-1,-1]/2.
+            // Their dot is -1/2: the shortest orientation difference is 120°.
+            let angle = quaternion_angular_delta(first, other).expect("finite nonzero keys");
+            assert!(
+                (angle - 2.0 * std::f32::consts::PI / 3.0).abs() < 1e-6,
+                "{scale}: {angle}"
+            );
+            assert_eq!(quaternion_angular_delta(first, first), Some(0.0));
+            assert_eq!(quaternion_angular_delta(first, -first), Some(0.0));
+        }
+    }
+
+    #[test]
+    fn milliradian_threshold_is_independent_of_key_magnitude() {
+        for scale in [1.0, 1e20, 1e-30] {
+            for (slope, constant) in [(0.000_499, true), (0.000_501, false)] {
+                // A single-axis [0,0,slope,1] rotation has angle 2*atan(slope):
+                // these straddle 1e-3 radians at approximately 0.000998/0.001002.
+                let first = Quat::from_xyzw(0.0, 0.0, 0.0, scale);
+                let other = Quat::from_xyzw(0.0, 0.0, slope * scale, scale);
+                let angle = quaternion_angular_delta(first, other).unwrap();
+                assert_eq!(
+                    angle <= QUAT_TOLERANCE_RAD,
+                    constant,
+                    "{scale}, {slope}: {angle}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_and_nonfinite_rotations_are_not_angular_evidence() {
+        for invalid in [
+            Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+            Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0),
+            Quat::from_xyzw(0.0, f32::INFINITY, 0.0, 1.0),
+        ] {
+            assert_eq!(quaternion_angular_delta(invalid, Quat::IDENTITY), None);
+            assert_eq!(quaternion_angular_delta(Quat::IDENTITY, invalid), None);
+        }
+    }
+
+    #[test]
+    fn large_cubic_keys_still_require_one_hemisphere_and_flat_tangents() {
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let first = Quat::from_xyzw(2e34, 0.0, 0.0, 1e38);
+        let other = Quat::from_xyzw(-2e34, 0.0, 0.0, 1e38);
+        // The orientation difference is 4*atan(2e-4), about 0.0008 radians.
+        // The positive raw dot includes opposing products too large for f32.
+        let track = |end, tangent| Track {
+            bone: 0,
+            property: Property::Rotation,
+            interpolation: Interpolation::CubicSpline,
+            times: vec![0.0, 1.0],
+            values: TrackValues::Quats(vec![zero, first, tangent, zero, end, zero]),
+        };
+        assert!(is_constant_track(&track(other, zero)));
+        assert!(!is_constant_track(&track(-other, zero)));
+        assert!(!is_constant_track(&track(
+            other,
+            Quat::from_xyzw(1e-30, 0.0, 0.0, 0.0)
+        )));
     }
 }
