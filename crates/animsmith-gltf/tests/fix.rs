@@ -434,6 +434,25 @@ fn in_place_fix_works() {
 }
 
 #[test]
+fn session_writes_captured_json_after_the_input_path_is_removed() {
+    let dir = unique_temp_dir("fix-captured-json");
+    let input = dir.path().join("input.gltf");
+    let output = dir.path().join("output.gltf");
+    animsmith_gltf::write::write(&flipped_doc(), &input).expect("writes JSON fixture");
+    let original = std::fs::read(&input).expect("reads original JSON");
+    let session = FixSession::read(&input).expect("captures JSON and embedded buffer");
+    std::fs::remove_file(&input).expect("removes original path after capture");
+
+    session
+        .write(&input, &output)
+        .expect("writes captured JSON");
+
+    assert_eq!(std::fs::read(&output).unwrap(), original);
+    assert!(!input.exists(), "writing must not recreate the source path");
+    animsmith_gltf::load(&output).expect("captured JSON and embedded buffer reload");
+}
+
+#[test]
 fn cubic_tracks_are_fixed_by_triplet() {
     // A CUBICSPLINE rotation track whose middle key (value + tangents)
     // is sign-flipped.
