@@ -23,6 +23,7 @@
 ## Review
 
 - [ ] Substantial change reviewed on its final head (any process or tools).
+- [ ] Current target base integrated; head/base and required gate/CI evidence recorded.
 - [ ] Not substantial; no review required.
 
 ## Agent Attribution

@@ -1,8 +1,12 @@
 # AGENTS.md
 
-Project rules for coding agents. General rules (simplicity, workflow,
-attribution, the `audit-task` skill) come from the user-level agent
-instructions; this file adds only what is specific to animsmith.
+Project rules for coding agents. Maintainer agents use the shared
+[engineering instructions](https://github.com/mmannerm/agents/blob/main/AGENTS.md)
+and [audit-task workflow](https://github.com/mmannerm/agents/blob/main/skills/audit-task/SKILL.md)
+from user-level configuration. Resolve that workflow to the central
+source; report a missing or conflicting installation instead of silently
+skipping required review or using a stale local copy. Record its revision
+in the review. Project contracts and gates below remain authoritative.
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md) for PR process, Conventional
 Commits, documentation freshness and labels,

@@ -135,7 +135,15 @@ deltas, but should link back here for the shared process.
 Substantial changes need a review before you ask for a merge: new checks,
 subcommands, measurement semantics, output contracts, dependency additions,
 write/fix path changes, or broad docs restructures. Use whatever review
-process or tools you like.
+process or tools you like; maintainer-specific agent configuration is not
+required for contributors.
+
+Before asking for a merge, integrate the freshly fetched target branch
+(`main`, or the approved parent of a stacked PR) into the final clean head.
+Record head/base revisions and gate results; required CI and review evidence
+must cover that head. A changed head or base needs reconciliation and the
+required checks before it is ready again. Review completion alone does not
+grant merge permission.
 
 The review should check:
 
