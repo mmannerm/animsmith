@@ -894,7 +894,7 @@ pub fn root_motion_speed_mps(grid: &PoseGrid, roles: &ResolvedRoles) -> Option<f
 
 /// Maximum angular deviation (degrees) of a rotation track from its
 /// first keyed rotation. Finite nonzero keys are compared as orientations,
-/// independently of their component magnitudes. An unusable first key returns
+/// independently of overall quaternion magnitude. An unusable first key returns
 /// `None`; unusable later keys do not contribute to the range. This keyed fact
 /// does not measure interior motion caused by cubic tangents.
 pub fn rotation_range_deg(track: &Track) -> Option<f64> {
@@ -902,6 +902,7 @@ pub fn rotation_range_deg(track: &Track) -> Option<f64> {
         return None;
     }
     let first = track.key_quat(0)?;
+    // Validate the anchor even when there is no later key to compare.
     quaternion_angular_delta(first, first)?;
     let mut max_deg = 0.0f64;
     for k in 1..track.key_count() {

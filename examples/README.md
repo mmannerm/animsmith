@@ -241,7 +241,7 @@ $ animsmith diff examples/assets/clip.glb sliced.glb
   swing loop_continuity.bones[2].position_delta_m: moved 0.1987 -> 0.0998
   swing loop_continuity.bones[2].rotation_delta_deg: moved 22.9183 -> 11.4592
   swing loop_continuity.bones[2].seam_velocity_delta_mps: moved 0.0598 -> 0.0200
-  swing bone_rotation_range_deg[spine]: moved 22.9183 -> 11.4591
+  swing bone_rotation_range_deg[spine]: moved 22.9183 -> 11.4592
 7 significant change(s)                       # exits 1
 ```
 
