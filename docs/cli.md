@@ -428,6 +428,8 @@ written. A symlinked input that aliases neither destination is accepted.
 negative starts remain supported. Slice and hold check every resulting f32
 key timeline before changing tracks. A finite positive hold can still be too
 small to advance the last key time (for example, `1e-20` seconds at time 1).
+Slicing also refuses a source key strictly before the end that rounds onto
+the retimed end, where boundary deduplication could discard the authored endpoint.
 Unrepresentable or non-increasing times are operator errors (exit 2), with no
 output publication or earlier per-clip success text. Source bytes and any
 existing output remain unchanged on these refusals.

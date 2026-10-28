@@ -1026,6 +1026,14 @@ pub enum TransformTimingError {
         /// Source key index, or the new key index for a hold.
         key: usize,
     },
+    /// Retiming would collapse an interior source key onto the slice end.
+    #[error("track {track} key {key} rounds onto the slice end in the f32 timeline")]
+    RoundedSliceEnd {
+        /// Index of the track in the clip.
+        track: usize,
+        /// Source key index.
+        key: usize,
+    },
     /// A key would coincide with or precede the previous emitted key.
     #[error("track {track} key {key} does not advance the emitted f32 timeline")]
     NonIncreasingTime {
@@ -1064,6 +1072,8 @@ fn validate_emitted_times(
 /// one closest to the original boundary is kept and the rest dropped —
 /// so the output has at most one key at 0 and one at the end, stays
 /// time-monotonic, and round-trips its declared duration.
+/// A source key strictly before the end that rounds onto the retimed end
+/// is refused before deduplication can discard a different authored key.
 ///
 /// Equal bounds allow a one-frame window; a negative start is also allowed.
 /// Every track's resulting timeline is analyzed before any track is changed.
@@ -1072,7 +1082,8 @@ fn validate_emitted_times(
 ///
 /// Returns [`TransformTimingError`] for invalid numeric arguments or key times
 /// that cannot remain finite, nonnegative and strictly increasing after
-/// retiming and boundary deduplication. The clip is unchanged on error.
+/// retiming and boundary deduplication, or for an interior key rounded onto
+/// the slice end. The clip is unchanged on error.
 ///
 /// # Panics
 ///
@@ -1120,14 +1131,20 @@ pub fn slice(
                         key,
                     });
                 }
+                if track.times[key] < end && time >= duration {
+                    return Err(TransformTimingError::RoundedSliceEnd {
+                        track: track_index,
+                        key,
+                    });
+                }
                 Ok((key, time.clamp(0.0, duration)))
             })
             .collect::<Result<_, _>>()?;
 
         // Drop boundary duplicates: at t=0 keep the last (closest to
         // `start`); at t=duration keep the first (closest to `end`).
-        // Retiming can collapse distinct interior keys in f32; validate those
-        // after the existing boundary-only deduplication.
+        // Rounding onto the end was refused above. Check for remaining
+        // interior collisions after the existing boundary-only deduplication.
         kept.retain({
             let times: Vec<f32> = kept.iter().map(|&(_, t)| t).collect();
             let mut i = 0;

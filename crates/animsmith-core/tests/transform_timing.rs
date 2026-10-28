@@ -132,6 +132,22 @@ fn slice_refuses_interior_rounding_collision_before_changing_any_track() {
 }
 
 #[test]
+fn slice_refuses_an_interior_key_rounded_onto_end_before_changing_any_track() {
+    let mut clip = mixed_timing_clip();
+    clip.duration_s = 4.0;
+    clip.tracks[1].times = vec![3.5, 4.0];
+    clip.tracks[1].values = TrackValues::Vec3s(vec![Vec3::splat(3.5), Vec3::splat(4.0)]);
+    let before = format!("{clip:?}");
+    // Both 3.5 + 2^24 and 4 + 2^24 round to 16777220. Keeping the first
+    // boundary key would replace the actual endpoint's value 4 with 3.5.
+    assert_eq!(
+        slice(&mut clip, -16_777_216.0, 4.0, 30.0),
+        Err(TransformTimingError::RoundedSliceEnd { track: 1, key: 0 })
+    );
+    assert_eq!(format!("{clip:?}"), before);
+}
+
+#[test]
 fn slice_preserves_single_frame_negative_start_and_zero_epsilon_uses() {
     let mut pose = linear_clip(&[0.0, 1.0]);
     slice(&mut pose, 1.0, 1.0, 30.0).unwrap();
