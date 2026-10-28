@@ -16,7 +16,8 @@ The loaded skill should resolve to the `mmannerm/agents` checkout at
 Follow [CONTRIBUTING.md](CONTRIBUTING.md) for PR process, Conventional
 Commits, documentation freshness and labels,
 [DEVELOPMENT.md](DEVELOPMENT.md) for setup and commands, and
-[DESIGN.md](DESIGN.md) for crate boundaries. New task worktree:
+[docs/architecture.md](docs/architecture.md) for current crate boundaries and
+links to retained design contracts. New task worktree:
 `just worktree <agent>/<branch>`.
 
 ## Audit

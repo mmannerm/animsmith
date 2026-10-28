@@ -54,7 +54,8 @@ structure in the same order.
 | [RELEASING.md](../RELEASING.md) | Cut a release — the release-plz flow, the manual 0.1.0 bootstrap, and the published-doc-link policy. | More › Project and contributing |
 | [SUPPORT.md](../SUPPORT.md) | Get help or file a bug. | More › Project and contributing |
 | [SECURITY.md](../SECURITY.md) | Report a vulnerability privately. | More › Project and contributing |
-| [DESIGN.md](../DESIGN.md) | Follow the architecture, check-catalog rationale, and roadmap. | More › Project and contributing |
+| [Current architecture](architecture.md) | Find current crate boundaries, data flow, authority and extension owners. | More › Project and contributing |
+| [DESIGN.md](../DESIGN.md) | Read historical rationale and retained operation/protocol decisions; use [milestones](https://github.com/mmannerm/animsmith/milestones) and [#165](https://github.com/mmannerm/animsmith/issues/165) for active sequencing. | More › Project and contributing |
 | [Scale proof calibration](scale-calibration.md) | Review the implementation-owned calibration sweep, provenance magnitudes, historical policy measurements, and reproducible command behind `appendix-d-v6`. | More › Project and contributing |
 | [research/](research/game-ready-animation-clips.md) | Read the dated research notes that inform the roadmap. | More › Project and contributing |
 | [All pages](README.md) | Find any page by the job it owns — this table, which is also where the site's navigation comes from. | More |

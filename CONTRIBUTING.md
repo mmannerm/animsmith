@@ -159,6 +159,7 @@ The review should check:
 - Tests: behavior changes have focused coverage and the local gates
   match CI expectations.
 - Invariants: crate boundaries and dependency rules still match
+  [Current architecture](docs/architecture.md) and the retained decisions in
   [DESIGN.md](DESIGN.md).
 - Documentation: README files, docs, and PR text stay fresh.
 
