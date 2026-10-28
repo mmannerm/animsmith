@@ -112,7 +112,7 @@ fn circular_delta(a: f64, b: f64) -> f64 {
 fn slice_keeps_window_and_retimes() {
     let (_, mut clip) = open_walk();
     let original = clip.clone();
-    slice(&mut clip, 0.25, 0.75, FPS);
+    slice(&mut clip, 0.25, 0.75, FPS).expect("representable slice");
     assert!((clip.duration_s - 0.5).abs() < 1e-9);
     let track = &clip.tracks[0];
     let orig_track = &original.tracks[0];
@@ -162,7 +162,7 @@ fn hold_extend_appends_final_pose() {
     let (_, mut clip) = open_walk();
     let before_end = clip.tracks[0].end_time();
     let last = clip.tracks[0].key_vec3(clip.tracks[0].key_count() - 1);
-    hold_extend(&mut clip, 1.0);
+    hold_extend(&mut clip, 1.0).expect("representable hold");
     let track = &clip.tracks[0];
     assert!((track.end_time() - (before_end + 1.0)).abs() < 1e-5);
     assert_eq!(track.key_vec3(track.key_count() - 1), last);
@@ -1626,7 +1626,7 @@ fn hold_extend_handles_cubic_tracks() {
         ..orig.clone()
     };
     let last_value = orig.key_vec3(orig.key_count() - 1).unwrap();
-    hold_extend(&mut clip, 0.5);
+    hold_extend(&mut clip, 0.5).expect("representable cubic hold");
     let track = &clip.tracks[0];
     assert_eq!(track.key_count(), orig.key_count() + 1);
     assert_eq!(track.key_vec3(track.key_count() - 1), Some(last_value));
@@ -1661,7 +1661,7 @@ fn slice_dedupes_start_boundary_and_clamps_end() {
         }],
     };
 
-    slice(&mut clip, 0.25, 0.75, 30.0);
+    slice(&mut clip, 0.25, 0.75, 30.0).expect("representable slice");
     let t = &clip.tracks[0];
 
     assert_eq!(
@@ -1723,7 +1723,7 @@ fn slice_dedupes_cubic_keeps_triplets_aligned() {
         }],
     };
 
-    slice(&mut clip, 0.25, 0.75, 30.0);
+    slice(&mut clip, 0.25, 0.75, 30.0).expect("representable cubic slice");
     let t = &clip.tracks[0];
     let TrackValues::Vec3s(v) = &t.values else {
         unreachable!()
@@ -1760,7 +1760,7 @@ fn slice_clamps_lone_past_end_key() {
         }],
     };
 
-    slice(&mut clip, 0.25, 0.75, 30.0);
+    slice(&mut clip, 0.25, 0.75, 30.0).expect("representable slice");
     let t = &clip.tracks[0];
     assert!(
         t.end_time() <= 0.5 + 1e-6,
