@@ -170,6 +170,9 @@ jobs:
       - name: Scale producer CLI tests without default features
         run: cargo test -p animsmith --test scale_cli --no-default-features --target-dir target/no-default-features
 
+      - name: Transition-pose CLI tests without default features
+        run: cargo test -p animsmith --test transition_pose_cli --no-default-features --target-dir target/no-default-features
+
       - name: Check publishable crate package readiness
         run: bash scripts/check-package-inventory.sh
 
