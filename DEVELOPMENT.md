@@ -381,10 +381,10 @@ not wired into branch protection:
   and weekly, keeping results in the Security tab without adding another
   full-workspace compile to every PR.
 - **Dependabot** ([`.github/dependabot.yml`](.github/dependabot.yml)) opens
-  weekly PRs to bump Cargo dependencies and pinned Action versions. Minor
-  and patch Cargo bumps and Action updates are grouped into one PR each;
-  major Cargo bumps open individually so each breaking upgrade is reviewed
-  on its own.
+  weekly PRs to bump Cargo dependencies, pinned Action versions, and the
+  pinned npm browser-check tooling. Minor and patch Cargo bumps and Action
+  updates are grouped into one PR each. Major Cargo bumps open individually
+  so each breaking upgrade is reviewed on its own; npm updates are ungrouped.
 
 ## Package Readiness
 
