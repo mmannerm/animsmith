@@ -37,6 +37,8 @@ impl DecodedAccessorBudget {
         count: usize,
         location: &str,
     ) -> Result<(), LoadError> {
+        // Keep the byte ceiling's derived iteration bound true for every type.
+        const { assert!(std::mem::size_of::<T>() >= 4) };
         let bytes = count.checked_mul(std::mem::size_of::<T>());
         let total_bytes = bytes.and_then(|bytes| self.bytes.checked_add(bytes));
         match (total_bytes, bytes) {

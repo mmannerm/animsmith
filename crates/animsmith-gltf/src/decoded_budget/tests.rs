@@ -148,17 +148,25 @@ pub(crate) fn repeated_animation(project_geometry: bool) -> Vec<u8> {
 
 #[test]
 fn channels_sharing_a_sampler_charge_every_timeline_and_output() {
-    let source = repeated_animation(false);
-    refused(load(&source, 63), 1, "animation 0 channel 1 node 1 output");
-    let loaded = load(&source, 64).unwrap();
-    let tracks = &loaded.document().clips[0].tracks;
-    assert_eq!(tracks.len(), 2);
-    for track in tracks {
-        assert_eq!(track.times, [0.0, 1.0]);
-        let animsmith_core::TrackValues::Vec3s(values) = &track.values else {
-            panic!("translation must retain vector values");
-        };
-        assert_eq!(values, &[Vec3::ZERO, Vec3::new(1.0, 2.0, 3.0)]);
+    // Translation and scale use the same decoded width but separate readers
+    // and admission calls. Both must charge each shared sampler materialization.
+    for path in ["translation", "scale"] {
+        let mut source: Value = serde_json::from_slice(&repeated_animation(false)).unwrap();
+        for channel in source["animations"][0]["channels"].as_array_mut().unwrap() {
+            channel["target"]["path"] = json!(path);
+        }
+        let source = serde_json::to_vec(&source).unwrap();
+        refused(load(&source, 63), 1, "animation 0 channel 1 node 1 output");
+        let loaded = load(&source, 64).unwrap();
+        let tracks = &loaded.document().clips[0].tracks;
+        assert_eq!(tracks.len(), 2);
+        for track in tracks {
+            assert_eq!(track.times, [0.0, 1.0]);
+            let animsmith_core::TrackValues::Vec3s(values) = &track.values else {
+                panic!("{path} must retain vector values");
+            };
+            assert_eq!(values, &[Vec3::ZERO, Vec3::new(1.0, 2.0, 3.0)]);
+        }
     }
 }
 
