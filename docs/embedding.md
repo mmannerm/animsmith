@@ -158,7 +158,7 @@ cargo run -p animsmith --example embed
    | Exact profile vocabulary | Static and input resolution | Current provenance |
    |---|---|---|
    | Revision-1 profiles | `EngineDeclaration` → `resolve_static` → `StaticResolution::resolve_input_v2_iter` | `project_prediction_provenance_v3(&resolved, &source)` |
-   | Bevy revisions 2/3 | `EngineDeclarationV2` → `resolve_static_v2` → `StaticResolutionV2::resolve_input_with_clips_iter` | `project_prediction_provenance_v5(&resolved, &source, runtime_node_selectors)` |
+   | Bevy revisions 2/3, Godot revision 2, Unreal revision 2 | `EngineDeclarationV2` → `resolve_static_v2` → `StaticResolutionV2::resolve_input_with_clips_iter` | `project_prediction_provenance_v5(&resolved, &source, runtime_node_selectors)` |
    | Unity Generic revision 2, FBX | The same V2 declaration/static/input APIs | `project_prediction_provenance_v6(&resolved, &source, runtime_node_selectors, root_motion_project_intent)` |
 
    The iterator APIs retain at most 4,096 clip-setting rows and explicit N+1
