@@ -20,6 +20,7 @@ test "$guard_status" -ne 0
 grep -Fq 'bevy-readback lock bevy_app must be 0.19.0 (got 0.19.1)' <<< "$guard_output"
 cargo build --locked -p animsmith --bin animsmith >/dev/null
 cargo +1.95.0 build --locked --manifest-path tools/bevy-readback/Cargo.toml --features test-support >/dev/null
+cargo +1.95.0 test --locked --manifest-path tools/bevy-readback/Cargo.toml --features test-support
 cli=target/debug/animsmith
 probe=tools/bevy-readback/target/debug/animsmith-bevy-readback
 config=examples/bevy-v3.animsmith.toml
@@ -63,9 +64,16 @@ predict "$work/nested/rig.gltf" "$work/nested.json"
 "$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json" > "$work/nested.readback.json"
 jq -e '.conformance.state == "exact" and .observation.terminal.state == "loaded" and .observation.primary_verified == true and .observation.dependencies_verified == true and (.observation.animations | length) == 1 and (.observation.nodes | length) == 3 and (.observation.targets | length) == 2' "$work/nested.readback.json" >/dev/null
 printf 'wrong root-level buffer' > "$work/buffer.bin"
-ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_DEPENDENCY_AFTER_SNAPSHOT=nested/buffer.bin "$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json" > "$work/nested-race.readback.json"
+ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_AFTER_SNAPSHOT=1 ANIMSMITH_BEVY_READBACK_TEST_MUTATE_ORIGINAL_DEPENDENCY_AFTER_SNAPSHOT=nested/buffer.bin "$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json" > "$work/nested-race.readback.json"
 jq -e '.conformance.state == "exact" and .observation.terminal.state == "loaded" and .observation.primary_verified == true and .observation.dependencies_verified == true and (.observation.animations | length) == 1 and (.observation.targets | length) == 2' "$work/nested-race.readback.json" >/dev/null
 test "$(wc -c < "$work/nested/buffer.bin")" -gt "$(jq -r '.buffers[0].byteLength' "$work/nested/rig.gltf")"
+# The live primary can no longer parse, so a loaded result above proves that
+# Bevy consumed the snapshot. Restore it before isolating the missing buffer.
+if jq -e . "$work/nested/rig.gltf" >/dev/null 2>&1; then
+    echo "nested original primary remained parseable after mutation" >&2
+    exit 1
+fi
+jq '.buffers[0].uri = "buffer.bin"' crates/animsmith-gltf/testdata/rig.gltf > "$work/nested/rig.gltf"
 rm "$work/nested/buffer.bin"
 printf '%s' "${uri#*,}" | base64 -d > "$work/buffer.bin"
 readback_status 1 "$work/nested-missing.stdout" "$probe" --asset-root "$work" --asset nested/rig.gltf --prediction "$work/nested.json"
