@@ -47,7 +47,7 @@ const data = JSON.parse(generated.payload), viewer = `${generated.shared}\n${gen
 // proves the viewers really read the tokens.
 const noStyles = { getPropertyValue: () => "" };
 const tokenStyles = (values) => ({ getPropertyValue: (name) => values[name.replace(/^--/, "")] || "" });
-if (data.kind !== "animsmith-comparison-v1") throw new Error("unexpected Rust comparison contract");
+if (data.kind !== "animsmith-comparison-v2") throw new Error("unexpected Rust comparison contract");
 const frames = 2002, bones = data.bones.length, positions = Buffer.alloc(frames * bones * 3 * 4);
 for (let frame = 0; frame < frames; frame++) for (let bone = 0; bone < bones; bone++) {
   const base = (frame * bones + bone) * 3;
@@ -1723,6 +1723,43 @@ for (const id of ["gaps", "predictions", "findings"]) {
 if (hostileEvidence.charts.map(serialize).join("") !== plainEvidence.charts.map(serialize).join("")) {
   throw new Error("a hostile fragment changed the rendered charts");
 }
+
+// Display consumes the named projection; originals remain visible as exact
+// audit detail, with arbitrary source text assigned as text rather than HTML.
+const engineFixture = {
+  provenance: { schema: "urn:animsmith:prediction-provenance:6", base: { marker: "original-v6-wrapper" } },
+  checks: [{ check_id:"engine-root-motion", configuration:"enabled", applicability:"applicable", evaluation:"partial", prediction:{schema:"urn:animsmith:engine-prediction:6", prediction:{marker:"original-v6-prediction"}} },
+           { check_id:"engine-track-support", configuration:"enabled", applicability:"not_applicable", evaluation:"not_evaluated" }],
+  projection: { kind:"animsmith-engine-display-v1", scope:"whole_input", profile:{family:"unity-generic",profile_revision:2}, facets:[
+    {check_id:"engine-root-motion",scope:{code:"engine-root-motion:clip-axis",subject:"other-clip <img src=x>"},state:"available",reasons:[],result:{kind:"root_motion_routing",result:{compatibility:"conflict"}}},
+    {check_id:"engine-clip-boundary",scope:{code:"engine-clip-boundary:source",subject:"source_animation:9"},state:"required_prediction_unavailable",reasons:["animsmith:source_declared_time_mode_unavailable"],result:null},
+  ]},
+};
+const engineSingle = structuredClone(singlePayload);
+engineSingle.engine_evidence = engineFixture;
+const engineState = runSingle(single, singleHtml, engineSingle);
+const engineRows = engineState.nodes.predictions.children;
+const displayedText = engineRows.map(row=>row.textContent).join("\n");
+for (const expected of ["Whole-input", "other-clip <img src=x>", '"compatibility":"conflict"', "required prediction unavailable", "animsmith:source_declared_time_mode_unavailable", "not_applicable"]) {
+  if (!displayedText.includes(expected)) throw new Error(`engine projection is missing visible ${expected}`);
+}
+if (engineRows.slice(0,-1).some(row=>row.children.length)) throw new Error("engine source text became markup");
+const originalText = serialize(engineRows.at(-1));
+for (const expected of ["original-v6-wrapper", "original-v6-prediction", "urn:animsmith:engine-prediction:6"]) {
+  if (!originalText.includes(expected)) throw new Error(`engine originals lost ${expected}`);
+}
+const sourceOnlyEngine = structuredClone(engineSingle);
+sourceOnlyEngine.clips = [];
+const sourceOnlyState = runSingle(single, singleHtml, sourceOnlyEngine);
+if (!serialize(sourceOnlyState.nodes.predictions).includes("animsmith:source_declared_time_mode_unavailable")) throw new Error("an empty normalized clip list hid source-only engine evidence");
+const engineComparison = structuredClone(data);
+engineComparison.before.engine_evidence = engineFixture;
+const engineCompared = run(generated, "comparison-report-data", html, engineComparison);
+const engineBeforeText = engineCompared.nodes["before-predictions"].textContent;
+for (const expected of ["Whole-input", "other-clip <img src=x>", '"compatibility":"conflict"', "animsmith:source_declared_time_mode_unavailable", "original-v6-prediction"]) {
+  if (!engineBeforeText.includes(expected)) throw new Error(`comparison lost engine evidence ${expected}`);
+}
+if (engineCompared.nodes["after-predictions"].textContent.includes("original-v6-prediction")) throw new Error("engine evidence crossed comparison sides");
 
 // ---- evidence-only single-clip report, as generated --------------------
 const singleEvidence = singleReportParts(singleEvidenceHtml);
