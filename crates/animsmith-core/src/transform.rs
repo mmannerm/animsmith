@@ -3,7 +3,9 @@
 //! removal, and gait-anchor rotation. Scope rule (DESIGN.md §1): animsmith may rewrite a clip
 //! only in ways whose correctness its own checks can verify.
 
-use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta};
+use crate::checks::constant_track::{
+    cubic_quaternion_tangents_are_zero, is_constant_track, quaternion_angular_delta,
+};
 use crate::metrics::{
     RootYawHeadingAxis, foot_cycle_metrics, horizontal_heading, select_horizontal_heading_axis,
 };
@@ -762,6 +764,8 @@ fn quaternion_within(a: Quat, b: Quat) -> bool {
 /// with sign-invariant shortest-path angular distance within `1e-4` radians.
 /// Quaternion comparison widens finite components before normalization so
 /// magnitude does not erase a distinct endpoint. Zero quaternions do not match.
+/// A cubic quaternion track is stationary only when its tangents are exactly
+/// zero; small components can still create motion after normalization.
 /// The predicate is the mechanically removable subset of #22's future
 /// `duplicate_endpoint` mode, not a parallel endpoint-mode classifier.
 /// `Ok(None)` is a valid non-candidate, including two-key clips and stationary
@@ -942,16 +946,7 @@ fn track_has_motion(track: &Track) -> bool {
                     .any(|(_, value)| {
                         value.abs().max_element() > DUPLICATE_ENDPOINT_VEC3_TOLERANCE
                     }),
-                TrackValues::Quats(values) => values
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| index % 3 != 1)
-                    .any(|(_, value)| {
-                        value
-                            .to_array()
-                            .into_iter()
-                            .any(|component| component.abs() > DUPLICATE_ENDPOINT_VEC3_TOLERANCE)
-                    }),
+                TrackValues::Quats(_) => !cubic_quaternion_tangents_are_zero(track),
             })
 }
 

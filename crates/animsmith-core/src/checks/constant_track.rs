@@ -113,7 +113,7 @@ pub(crate) fn quaternion_angular_delta(first: Quat, other: Quat) -> Option<f32> 
 /// Cubic quaternion key values can agree while their tangents still generate
 /// a changing component-wise Hermite curve. Treat that representation as
 /// redundant only for a genuinely flat hold.
-fn cubic_quaternion_tangents_are_zero(track: &crate::model::Track) -> bool {
+pub(crate) fn cubic_quaternion_tangents_are_zero(track: &crate::model::Track) -> bool {
     let TrackValues::Quats(values) = &track.values else {
         return false;
     };

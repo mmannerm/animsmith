@@ -4800,57 +4800,59 @@ fn transform_summary_reports_a_loaded_clip_omitted_from_the_artifact() {
     );
 }
 
+// Decode emitted accessor bytes directly, without the production loader
+// or sampler normalizing away the endpoint that this transform must keep.
+fn duplicate_endpoint_channel_bits(
+    path: &std::path::Path,
+) -> BTreeMap<String, (String, Vec<u32>, Vec<u32>)> {
+    let bytes = std::fs::read(path).unwrap();
+    let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let json: Value = serde_json::from_slice(&bytes[20..20 + json_len]).unwrap();
+    let bin = &bytes[28 + json_len..];
+    let accessor_bits = |index: &Value| {
+        let accessor = &json["accessors"][index.as_u64().unwrap() as usize];
+        assert_eq!(accessor["componentType"], 5126);
+        let view = &json["bufferViews"][accessor["bufferView"].as_u64().unwrap() as usize];
+        let width = match accessor["type"].as_str().unwrap() {
+            "SCALAR" => 1,
+            "VEC3" => 3,
+            "VEC4" => 4,
+            other => panic!("unexpected accessor type {other}"),
+        };
+        let offset = view["byteOffset"].as_u64().unwrap_or(0) as usize
+            + accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let stride = view["byteStride"].as_u64().unwrap_or(4 * width) as usize;
+        (0..accessor["count"].as_u64().unwrap() as usize)
+            .flat_map(|key| {
+                (0..width as usize).map(move |component| {
+                    let start = offset + key * stride + component * 4;
+                    u32::from_le_bytes(bin[start..start + 4].try_into().unwrap())
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let animation = &json["animations"][0];
+    assert_eq!(animation["channels"].as_array().unwrap().len(), 2);
+    animation["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|channel| {
+            let sampler = &animation["samplers"][channel["sampler"].as_u64().unwrap() as usize];
+            (
+                channel["target"]["path"].as_str().unwrap().to_owned(),
+                (
+                    sampler["interpolation"].as_str().unwrap().to_owned(),
+                    accessor_bits(&sampler["input"]),
+                    accessor_bits(&sampler["output"]),
+                ),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn duplicate_loop_endpoint_preserves_moving_rotation_at_finite_magnitudes() {
-    // Decode emitted accessor bytes directly, without the production loader
-    // or sampler normalizing away the endpoint that this transform must keep.
-    fn channels(path: &std::path::Path) -> BTreeMap<String, (Vec<u32>, Vec<u32>)> {
-        let bytes = std::fs::read(path).unwrap();
-        let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-        let json: Value = serde_json::from_slice(&bytes[20..20 + json_len]).unwrap();
-        let bin = &bytes[28 + json_len..];
-        let accessor_bits = |index: &Value| {
-            let accessor = &json["accessors"][index.as_u64().unwrap() as usize];
-            assert_eq!(accessor["componentType"], 5126);
-            let view = &json["bufferViews"][accessor["bufferView"].as_u64().unwrap() as usize];
-            let width = match accessor["type"].as_str().unwrap() {
-                "SCALAR" => 1,
-                "VEC3" => 3,
-                "VEC4" => 4,
-                other => panic!("unexpected accessor type {other}"),
-            };
-            let offset = view["byteOffset"].as_u64().unwrap_or(0) as usize
-                + accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
-            let stride = view["byteStride"].as_u64().unwrap_or(4 * width) as usize;
-            (0..accessor["count"].as_u64().unwrap() as usize)
-                .flat_map(|key| {
-                    (0..width as usize).map(move |component| {
-                        let start = offset + key * stride + component * 4;
-                        u32::from_le_bytes(bin[start..start + 4].try_into().unwrap())
-                    })
-                })
-                .collect::<Vec<_>>()
-        };
-        let animation = &json["animations"][0];
-        assert_eq!(animation["channels"].as_array().unwrap().len(), 2);
-        animation["channels"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|channel| {
-                let sampler = &animation["samplers"][channel["sampler"].as_u64().unwrap() as usize];
-                assert_eq!(sampler["interpolation"], "LINEAR");
-                (
-                    channel["target"]["path"].as_str().unwrap().to_owned(),
-                    (
-                        accessor_bits(&sampler["input"]),
-                        accessor_bits(&sampler["output"]),
-                    ),
-                )
-            })
-            .collect()
-    }
-
     let dir = unique_temp_dir("duplicate-endpoint-magnitude");
     let config = dir.path().join("animsmith.toml");
     std::fs::write(&config, "[clips.loop]\nloop = true\n").unwrap();
@@ -4936,6 +4938,7 @@ fn duplicate_loop_endpoint_preserves_moving_rotation_at_finite_magnitudes() {
             (
                 "rotation".into(),
                 (
+                    "LINEAR".into(),
                     expected_times.clone(),
                     rotation[..4 * retained]
                         .iter()
@@ -4946,6 +4949,7 @@ fn duplicate_loop_endpoint_preserves_moving_rotation_at_finite_magnitudes() {
             (
                 "translation".into(),
                 (
+                    "LINEAR".into(),
                     expected_times,
                     translation[..3 * retained]
                         .iter()
@@ -4955,7 +4959,7 @@ fn duplicate_loop_endpoint_preserves_moving_rotation_at_finite_magnitudes() {
             ),
         ]);
         assert_eq!(
-            channels(&output),
+            duplicate_endpoint_channel_bits(&output),
             expected,
             "{name}: preserve exact authored keys/times"
         );
@@ -4995,11 +4999,154 @@ fn duplicate_loop_endpoint_preserves_moving_rotation_at_finite_magnitudes() {
                 .unwrap();
             assert_eq!(repeated.status.code(), Some(0), "{}", stderr(&repeated));
             assert_eq!(
-                channels(&again),
+                duplicate_endpoint_channel_bits(&again),
                 expected,
                 "{name}: second pass is unchanged"
             );
         }
+    }
+}
+
+#[test]
+fn duplicate_loop_endpoint_keeps_cubic_tangent_motion_at_finite_magnitudes() {
+    let dir = unique_temp_dir("duplicate-endpoint-cubic-magnitude");
+    let config = dir.path().join("animsmith.toml");
+    std::fs::write(&config, "[clips.cubic]\nloop = true\n").unwrap();
+    for (name, m, moving) in [
+        ("unit", 1.0, true),
+        ("tiny", 1e-30, true),
+        ("small", 1e-10, true),
+        ("tiny-hold", 1e-30, false),
+    ] {
+        let input = dir.path().join(format!("{name}.glb"));
+        let output = dir.path().join(format!("{name}-out.glb"));
+        let times = vec![0.0, 0.25, 0.5, 1.0];
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        let mut rotations = vec![zero; 12];
+        for key in 0..4 {
+            rotations[3 * key + 1] = Quat::from_xyzw(0.0, 0.0, 0.0, m);
+        }
+        if moving {
+            rotations[8] = Quat::from_xyzw(0.0, m, 0.0, 0.0);
+        }
+        let translations = vec![Vec3::ZERO, Vec3::X, Vec3::X, Vec3::ZERO];
+        let doc = Document {
+            skeleton: Skeleton {
+                bones: vec![Bone {
+                    name: "joint".into(),
+                    parent: None,
+                    rest: Transform::IDENTITY,
+                    inverse_bind: None,
+                }],
+            },
+            clips: vec![Clip {
+                name: "cubic".into(),
+                duration_s: 1.0,
+                tracks: vec![
+                    Track {
+                        bone: 0,
+                        property: Property::Rotation,
+                        interpolation: Interpolation::CubicSpline,
+                        times: times.clone(),
+                        values: TrackValues::Quats(rotations.clone()),
+                    },
+                    Track {
+                        bone: 0,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: times.clone(),
+                        values: TrackValues::Vec3s(translations.clone()),
+                    },
+                ],
+            }],
+            ..Document::default()
+        };
+        animsmith_gltf::write::write(&doc, &input).unwrap();
+        let source_bytes = std::fs::read(&input).unwrap();
+        let expected_times: Vec<_> = times.iter().map(|v| v.to_bits()).collect();
+        let rotation_bits: Vec<_> = rotations
+            .iter()
+            .flat_map(|v| v.to_array().map(f32::to_bits))
+            .collect();
+        let translation_bits: Vec<_> = translations
+            .iter()
+            .flat_map(|v| v.to_array().map(f32::to_bits))
+            .collect();
+        let mut expected = BTreeMap::from([
+            (
+                "rotation".into(),
+                ("CUBICSPLINE".into(), expected_times.clone(), rotation_bits),
+            ),
+            (
+                "translation".into(),
+                ("LINEAR".into(), expected_times, translation_bits),
+            ),
+        ]);
+        let authored = duplicate_endpoint_channel_bits(&input);
+        assert_eq!(
+            authored, expected,
+            "writer must preserve the literal test input"
+        );
+        // At t=.75, u=.5 in the final .5-second segment. h10=1/8 and
+        // h00+h01=1, so the raw Hermite result is [0, m/16, 0, m].
+        // This normalized orientation moves 2*atan(1/16), independently of
+        // magnitude; do not use the production sampler for extreme values.
+        let q = &authored["rotation"].2;
+        let ratio =
+            f64::from(f32::from_bits(q[8 * 4 + 1])) / f64::from(f32::from_bits(q[7 * 4 + 3]));
+        let angle_degrees = (2.0 * (ratio / 16.0).atan()).to_degrees();
+        let expected_angle = if moving { 7.152668749994702 } else { 0.0 };
+        assert!((angle_degrees - expected_angle).abs() < 1e-12, "{name}");
+
+        let transformed = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .arg("transform")
+            .arg(&input)
+            .arg("--drop-duplicate-loop-endpoint")
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert_eq!(
+            transformed.status.code(),
+            Some(0),
+            "{name}: {}",
+            stderr(&transformed)
+        );
+        if !moving {
+            // A genuine hold may accompany the translation's single trim;
+            // a moving cubic track must enforce its different duplicate count.
+            expected.get_mut("rotation").unwrap().1.truncate(3);
+            expected.get_mut("rotation").unwrap().2.truncate(9 * 4);
+            expected.get_mut("translation").unwrap().1.truncate(3);
+            expected.get_mut("translation").unwrap().2.truncate(3 * 3);
+        }
+        assert_eq!(
+            duplicate_endpoint_channel_bits(&output),
+            expected,
+            "{name}: preserve curve-bearing triplets"
+        );
+        assert_eq!(
+            std::fs::read(&input).unwrap(),
+            source_bytes,
+            "{name}: source bytes"
+        );
+        let lint = animsmith()
+            .arg("--config")
+            .arg(&config)
+            .arg("lint")
+            .arg(&input)
+            .args(["--select", "duplicate-loop-endpoint"])
+            .output()
+            .unwrap();
+        assert_eq!(lint.status.code(), Some(0), "{}", stderr(&lint));
+        assert_eq!(
+            stdout(&lint).contains("warning[duplicate-loop-endpoint]"),
+            !moving,
+            "{name}: {}",
+            stdout(&lint)
+        );
     }
 }
 

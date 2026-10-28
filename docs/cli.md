@@ -432,8 +432,11 @@ within `1e-4` radians); and actual interior motion. Quaternion comparison
 widens finite components before normalization, so large or tiny magnitudes
 do not hide a distinct endpoint. Zero quaternions remain non-candidates and
 non-finite values refuse the operation. It atomically removes the same complete
-terminal key count from every channel (including each cubic-spline key triplet), leaves
-retained data unchanged, and re-pins duration to the last retained key. Other
+terminal key count from every channel (including each cubic-spline key triplet),
+leaves retained data unchanged, and re-pins duration to the last retained key.
+A cubic rotation track can accompany another channel's trim as a stationary
+hold only when its tangents are exactly zero. Nonzero tangents count as motion
+even at tiny magnitudes and must satisfy the common removal count. Other
 clips are not generalized, retimed, or repaired by this flag. The resulting
 open-cycle representation no longer satisfies inclusive `loop-closure`, which
 expects a repeated final sample; the complete endpoint-mode classifier remains
