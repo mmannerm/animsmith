@@ -1,4 +1,5 @@
 /target
+/node_modules
 
 # Ephemeral mdBook staging and rendered Pages output.
 /site

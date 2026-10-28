@@ -43,6 +43,29 @@ The animation-pack skill gate also uses Python 3, PyYAML 6.x, and JSON Schema
 $ python3 -m pip install "PyYAML>=6,<7" "jsonschema>=4.18,<5"
 ```
 
+The report browser gate uses Node.js 20 or newer (CI uses Node.js 22), the
+locked Playwright development dependency, and its matching Chromium headless
+shell. Install them before running `just report-browser` or `just gates`:
+
+```console
+$ npm ci
+$ npx --no-install playwright install chromium --only-shell
+```
+
+On Linux, add `--with-deps` when browser system libraries need installation;
+the CI browser job uses that option. A missing browser or launch failure fails
+the gate rather than skipping it. These packages are development tools, not
+dependencies of the generated reports or published Rust crates.
+
+`just report-browser` keeps the fast deterministic Node tests for viewer
+math, state and draw calls, and adds real Chromium execution of the same
+generated ordinary, comparison and evidence-only documents. The smoke checks
+native WebGL2 shader compilation/linking and nonuniform rendered pixels,
+comparison Canvas2D pixels, DOM input handling and evidence-only controls.
+Reports run with network access disabled; browser and console errors fail.
+This is bounded Chromium software-rendering evidence using SwiftShader, not
+hardware GPU, all-browser, visual-quality or engine-runtime acceptance.
+
 ## sccache
 
 Local `sccache` is optional. To configure a user-level Cargo
