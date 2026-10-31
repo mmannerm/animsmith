@@ -1,5 +1,5 @@
 //! Internal producer and strict reader types for current collection-output V11,
-//! plus immutable historical V10 through V5.
+//! plus V12 reader support and immutable historical V10 through V5.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -50,6 +50,11 @@ pub(crate) const COLLECTION_OUTPUT_V10_ID: &str = "urn:animsmith:schema:collecti
 pub(crate) const COLLECTION_OUTPUT_V10_SCHEMA_VERSION: u32 = 10;
 pub(crate) const COLLECTION_OUTPUT_V11_ID: &str = "urn:animsmith:schema:collection-output:11";
 pub(crate) const COLLECTION_OUTPUT_V11_SCHEMA_VERSION: u32 = 11;
+pub(crate) const COLLECTION_OUTPUT_V12_ID: &str = "urn:animsmith:schema:collection-output:12";
+pub(crate) const COLLECTION_OUTPUT_V12_SCHEMA_VERSION: u32 = 12;
+// The current writer is independent of the highest revision understood by readers.
+pub(crate) const COLLECTION_OUTPUT_CURRENT_ID: &str = COLLECTION_OUTPUT_V11_ID;
+const COLLECTION_OUTPUT_CURRENT_VERSION: u32 = COLLECTION_OUTPUT_V11_SCHEMA_VERSION;
 pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
 pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -248,6 +253,8 @@ pub(crate) enum DocumentUnavailableReason {
     Loader,
     #[serde(rename = "nested_output_unavailable")]
     NestedOutput,
+    #[serde(rename = "sampling_limit_exceeded")]
+    SamplingLimit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,6 +419,7 @@ pub(crate) enum ClipBindingState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ClipUnavailableReason {
+    SamplingLimitExceeded,
     SourceUnavailable,
     DigestMismatched,
     LoaderUnavailable,
@@ -862,8 +870,8 @@ impl CollectionOutput {
             serialized_bytes,
         )?;
         let output = Self {
-            schema_version: COLLECTION_OUTPUT_V11_SCHEMA_VERSION,
-            schema: COLLECTION_OUTPUT_V11_ID,
+            schema_version: COLLECTION_OUTPUT_CURRENT_VERSION,
+            schema: COLLECTION_OUTPUT_CURRENT_ID,
             tool,
             command: "collection lint",
             manifest,
@@ -1011,16 +1019,16 @@ pub(crate) fn read_collection_output(
     Ok(output)
 }
 
-/// Strictly read only the current V11 collection-output revision.
-pub(crate) fn read_current_collection_output(
+/// Strictly read the V11/V12 revisions supported by the evaluation consumers.
+/// Historical readers remain version-pinned; accepting V12 does not reinterpret
+/// a V11 artifact or change the current producer's version.
+pub(crate) fn read_evaluation_collection_output(
     reader: impl Read,
 ) -> Result<CollectionOutputInput, CollectionOutputError> {
     let output = read_collection_output(reader)?;
-    if output.wire.schema != COLLECTION_OUTPUT_V11_ID
-        || output.wire.schema_version != COLLECTION_OUTPUT_V11_SCHEMA_VERSION
-    {
+    if !matches!(output.wire.schema_version, 11 | 12) {
         return Err(CollectionOutputError::Contradictory(
-            "validation requires current collection-output V11",
+            "evaluation requires collection-output V11 or V12",
         ));
     }
     Ok(output)
@@ -1031,6 +1039,13 @@ pub(crate) struct CollectionOutputInput {
 }
 
 impl CollectionOutputInput {
+    /// Identity comes from the strict reader, never an unvalidated JSON field.
+    pub(crate) fn validation_handshake(&self) -> String {
+        format!(
+            "animsmith-internal collection-output-valid {} {}\n",
+            self.wire.schema, self.wire.schema_version
+        )
+    }
     #[cfg(test)]
     pub(crate) fn source_count(&self) -> usize {
         self.wire.sources.len()
@@ -1074,6 +1089,12 @@ impl CollectionOutputInput {
                 loader: match source.loader {
                     LoaderStateWire::Ready => "ready",
                     LoaderStateWire::Unavailable { .. } => "unavailable",
+                },
+                result: match source.result {
+                    DocumentResultWire::Available { .. } => DashboardDocumentResult::Available,
+                    DocumentResultWire::Unavailable { reason } => {
+                        DashboardDocumentResult::Unavailable { reason }
+                    }
                 },
                 dependency_closure: match source.dependency_closure {
                     SourceDependencyClosureStateWire::Complete { .. } => "complete",
@@ -1125,6 +1146,7 @@ impl CollectionOutputInput {
                         },
                     },
                     ClipBindingStateWire::Unavailable { reason } => match reason {
+                        ClipUnavailableReason::SamplingLimitExceeded => "sampling_limit_exceeded",
                         ClipUnavailableReason::SourceUnavailable => "source_unavailable",
                         ClipUnavailableReason::DigestMismatched => "digest_mismatched",
                         ClipUnavailableReason::LoaderUnavailable => "loader_unavailable",
@@ -1162,6 +1184,7 @@ impl CollectionOutputInput {
             })
             .collect();
         Ok(CollectionDashboardInput {
+            schema_version: self.wire.schema_version,
             manifest: identity_from_wire(&self.wire.manifest.input)
                 .map_err(|_| CollectionOutputError::Malformed)?,
             sources,
@@ -1262,6 +1285,9 @@ impl CollectionOutputInput {
             }
             (COLLECTION_OUTPUT_V11_SCHEMA_VERSION, COLLECTION_OUTPUT_V11_ID) => {
                 CollectionOutputRevision::V11
+            }
+            (COLLECTION_OUTPUT_V12_SCHEMA_VERSION, COLLECTION_OUTPUT_V12_ID) => {
+                CollectionOutputRevision::V12
             }
             (COLLECTION_OUTPUT_V9_SCHEMA_VERSION, COLLECTION_OUTPUT_V9_ID) => {
                 CollectionOutputRevision::V9
@@ -1456,6 +1482,18 @@ fn validate_producer(output: &CollectionOutput) -> Result<(), CollectionOutputEr
     }
     for source in &output.sources {
         validate_producer_dependency_closure_state(source)?;
+        if output.schema_version < COLLECTION_OUTPUT_V12_SCHEMA_VERSION
+            && matches!(
+                source.result,
+                DocumentResult::Unavailable {
+                    reason: DocumentUnavailableReason::SamplingLimit
+                }
+            )
+        {
+            return Err(CollectionOutputError::Contradictory(
+                "sampling refusal requires V12",
+            ));
+        }
         if matches!(&source.input, SourceInputState::Available { input } if input.bytes() > COLLECTION_OUTPUT_MAX_SOURCE_BYTES)
             || matches!(&source.input, SourceInputState::Unavailable { inspected_bytes, .. } if *inspected_bytes > COLLECTION_OUTPUT_MAX_SOURCE_BYTES + 1)
         {
@@ -1646,6 +1684,7 @@ struct CollectionOutputWire {
 /// external authority.
 #[cfg(feature = "report")]
 pub(crate) struct CollectionDashboardInput {
+    pub(crate) schema_version: u32,
     pub(crate) manifest: InputIdentity,
     pub(crate) sources: Vec<CollectionDashboardSourceInput>,
     pub(crate) clips: Vec<CollectionDashboardClipInput>,
@@ -1659,6 +1698,7 @@ pub(crate) struct CollectionDashboardSourceInput {
     pub(crate) input: Option<InputIdentity>,
     pub(crate) availability: &'static str,
     pub(crate) loader: &'static str,
+    pub(crate) result: DashboardDocumentResult,
     pub(crate) dependency_closure: &'static str,
     /// Complete observed physical-take inventory for this source. These rows
     /// remain independent of logical declarations, so a successfully loaded
@@ -1677,6 +1717,27 @@ pub(crate) struct CollectionDashboardSourceInput {
     /// logical clip row.
     pub(crate) unscoped_prediction_unavailable: usize,
     pub(crate) unscoped_prediction_reasons: BTreeSet<String>,
+}
+
+/// The source result without its nested envelope, used only for presentation.
+#[cfg(feature = "report")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum DashboardDocumentResult {
+    Available,
+    Unavailable { reason: DocumentUnavailableReason },
+}
+
+#[cfg(feature = "report")]
+impl DashboardDocumentResult {
+    pub(crate) const fn sampling_refused(self) -> bool {
+        matches!(
+            self,
+            Self::Unavailable {
+                reason: DocumentUnavailableReason::SamplingLimit
+            }
+        )
+    }
 }
 
 #[cfg(feature = "report")]
@@ -1907,7 +1968,7 @@ fn dashboard_document_facts(
     envelope: &RawValue,
     observed_takes: &[ObservedTakeWire],
 ) -> Result<DashboardDocumentFacts, CollectionOutputError> {
-    // `read_current_collection_output` already established the V11 container
+    // `read_evaluation_collection_output` already established the V11/V12 container
     // and validated this nested current measurement/lint envelope. This
     // closed, crate-private view consumes only the additional check facts the
     // dashboard needs; it cannot make raw envelope data available to HTML.
@@ -2108,6 +2169,7 @@ enum CollectionOutputRevision {
     V9,
     V10,
     V11,
+    V12,
 }
 
 impl CollectionOutputRevision {
@@ -2119,7 +2181,7 @@ impl CollectionOutputRevision {
             Self::V8 => (OUTPUT_V16_SCHEMA_ID, OUTPUT_V16_SCHEMA_VERSION),
             Self::V9 => (OUTPUT_V17_SCHEMA_ID, OUTPUT_V17_SCHEMA_VERSION),
             Self::V10 => (OUTPUT_V18_SCHEMA_ID, OUTPUT_V18_SCHEMA_VERSION),
-            Self::V11 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
+            Self::V11 | Self::V12 => (OUTPUT_SCHEMA_ID, OUTPUT_SCHEMA_VERSION),
         }
     }
 }
@@ -2537,6 +2599,15 @@ fn validate_source(
     revision: CollectionOutputRevision,
 ) -> Result<(), CollectionOutputError> {
     validate_dependency_closure_state(source)?;
+    let sampling_refused = matches!(
+        source.result,
+        DocumentResultWire::Unavailable {
+            reason: DocumentUnavailableReason::SamplingLimit
+        }
+    );
+    if sampling_refused && revision != CollectionOutputRevision::V12 {
+        return Err(CollectionOutputError::Malformed);
+    }
     if let SourceInputStateWire::Unavailable {
         reason,
         inspected_bytes,
@@ -2626,7 +2697,8 @@ fn validate_source(
             DigestPinStateWire::Matched { expected_sha256 },
             LoaderStateWire::Ready,
             DocumentResultWire::Unavailable {
-                reason: DocumentUnavailableReason::NestedOutput,
+                reason:
+                    DocumentUnavailableReason::NestedOutput | DocumentUnavailableReason::SamplingLimit,
             },
         ) if valid_identity(input)
             && expected_sha256 == &input.sha256
@@ -2636,7 +2708,8 @@ fn validate_source(
             DigestPinStateWire::Unpinned,
             LoaderStateWire::Ready,
             DocumentResultWire::Unavailable {
-                reason: DocumentUnavailableReason::NestedOutput,
+                reason:
+                    DocumentUnavailableReason::NestedOutput | DocumentUnavailableReason::SamplingLimit,
             },
         ) if valid_identity(input) => {}
         (
@@ -2647,7 +2720,8 @@ fn validate_source(
             },
             LoaderStateWire::Ready,
             DocumentResultWire::Unavailable {
-                reason: DocumentUnavailableReason::NestedOutput,
+                reason:
+                    DocumentUnavailableReason::NestedOutput | DocumentUnavailableReason::SamplingLimit,
             },
         ) if valid_identity(input)
             && valid_digest(expected_sha256)
@@ -2726,7 +2800,7 @@ fn validate_source(
             reason: DocumentUnavailableReason::NestedOutput
         }
     );
-    if has_oversized_normalized_name != nested_output_unavailable {
+    if !sampling_refused && has_oversized_normalized_name != nested_output_unavailable {
         return Err(CollectionOutputError::Malformed);
     }
     Ok(())
@@ -2810,6 +2884,15 @@ fn validate_clip(
     clip: &CollectionClipWire,
     source: &CollectionSourceWire,
 ) -> Result<(), CollectionOutputError> {
+    let sampling_refused = matches!(
+        source.result,
+        DocumentResultWire::Unavailable {
+            reason: DocumentUnavailableReason::SamplingLimit
+        }
+    );
+    if sampling_refused && matches!(clip.binding, ClipBindingStateWire::Established { .. }) {
+        return Err(CollectionOutputError::Malformed);
+    }
     match &clip.binding {
         ClipBindingStateWire::Established {
             observed_source_take_index,
@@ -2919,6 +3002,13 @@ fn validate_clip(
             }
         }
         ClipBindingStateWire::Unavailable { reason } => match reason {
+            ClipUnavailableReason::SamplingLimitExceeded => {
+                if !sampling_refused
+                    || !matches!(source.digest, DigestPinStateWire::Unpinned | DigestPinStateWire::Matched { .. })
+                    || !matches!(source.dependency_closure, SourceDependencyClosureStateWire::Complete { .. })
+                    || !has_matching_normalized_take(clip, source)
+                { return Err(CollectionOutputError::Malformed); }
+            },
             ClipUnavailableReason::SourceUnavailable => {
                 if !matches!(source.input, SourceInputStateWire::Unavailable { .. }) { return Err(CollectionOutputError::Malformed); }
             }
@@ -2926,7 +3016,7 @@ fn validate_clip(
                 if !matches!(source.digest, DigestPinStateWire::Mismatched { .. }) { return Err(CollectionOutputError::Malformed); }
             }
             ClipUnavailableReason::LoaderUnavailable | ClipUnavailableReason::DocumentUnavailable => {
-                if !matches!(source.loader, LoaderStateWire::Unavailable { .. }) && !matches!(source.result, DocumentResultWire::Unavailable { .. }) { return Err(CollectionOutputError::Malformed); }
+                if sampling_refused || (!matches!(source.loader, LoaderStateWire::Unavailable { .. }) && !matches!(source.result, DocumentResultWire::Unavailable { .. })) { return Err(CollectionOutputError::Malformed); }
             }
             ClipUnavailableReason::DependencyClosureIncomplete => {
                 if !matches!(source.loader, LoaderStateWire::Ready)
@@ -2938,14 +3028,7 @@ fn validate_clip(
                         source.dependency_closure,
                         SourceDependencyClosureStateWire::Complete { .. }
                     )
-                    || !source.observed_takes.iter().any(|take| {
-                        take.source_take_index == clip.take_index
-                            && matches!(
-                                &take.name,
-                                TakeNameState::Available { value } if value == &clip.take_name
-                            )
-                            && matches!(take.normalized, NormalizedClipState::Available { .. })
-                    })
+                    || !has_matching_normalized_take(clip, source)
                 {
                     return Err(CollectionOutputError::Malformed);
                 }
@@ -2969,6 +3052,15 @@ fn validate_clip(
     }
     Ok(())
 }
+
+fn has_matching_normalized_take(clip: &CollectionClipWire, source: &CollectionSourceWire) -> bool {
+    source.observed_takes.iter().any(|take| {
+        take.source_take_index == clip.take_index
+            && matches!(&take.name, TakeNameState::Available { value } if value == &clip.take_name)
+            && matches!(take.normalized, NormalizedClipState::Available { .. })
+    })
+}
+
 fn validate_set(
     set: &RuntimeSetWire,
     clips: &BTreeMap<&str, &ClipBindingStateWire>,
@@ -3561,9 +3653,104 @@ mod tests {
         let bytes = include_bytes!(
             "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v11-complete.json"
         );
-        let decoded = read_current_collection_output(&bytes[..]).expect("strict V11 fixture");
+        let decoded = read_evaluation_collection_output(&bytes[..]).expect("strict V11 fixture");
         assert_eq!(decoded.source_count(), 2);
         assert_eq!(decoded.clip_count(), 2);
+    }
+
+    #[test]
+    fn sampling_refusal_requires_v12_and_cannot_forge_an_established_binding() {
+        let bytes = include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v12-sampling-refused.json"
+        );
+        let decoded = read_evaluation_collection_output(&bytes[..]).expect("V12 mixed fixture");
+        assert_eq!(decoded.source_count(), 2);
+        assert_eq!(decoded.clip_count(), 2);
+        let refused = &decoded.wire.sources[1];
+        assert!(matches!(refused.loader, LoaderStateWire::Ready));
+        assert_eq!(refused.observed_takes.len(), 1);
+        assert!(validate_source(refused, CollectionOutputRevision::V12).is_ok());
+        assert!(validate_source(refused, CollectionOutputRevision::V11).is_err());
+
+        let original = read_collection_output(&include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v11-complete.json"
+        )[..]).unwrap();
+        // Same source/take/measurement identity: only the post-load refusal
+        // prevents this formerly valid established binding from being reused.
+        assert!(validate_clip(&original.wire.clips[1], refused).is_err());
+        assert!(validate_clip(&decoded.wire.clips[1], &original.wire.sources[1]).is_err());
+
+        let mut oversized_name: JsonValue = serde_json::from_slice(bytes).unwrap();
+        oversized_name["sources"][1]["observed_takes"][0]["normalized"]["name"] = "n"
+            .repeat(COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES + 1)
+            .into();
+        let oversized_name = stable_json_bytes(oversized_name);
+        assert!(
+            read_collection_output(&oversized_name[..]).is_ok(),
+            "sampling refusal precedes nested-name serialization availability"
+        );
+
+        let mut downgraded: JsonValue = serde_json::from_slice(bytes).unwrap();
+        downgraded["schema"] = COLLECTION_OUTPUT_V11_ID.into();
+        downgraded["schema_version"] = COLLECTION_OUTPUT_V11_SCHEMA_VERSION.into();
+        rejects(downgraded);
+    }
+
+    #[test]
+    fn refused_analysis_preserves_witnessed_binding_errors() {
+        let fixture: JsonValue = serde_json::from_slice(include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v12-sampling-refused.json"
+        )).unwrap();
+        let source: CollectionSourceWire =
+            serde_json::from_value(fixture["sources"][1].clone()).unwrap();
+        for (index, name, reason) in [
+            (99, "Walk", ClipUnavailableReason::TakeIndexMissing),
+            (
+                0,
+                "Mistyped take",
+                ClipUnavailableReason::TakeNameMismatched,
+            ),
+        ] {
+            let mut clip: CollectionClipWire =
+                serde_json::from_value(fixture["clips"][1].clone()).unwrap();
+            clip.take_index = index;
+            clip.take_name = name.to_owned();
+            assert!(
+                validate_clip(&clip, &source).is_err(),
+                "sampling must not hide an unresolved selector"
+            );
+            clip.binding = ClipBindingStateWire::Unavailable { reason };
+            assert!(validate_clip(&clip, &source).is_ok());
+        }
+        for reason in [
+            ClipUnavailableReason::DigestMismatched,
+            ClipUnavailableReason::DependencyClosureIncomplete,
+        ] {
+            let mut source: CollectionSourceWire =
+                serde_json::from_value(fixture["sources"][1].clone()).unwrap();
+            let mut clip: CollectionClipWire =
+                serde_json::from_value(fixture["clips"][1].clone()).unwrap();
+            if reason == ClipUnavailableReason::DigestMismatched {
+                let SourceInputStateWire::Available { input } = &source.input else {
+                    unreachable!()
+                };
+                source.digest = DigestPinStateWire::Mismatched {
+                    expected_sha256: "0".repeat(64),
+                    observed_sha256: Some(input.sha256.clone()),
+                };
+            } else {
+                source.dependency_closure = SourceDependencyClosureStateWire::Partial {
+                    reasons: vec![DependencyClosureCoverageReasonV1::UnavailableResource],
+                };
+            }
+            assert!(validate_source(&source, CollectionOutputRevision::V12).is_ok());
+            assert!(
+                validate_clip(&clip, &source).is_err(),
+                "sampling must not hide a binding integrity error"
+            );
+            clip.binding = ClipBindingStateWire::Unavailable { reason };
+            assert!(validate_clip(&clip, &source).is_ok());
+        }
     }
 
     #[test]
@@ -3574,7 +3761,7 @@ mod tests {
         let decoded = read_collection_output(&bytes[..]).expect("historical V10 fixture");
         assert_eq!(decoded.source_count(), 2);
         assert_eq!(decoded.clip_count(), 2);
-        assert!(read_current_collection_output(&bytes[..]).is_err());
+        assert!(read_evaluation_collection_output(&bytes[..]).is_err());
     }
 
     fn historicalize_measurements_v16(value: &mut JsonValue) {
@@ -3690,7 +3877,7 @@ mod tests {
         historicalize_measurements_v16(&mut historical_v9);
         let historical_v9_bytes = stable_json_bytes(historical_v9.clone());
         assert!(read_collection_output(&historical_v9_bytes[..]).is_ok());
-        assert!(read_current_collection_output(&historical_v9_bytes[..]).is_err());
+        assert!(read_evaluation_collection_output(&historical_v9_bytes[..]).is_err());
 
         historical_v9["sources"][0]["result"]["envelope"]["schema_version"] =
             OUTPUT_SCHEMA_VERSION.into();
