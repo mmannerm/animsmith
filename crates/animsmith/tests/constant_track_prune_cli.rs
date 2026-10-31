@@ -501,7 +501,10 @@ fn pruning_preserves_cubic_hemisphere_crossing_motion_after_reload() {
         // are 1/2, so normalize((q0 + q1) / 2). For these authored f32
         // components, 2*atan2(length(xyz), abs(w)) is 179.972679245 degrees.
         // Explicitly sample the interior, absent from the two-key proof grid.
-        let midpoint = sample_clip(&doc.skeleton, clip, 3).local(1, 0).rotation;
+        let midpoint = sample_clip(&doc.skeleton, clip, 3)
+            .expect("three-frame synthetic clip fits sampling admission")
+            .local(1, 0)
+            .rotation;
         let degrees = f64::from(Quat::IDENTITY.angle_between(midpoint).to_degrees());
         assert!(
             (degrees - 179.972_679_245).abs() < 0.001,
