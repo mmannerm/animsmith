@@ -3,7 +3,9 @@
 //! removal, and gait-anchor rotation. Scope rule (DESIGN.md §1): animsmith may rewrite a clip
 //! only in ways whose correctness its own checks can verify.
 
-use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta};
+use crate::checks::constant_track::{
+    cubic_quaternion_tangents_are_zero, is_constant_track, quaternion_angular_delta,
+};
 use crate::metrics::{
     RootYawHeadingAxis, foot_cycle_metrics, horizontal_heading, select_horizontal_heading_axis,
 };
@@ -760,6 +762,10 @@ fn quaternion_within(a: Quat, b: Quat) -> bool {
 /// at least three keys, and a final time exactly equal to clip duration.
 /// Closing vectors compare component-wise within `1e-5`; quaternions compare
 /// with sign-invariant shortest-path angular distance within `1e-4` radians.
+/// Quaternion comparison widens finite components before normalization so
+/// magnitude does not erase a distinct endpoint. Zero quaternions do not match.
+/// A cubic quaternion track is stationary only when its tangents are exactly
+/// zero; small components can still create motion after normalization.
 /// The predicate is the mechanically removable subset of #22's future
 /// `duplicate_endpoint` mode, not a parallel endpoint-mode classifier.
 /// `Ok(None)` is a valid non-candidate, including two-key clips and stationary
@@ -940,16 +946,7 @@ fn track_has_motion(track: &Track) -> bool {
                     .any(|(_, value)| {
                         value.abs().max_element() > DUPLICATE_ENDPOINT_VEC3_TOLERANCE
                     }),
-                TrackValues::Quats(values) => values
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| index % 3 != 1)
-                    .any(|(_, value)| {
-                        value
-                            .to_array()
-                            .into_iter()
-                            .any(|component| component.abs() > DUPLICATE_ENDPOINT_VEC3_TOLERANCE)
-                    }),
+                TrackValues::Quats(_) => !cubic_quaternion_tangents_are_zero(track),
             })
 }
 
@@ -978,15 +975,7 @@ fn quaternion_key_delta(track: &Track, first: usize, other: usize) -> Option<f32
     };
     let first = values[track.value_index(first)];
     let other = values[track.value_index(other)];
-    let first_length_squared = first.length_squared();
-    let other_length_squared = other.length_squared();
-    if first_length_squared == 0.0 || other_length_squared == 0.0 {
-        return None;
-    }
-    let delta = first.normalize().conjugate() * other.normalize();
-    let [x, y, z, w] = delta.to_array();
-    let sin_half_angle = glam::Vec3::new(x, y, z).length();
-    Some(2.0 * sin_half_angle.atan2(w.abs()))
+    quaternion_angular_delta(first, other)
 }
 
 /// A slice or hold cannot emit a finite, strictly increasing key timeline.
