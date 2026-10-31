@@ -604,6 +604,20 @@ fn capture_source(
     bytes: &[u8],
     policy: CapturePolicy,
 ) -> Result<GltfScaleSource, GltfScalePreflightError> {
+    capture_source_with_budget(
+        path,
+        bytes,
+        policy,
+        &mut crate::DecodedAccessorBudget::default(),
+    )
+}
+
+fn capture_source_with_budget(
+    path: &Path,
+    bytes: &[u8],
+    policy: CapturePolicy,
+    budget: &mut crate::DecodedAccessorBudget,
+) -> Result<GltfScaleSource, GltfScalePreflightError> {
     validate_glb_framing(bytes)?;
     let (container, json_bytes) = raw_json_bytes(bytes)?;
     let raw_json: Value = serde_json::from_slice(json_bytes)
@@ -679,7 +693,13 @@ fn capture_source(
     // established rest/bind application. Only a source that needed this role
     // projection takes the narrower document build below.
     if !clip_track_projection_required {
-        let loaded_source = crate::load_source_bytes(path, bytes)?;
+        let loaded_source = crate::load_source_bytes_with_budget(
+            path,
+            bytes,
+            None,
+            crate::read_external_file,
+            budget,
+        )?;
         if matches!(policy, CapturePolicy::ClipTracks)
             && !clip_track_source_facts_complete(loaded_source.source_facts())
         {
@@ -713,8 +733,17 @@ fn capture_source(
         has_unmodeled_extension_domain,
         &mut crate::read_external_file,
     )?;
-    let source_skeleton = extract_source_skeleton(&gltf.document, &resolved_buffers, &topology);
-    let mut document = build_document(&gltf, &resolved_buffers, path, &topology, &mut facts)?;
+    let source_skeleton =
+        extract_source_skeleton(&gltf.document, &resolved_buffers, &topology, budget)?;
+    let mut document = build_document(
+        &gltf,
+        &resolved_buffers,
+        path,
+        &topology,
+        &mut facts,
+        &source_skeleton,
+        budget,
+    )?;
     document.assets.source_skeleton = source_skeleton;
     let loaded_source = facts
         .finish_with_dependency_closure(document, dependency_closure)
@@ -2662,6 +2691,25 @@ fn indexed_nested_member(pointer: &str, prefix: &str, nested: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn clip_track_projection_applies_decoded_budget_only_to_retained_arrays() {
+        let bytes = crate::decoded_budget::tests::repeated_animation(true);
+        let capture = |bytes_limit| {
+            capture_source_with_budget(
+                Path::new("projected.gltf"),
+                &bytes,
+                CapturePolicy::ClipTracks,
+                &mut crate::DecodedAccessorBudget::new(bytes_limit),
+            )
+        };
+        let loaded = capture(64).expect("discarded sparse geometry spends no budget");
+        assert!(loaded.clip_track_projection_required);
+        assert_eq!(loaded.loaded_source.document().clips[0].tracks.len(), 2);
+        assert!(matches!(capture(63), Err(GltfScalePreflightError::Load(
+            LoadError::DecodedAccessorBudget { accessor: 1, location, .. }
+        )) if location == "animation 0 channel 1 node 1 output"));
+    }
 
     #[test]
     fn accessor_use_inventory_claims_orphan_sampler_fields_without_self_conflicting_channels() {
