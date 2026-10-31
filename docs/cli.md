@@ -129,7 +129,8 @@ refusals retain the existing exit-1 policy.
 Contact production, gait anchoring and scale proof retain their separate,
 stricter operation limits. Constant-track pruning retains candidates with
 unavailable sampling evidence; its sampling limit is per call, not an aggregate
-bound on the pruning search.
+bound on the pruning search. Allocation pressure also retains candidates rather
+than removing tracks without usable sampling evidence.
 
 ### Structural skeleton comparison
 
