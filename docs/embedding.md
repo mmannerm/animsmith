@@ -344,6 +344,12 @@ For a command-by-command migration plan, use the
 cleanup, outsourced acceptance, CI gating, and raw/generated artifact
 storage, then use the [cookbook](../examples/README.md) for exact commands.
 
+In 0.15, `animsmith_core::transform::slice` and `hold_extend` return
+`Result<(), TransformTimingError>`. Propagate or handle that result before
+publishing. Both functions analyze all emitted timelines before mutation and
+leave the clip unchanged on error. Their documented value-cardinality
+preconditions for hand-built tracks remain in force.
+
 For the library cutover itself:
 
 1. Capture accepted measurements from the old pipeline as golden values.

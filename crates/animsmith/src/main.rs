@@ -197,12 +197,12 @@ enum Cmd {
         /// Restrict to one clip.
         #[arg(long)]
         clip: Option<String>,
-        /// Keep only `START:END` seconds, retimed to start at 0
+        /// Keep only finite increasing `START:END` seconds, retimed to start at 0
         /// (half-frame epsilon at --fps).
         #[arg(long, value_name = "START:END")]
         slice: Option<String>,
-        /// Extend the final pose by this many seconds (charge/block
-        /// holds).
+        /// Extend the final pose by finite positive seconds (charge/block
+        /// holds); each f32 key time must advance.
         #[arg(long, value_name = "SECONDS")]
         hold_extend: Option<f64>,
         /// Drop repeated closing keys from a declared loop when every
@@ -217,7 +217,7 @@ enum Cmd {
         /// Tracks for bones declared `animates_bones` remain as motion evidence.
         #[arg(long)]
         prune_constant_tracks: bool,
-        /// Frame rate used for epsilon and shift quantization.
+        /// Finite positive frame rate used for epsilon and shift quantization.
         #[arg(long, default_value_t = 30.0)]
         fps: f64,
     },
@@ -2095,11 +2095,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             prune_constant_tracks,
             fps,
         } => {
-            let loaded_config = load_config(cli.config.as_deref())?;
-            let loaded = load_with_config(&input, &loaded_config)?;
-            let config = &loaded_config.config;
-            let mut doc = loaded.into_document();
-            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
+            if !fps.is_finite() || fps <= 0.0 {
+                return Err("--fps must be finite and positive".into());
+            }
+            if let Some(hold) = hold_extend
+                && (!hold.is_finite() || hold <= 0.0)
+            {
+                return Err("--hold-extend must be finite and positive".into());
+            }
             let window = match &slice {
                 None => None,
                 Some(spec) => {
@@ -2108,12 +2111,20 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         .ok_or_else(|| format!("--slice wants START:END, got {spec}"))?;
                     let a: f64 = a.parse().map_err(|e| format!("--slice start: {e}"))?;
                     let b: f64 = b.parse().map_err(|e| format!("--slice end: {e}"))?;
-                    if b <= a {
-                        return Err(format!("--slice end must be after start ({spec})"));
+                    // Unlike inclusive assembly frame windows, CLI slices need distinct endpoints.
+                    if !a.is_finite() || !b.is_finite() || b <= a {
+                        return Err(format!(
+                            "--slice bounds must be finite and end must be after start ({spec})"
+                        ));
                     }
                     Some((a, b))
                 }
             };
+            let loaded_config = load_config(cli.config.as_deref())?;
+            let loaded = load_with_config(&input, &loaded_config)?;
+            let config = &loaded_config.config;
+            let mut doc = loaded.into_document();
+            let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
             let skeleton = doc.skeleton.clone();
             let mut touched = 0usize;
             // Transform reporting is transactional with the artifact: a later
@@ -2126,11 +2137,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 }
                 touched += 1;
                 if let Some((a, b)) = window {
-                    animsmith_core::transform::slice(c, a, b, fps);
+                    animsmith_core::transform::slice(c, a, b, fps)
+                        .map_err(|reason| format!("clip {:?}: slice refused: {reason}", c.name))?;
                     messages.push_str(&render::render_transform_slice(c, a, b));
                 }
                 if let Some(hold) = hold_extend {
-                    animsmith_core::transform::hold_extend(c, hold);
+                    animsmith_core::transform::hold_extend(c, hold).map_err(|reason| {
+                        format!("clip {:?}: hold extension refused: {reason}", c.name)
+                    })?;
                     messages.push_str(&render::render_transform_hold_extend(c, hold));
                 }
                 if drop_duplicate_loop_endpoint {

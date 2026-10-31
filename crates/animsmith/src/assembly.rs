@@ -2704,7 +2704,13 @@ fn process_clip_before_copy(
         }
     }
     if recipe.hold_frames > 0 {
-        animsmith_core::transform::hold_extend(&mut clip, f64::from(recipe.hold_frames) / fps);
+        animsmith_core::transform::hold_extend(&mut clip, f64::from(recipe.hold_frames) / fps)
+            .map_err(|reason| {
+                format!(
+                    "{context} {:?}: hold extension refused: {reason}",
+                    clip.name
+                )
+            })?;
     }
     let bone_correspondence = AssemblyBoneCorrespondence::new(
         &source.skeleton,
@@ -3189,7 +3195,8 @@ fn apply_window(clip: &mut Clip, recipe: &AssemblyClipRecipe, fps: f64) -> Resul
                 recipe.name, clip.duration_s
             ));
         }
-        animsmith_core::transform::slice(clip, start, end, fps);
+        animsmith_core::transform::slice(clip, start, end, fps)
+            .map_err(|reason| format!("clip {:?}: slice refused: {reason}", recipe.name))?;
     }
     Ok(())
 }

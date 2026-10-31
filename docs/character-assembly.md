@@ -108,9 +108,14 @@ bones and ambiguous names fail rather than retarget motion. An entry may then
 apply:
 
 - `frame_window = [START, END]`: one-based, inclusive source frame endpoints at
-  `fps`, or `time_window = [START, END]` in seconds;
+  `fps` (equal endpoints retain one frame), or finite increasing
+  `time_window = [START, END]` in seconds;
 - `drop_closing_endpoint = true`: remove one final key from every channel;
 - `hold_frames = N`: duplicate the final pose after `N / fps` seconds;
+  zero means no hold. A positive hold must advance every nonempty track's
+  last f32 time. A valid recipe whose slice/hold cannot emit finite strictly
+  increasing key times is an `asset-recipe-mismatch` refusal at the transform
+  stage, before either output file changes;
 - `gait_anchor = true`: explicitly declare an in-place cyclic gait and run the
   measured gait-anchor transform using the selected `animsmith.toml` rig
   configuration. Assembly refuses before publication when the Root role (or
