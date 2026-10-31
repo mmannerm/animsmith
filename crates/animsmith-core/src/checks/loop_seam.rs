@@ -53,7 +53,20 @@ impl Check for LoopSeam {
                 gaps.push(gap.scope(scope));
                 continue;
             }
-            let Some(grid) = ctx.grid(index) else {
+            let grid = match ctx.grid(index) {
+                Ok(grid) => grid,
+                Err(error) => {
+                    gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            error.to_string(),
+                        )
+                        .scope(scope),
+                    );
+                    continue;
+                }
+            };
+            let Some(grid) = grid else {
                 gaps.push(
                     CoverageGap::new(
                         CoverageGapCode::MEASUREMENT_UNAVAILABLE,

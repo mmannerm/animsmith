@@ -3344,7 +3344,7 @@ mod tests {
         let config = Config::default();
         let grids = MetricGrids::new(&document);
         let measurements = MeasurementContract::new(
-            animsmith_core::measure::measure_document(&grids, &roles, &config),
+            animsmith_core::measure::measure_document(&grids, &roles, &config).unwrap(),
             animsmith_core::measure::measure_assets(&document),
         )
         .unwrap();

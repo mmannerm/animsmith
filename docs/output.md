@@ -111,8 +111,12 @@ O(bones) blend/FK pass per repaint, with no all-pairs table or blended trail.
 
 This cap bounds added local data and its processing, not existing source pose
 allocation, sampling, checks, loader/caller data, full JSON or full HTML memory.
-`render(inputs) -> String` keeps its existing public API. The comparison's
-separate 32 MiB pose budget remains per side and is unchanged.
+`render(inputs)` returns `Result<String, ReportError>`. The comparison's
+separate 32 MiB embedded-pose budget remains per side and is unchanged.
+Evidence-only skips pose embedding, not evidence sampling: all report modes
+also obey the [shared sampling limits](cli.md#sampling-admission), including
+the cumulative cache budget, and return an explicit sampling refusal when
+those limits are exceeded.
 
 All three panes use the same fixed source-based camera. Interior blended
 rotations can extend outside those bounds; use the existing orbit/zoom controls.

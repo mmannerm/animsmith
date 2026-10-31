@@ -948,9 +948,13 @@ fn constant_quaternion_track_removal_leaves_sampled_pose_positions_unchanged() {
     structural_after.clips[0]
         .tracks
         .retain(|track| !(track.bone == 4 && track.property == animsmith_core::Property::Rotation));
-    let before_grid = MetricGrids::new(&before).grid(0).expect("before grid");
+    let before_grid = MetricGrids::new(&before)
+        .grid(0)
+        .expect("fixture fits sampling limits")
+        .expect("before grid");
     let after_grid = MetricGrids::new(&structural_after)
         .grid(0)
+        .expect("fixture fits sampling limits")
         .expect("structural after grid");
 
     assert_eq!(before_grid.times, after_grid.times);
@@ -1006,7 +1010,7 @@ fn pose_grid_bytes(doc: &animsmith_core::Document, clip_name: &str) -> Vec<u8> {
         .find(|clip| clip.name == clip_name)
         .expect("source clip");
     let frames = metric_frame_count(clip).expect("metric frame count");
-    let grid = sample_clip(&doc.skeleton, clip, frames);
+    let grid = sample_clip(&doc.skeleton, clip, frames).expect("fixture fits sampling limits");
     let mut positions = Vec::with_capacity(frames * grid.bone_count() * 3 * 4);
     for frame in 0..frames {
         for bone in 0..grid.bone_count() {
@@ -3751,11 +3755,10 @@ fn oversized_pair(directory: &std::path::Path, bones: usize, frames: usize) -> V
 }
 
 #[test]
-fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
-    // The budget bounds what a document embeds. A full report of this pair
-    // would have to carry the grid and is refused; the evidence-only report
-    // carries none of it and must render — through `render_comparison`, not
-    // only through the preflight it also calls.
+fn evidence_only_skips_the_embedded_pose_cap_but_preserves_sampling_admission() {
+    // Full mode retains its earlier output-budget refusal. Evidence-only
+    // skips embedding, but still needs a sampled grid for its evidence and
+    // charts; that independent allocation must fit the shared sampler cap.
     const BONES: usize = 400;
     const FRAMES: usize = 7_200;
     const {
@@ -3808,15 +3811,16 @@ fn an_evidence_only_comparison_renders_past_the_embedded_pose_budget() {
     );
 
     let (before, after) = sides();
-    let html = animsmith_report::render_comparison(before, after, evidence_only())
-        .expect("an evidence-only comparison embeds no grid, so the budget does not apply")
-        .html;
-    let data = embedded_json(&html, "comparison-report-data");
-    assert_eq!(data["evidence_only"], true);
-    assert_eq!(data["before"]["clip"]["frames"], FRAMES);
-    assert!(
-        embedded_pose_bytes(&html, "comparison-report-data").is_empty(),
-        "and it really embeds none of it"
+    let refused = animsmith_report::render_comparison(before, after, evidence_only())
+        .expect_err("omitting embedded poses does not waive sampling admission");
+    assert_eq!(
+        refused,
+        animsmith_report::ReportError::Sampling(animsmith_core::SamplingError::LimitExceeded {
+            resource: "cache retained bytes",
+            // 400 * 7200 * (40 + 64 + 16), plus 7200 f32 times.
+            required: 345_628_800,
+            limit: 268_435_456,
+        })
     );
 }
 
@@ -5609,7 +5613,10 @@ fn a_short_members_cycle_is_the_axis_its_anchor_was_measured_on() {
     let roles = ring_roles(&doc);
     let source = synthetic_source(doc.clone());
     let grids = MetricGrids::new(source.document());
-    let grid = grids.grid(0).expect("a three-key clip has a grid");
+    let grid = grids
+        .grid(0)
+        .expect("fixture fits sampling limits")
+        .expect("a three-key clip has a grid");
     assert_eq!(grid.frame_count(), 3, "the fixture really is three frames");
     let evidence = gait_phase_evidence(&grid, &roles).expect("it carries a cycle");
     assert_eq!(

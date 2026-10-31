@@ -246,8 +246,10 @@ fn assert_pose_grid_equal(before: &Document, after: &Document, clip_name: &str) 
     let before_clip = find_clip(before, clip_name);
     let after_clip = find_clip(after, clip_name);
     let frames = default_frame_count(before_clip);
-    let before_grid = sample_clip(&before.skeleton, before_clip, frames);
-    let after_grid = sample_clip(&after.skeleton, after_clip, frames);
+    let before_grid =
+        sample_clip(&before.skeleton, before_clip, frames).expect("fixture fits sampling limits");
+    let after_grid =
+        sample_clip(&after.skeleton, after_clip, frames).expect("fixture fits sampling limits");
     assert_eq!(
         before_grid.times, after_grid.times,
         "same original sample grid"

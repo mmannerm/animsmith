@@ -2345,18 +2345,23 @@ pub struct ClipMeasurements {
 /// keys and therefore must be unique; a later duplicate replaces an earlier
 /// entry. Directly constructed configuration must pass [`Config::validate`]
 /// before it is supplied here.
+///
+/// # Errors
+///
+/// Returns [`crate::SamplingError`] if any required metric grid is refused.
+/// No partial measurement map is returned.
 pub fn measure_document(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
     config: &Config,
-) -> BTreeMap<String, ClipMeasurements> {
-    grids
+) -> Result<BTreeMap<String, ClipMeasurements>, crate::SamplingError> {
+    Ok(grids
         .document()
         .clips
         .iter()
         .map(|clip| clip.name.clone())
-        .zip(measure_document_indexed(grids, roles, config))
-        .collect()
+        .zip(measure_document_indexed(grids, roles, config)?)
+        .collect())
 }
 
 /// Measure every normalized clip in document order without using clip names
@@ -2368,11 +2373,16 @@ pub fn measure_document(
 /// after independently binding a source-local take to that normalized index.
 /// Directly constructed configuration must pass [`Config::validate`] before
 /// it is supplied here.
+///
+/// # Errors
+///
+/// Returns [`crate::SamplingError`] if any required metric grid is refused.
+/// No partial measurement vector is returned.
 pub fn measure_document_indexed(
     grids: &MetricGrids<'_>,
     roles: &ResolvedRoles,
     config: &Config,
-) -> Vec<ClipMeasurements> {
+) -> Result<Vec<ClipMeasurements>, crate::SamplingError> {
     let doc = grids.document();
     let min_stride_step_m = config.loop_seam_min_stride_step_m();
     doc.clips
@@ -2409,7 +2419,7 @@ pub fn measure_document_indexed(
                 frame_count = frame_count.max(track.key_count());
             }
 
-            let grid = grids.grid(clip_index);
+            let grid = grids.grid(clip_index)?;
             let cycle = grid
                 .as_ref()
                 .and_then(|g| foot_cycle_metrics(g, roles, min_stride_step_m));
@@ -2626,7 +2636,7 @@ pub fn measure_document_indexed(
                 })
                 .collect();
 
-            ClipMeasurements {
+            Ok(ClipMeasurements {
                 duration_s,
                 frame_count: frame_count as u32,
                 animated_bones: animated.into_iter().collect(),
@@ -2646,7 +2656,7 @@ pub fn measure_document_indexed(
                 root_trajectory_availability,
                 speed_mps,
                 speed_mps_availability,
-            }
+            })
         })
         .collect()
 }
@@ -2841,8 +2851,8 @@ mod tests {
         };
         let grids = MetricGrids::new(&document);
 
-        let measured =
-            &measure_document(&grids, &ResolvedRoles::default(), &Config::default())["coverage"];
+        let measured = &measure_document(&grids, &ResolvedRoles::default(), &Config::default())
+            .unwrap()["coverage"];
 
         assert_eq!(measured.animated_bones, ["duplicate"]);
         assert_eq!(
@@ -2913,7 +2923,8 @@ mod tests {
             [(Role::Root, "root".into()), (Role::Hips, "hips".into())],
         );
         let grids = MetricGrids::new(&document);
-        let measured = &measure_document(&grids, &both_roles, &Config::default())["travel"];
+        let measured =
+            &measure_document(&grids, &both_roles, &Config::default()).unwrap()["travel"];
         let trajectory = measured.root_trajectory.as_ref().expect("selected Root");
         assert_eq!(trajectory.bone_index, 0);
         assert_eq!(trajectory.source_role, RootTrajectorySourceRole::Root);
@@ -2927,7 +2938,7 @@ mod tests {
         );
 
         let hips_only = ResolvedRoles::from_names(&skeleton, [(Role::Hips, "hips".into())]);
-        let measured = &measure_document(&grids, &hips_only, &Config::default())["travel"];
+        let measured = &measure_document(&grids, &hips_only, &Config::default()).unwrap()["travel"];
         let trajectory = measured.root_trajectory.as_ref().expect("Hips fallback");
         assert_eq!(trajectory.bone_index, 1);
         assert_eq!(
@@ -2938,8 +2949,8 @@ mod tests {
         assert_eq!(translation.horizontal_displacement_x_m, 1.0);
         assert_eq!(translation.horizontal_displacement_z_m, 1.0);
 
-        let measured =
-            &measure_document(&grids, &ResolvedRoles::default(), &Config::default())["travel"];
+        let measured = &measure_document(&grids, &ResolvedRoles::default(), &Config::default())
+            .unwrap()["travel"];
         assert!(measured.root_trajectory.is_none());
         assert_eq!(
             measured.root_trajectory_availability,
@@ -2956,7 +2967,7 @@ mod tests {
         }
         let too_short_grids = MetricGrids::new(&too_short);
         let measured =
-            &measure_document(&too_short_grids, &both_roles, &Config::default())["travel"];
+            &measure_document(&too_short_grids, &both_roles, &Config::default()).unwrap()["travel"];
         let trajectory = measured
             .root_trajectory
             .as_ref()
@@ -3006,7 +3017,8 @@ mod tests {
             &stale_role_grids,
             &roles_from_larger_skeleton,
             &Config::default(),
-        )["travel"];
+        )
+        .unwrap()["travel"];
         assert!(
             measured.root_trajectory.is_none(),
             "invalid Root must not fall back to the valid Hips index"
@@ -3046,7 +3058,8 @@ mod tests {
             &mismatched_name_grids,
             &roles_from_larger_skeleton,
             &Config::default(),
-        )["travel"];
+        )
+        .unwrap()["travel"];
         assert!(
             measured.root_trajectory.is_none(),
             "a stale Root name must not bind a different in-range bone or fall back"
@@ -3127,7 +3140,7 @@ mod tests {
             [(Role::Root, "root".into()), (Role::Hips, "hips".into())],
         );
         let grids = MetricGrids::new(&document);
-        let grid = grids.grid(0).expect("shared metric grid");
+        let grid = grids.grid(0).unwrap().expect("shared metric grid");
         let hips = root_trajectory_metrics(&grid, 1).expect("separate Hips evidence");
         let hips_translation = hips.translation.expect("Hips translation is measurable");
         assert_eq!(hips_translation.horizontal_displacement_x_m, 0.0);
@@ -3135,7 +3148,8 @@ mod tests {
         assert_eq!(hips_translation.horizontal_travel_m, 2.0);
         assert!(hips.yaw.is_some(), "Hips yaw is independently measurable");
 
-        let measured = &measure_document(&grids, &roles, &Config::default())["root_failure"];
+        let measured =
+            &measure_document(&grids, &roles, &Config::default()).unwrap()["root_failure"];
         let trajectory = measured
             .root_trajectory
             .as_ref()
@@ -5162,7 +5176,7 @@ mod tests {
         };
         let earlier_grids = MetricGrids::new(&earlier_doc);
         let earlier_measurement =
-            &measure_document(&earlier_grids, &roles, &Config::default())["duplicate"];
+            &measure_document(&earlier_grids, &roles, &Config::default()).unwrap()["duplicate"];
         assert!(earlier_measurement.loop_seam_ratio.is_some());
         assert!(earlier_measurement.gait.is_some());
         assert!(earlier_measurement.speed_mps.is_some());
@@ -5173,14 +5187,14 @@ mod tests {
             ..Document::default()
         };
         let grids = MetricGrids::new(&doc);
-        let indexed = measure_document_indexed(&grids, &roles, &Config::default());
+        let indexed = measure_document_indexed(&grids, &roles, &Config::default()).unwrap();
         assert_eq!(indexed.len(), 2);
         assert_eq!(indexed[0].duration_s, 1.0);
         assert_eq!(indexed[1].duration_s, 2.0);
         assert!(indexed[0].gait.is_some());
         assert!(indexed[1].gait.is_none());
 
-        let measurements = measure_document(&grids, &roles, &Config::default());
+        let measurements = measure_document(&grids, &roles, &Config::default()).unwrap();
 
         assert_eq!(
             serde_json::to_value(measurements).expect("duplicate measurements serialize"),
@@ -5269,7 +5283,7 @@ mod tests {
             ..Document::default()
         };
         let grids = MetricGrids::new(&doc);
-        let measurements = measure_document(&grids, &roles, &Config::default());
+        let measurements = measure_document(&grids, &roles, &Config::default()).unwrap();
         let measured = &measurements["planted"];
 
         assert_eq!(measured.loop_seam_ratio, None);
@@ -5380,7 +5394,7 @@ mod tests {
                 ..CheckSettings::default()
             },
         );
-        let measurements = measure_document(&grids, &roles, &config);
+        let measurements = measure_document(&grids, &roles, &config).unwrap();
 
         let below = &measurements["below_floor"];
         assert_eq!(below.loop_seam_ratio, None);
@@ -5469,7 +5483,7 @@ mod tests {
                 ..CheckSettings::default()
             },
         );
-        let measurements = measure_document(&grids, &roles, &config);
+        let measurements = measure_document(&grids, &roles, &config).unwrap();
         let measured = &measurements["extreme"];
 
         assert_eq!(measured.loop_seam_ratio, None);

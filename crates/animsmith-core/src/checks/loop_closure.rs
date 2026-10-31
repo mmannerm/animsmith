@@ -66,11 +66,20 @@ impl Check for LoopClosure {
             let (max_position_delta_m, max_rotation_delta_deg) =
                 effective_caps(ctx.config, expectations);
             let scope = EvaluationScope::new(EvaluationScopeCode::LOOP_CLOSURE).subject(&clip.name);
-            let Some(metrics) = ctx
-                .grid(clip_index)
-                .as_deref()
-                .and_then(loop_continuity_metrics)
-            else {
+            let grid = match ctx.grid(clip_index) {
+                Ok(grid) => grid,
+                Err(error) => {
+                    gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            error.to_string(),
+                        )
+                        .scope(scope),
+                    );
+                    continue;
+                }
+            };
+            let Some(metrics) = grid.as_deref().and_then(loop_continuity_metrics) else {
                 gaps.push(
                     CoverageGap::new(
                         CoverageGapCode::MEASUREMENT_UNAVAILABLE,

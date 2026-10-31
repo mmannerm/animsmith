@@ -510,7 +510,8 @@ fn nan_key_time_measures_without_panicking_and_lints_as_error() {
     let roles = ResolvedRoles::default();
     let config = Config::default();
     let grids = MetricGrids::new(&doc);
-    let measurements = measure_document(&grids, &roles, &config);
+    let measurements = measure_document(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
     assert!(measurements.contains_key("poisoned"));
 
     let ctx = CheckCtx::new(&grids, &roles, &config);

@@ -19,6 +19,17 @@ on errors rather than creating partial records. This is a Rust API break;
 wire schemas are unchanged. Cubic `frozen-bone` evidence uses this boundary
 when it cannot prove sufficient motion or a genuinely flat hold.
 
+## Fallible sampling and measurement
+
+`sample_clip`, `MetricGrids::grid`, `CheckCtx::grid`, `measure_document` and
+`measure_document_indexed` now return `Result` with `SamplingError` for fixed
+sampling-budget or allocation refusals. Grid access retains `Ok(None)` for its
+existing unavailable-subject cases. This is an intentional pre-1.0 Rust API
+break; callers must handle refusal rather than publish a partial measurement
+collection. Direct check evaluation records explicit measurement-unavailable
+coverage. See the sampler/cache rustdocs for the fixed per-grid and cumulative
+per-owner limits; admitted numerical results and wire schemas are unchanged.
+
 ## Raw Source Facts and Dependency Closure
 
 The core crate owns a bounded, format-neutral V1 vocabulary for importer-

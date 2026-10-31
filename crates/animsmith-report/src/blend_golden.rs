@@ -269,8 +269,8 @@ fn rotating_parent_has_analytic_arc_and_signed_zero_dot_tie() {
         doc.clips[1].tracks[1].values =
             TrackValues::Quats(vec![Quat::from_xyzw(0.0, 0.0, sign, 0.0); 5]);
         let grids = MetricGrids::new(&doc);
-        let a = grids.grid(0).unwrap();
-        let b = grids.grid(1).unwrap();
+        let a = grids.grid(0).unwrap().unwrap();
+        let b = grids.grid(1).unwrap().unwrap();
         let child = DVec3::from_array(reference(&doc.skeleton, &a, &b, 0.375, 0.5)[1]);
         assert!((child - DVec3::new(0.0, f64::from(sign), 0.0)).length() < 1e-12);
         let wrong = (a.model_position(1, 1) + b.model_position(2, 1)).as_dvec3() * 0.5;
@@ -304,8 +304,8 @@ fn affine_oracle_preserves_shear_and_signed_scale() {
     let grids = MetricGrids::new(&doc);
     let actual = reference(
         &doc.skeleton,
-        &grids.grid(0).unwrap(),
-        &grids.grid(1).unwrap(),
+        &grids.grid(0).unwrap().unwrap(),
+        &grids.grid(1).unwrap().unwrap(),
         0.0,
         0.5,
     );
@@ -329,8 +329,8 @@ fn affine_oracle_preserves_shear_and_signed_scale() {
     for (weight, x) in [(0.25, 0.5), (0.5, 0.0), (0.75, -0.5)] {
         let actual = reference(
             &doc.skeleton,
-            &grids.grid(0).unwrap(),
-            &grids.grid(1).unwrap(),
+            &grids.grid(0).unwrap().unwrap(),
+            &grids.grid(1).unwrap().unwrap(),
             1.0,
             weight,
         );
@@ -342,8 +342,8 @@ fn affine_oracle_preserves_shear_and_signed_scale() {
 fn sampled_defaults_and_independent_phase_mapping_are_preserved() {
     let (_, doc) = fixtures().remove(1);
     let grids = MetricGrids::new(&doc);
-    let a = grids.grid(0).unwrap();
-    let b = grids.grid(1).unwrap();
+    let a = grids.grid(0).unwrap().unwrap();
+    let b = grids.grid(1).unwrap().unwrap();
     assert_eq!((a.frame_count(), b.frame_count()), (3, 5));
     assert_eq!(
         (frame_at_phase(&a, 0.375), frame_at_phase(&b, 0.375)),
@@ -429,8 +429,14 @@ fn write_blend_goldens() {
         let source = crate::test_support::source(doc);
         let doc = source.document();
         let grids = MetricGrids::new(doc);
-        let a = grids.grid(0).expect("primary clip must have a metric grid");
-        let b = grids.grid(1).expect("paired clip must have a metric grid");
+        let a = grids
+            .grid(0)
+            .unwrap()
+            .expect("primary clip must have a metric grid");
+        let b = grids
+            .grid(1)
+            .unwrap()
+            .expect("paired clip must have a metric grid");
         let mut samples: Vec<Value> = Vec::new();
         for phase in PHASES {
             for weight in WEIGHTS {

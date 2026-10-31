@@ -184,7 +184,10 @@ cargo run -p animsmith --example embed
    document clip order: `EngineRootMotionCheck` consumes those exact rows.
    For the named output map, pair those rows with the same document clip names.
    `measure_document` is the convenient named-map form for hosts that do not
-   need indexed evidence; measurements remain profile-neutral.
+   need indexed evidence; measurements remain profile-neutral. Both measurement
+   functions return `Result<_, SamplingError>`; propagate a refused grid rather
+   than publishing a partial measurement collection. Cache construction is
+   still infallible and lazy.
 5. **Evaluate one current catalog.** Start with `animsmith_core::all_checks()`
    and append the five borrowed engine checks from `animsmith-engine`:
 
@@ -248,6 +251,18 @@ Both renderers now return `RenderedReport` inside a `Result` instead of a
 plain HTML string; read `.html`, `.clip_count` and `.finding_count` explicitly.
 The shared error type is `ReportError` (formerly `ComparisonError`). Update these callers together; no historical
 attachment conversion or compatibility alias is provided.
+
+Sampling also intentionally changes the Rust API: `sample_clip` now returns
+`Result<PoseGrid, SamplingError>`, while `MetricGrids::grid` and
+`CheckCtx::grid` return `Result<Option<Rc<PoseGrid>>, SamplingError>`.
+`Ok(None)` retains the existing unavailable-subject meaning (such as fewer
+than three keys); `Err` is a budget or allocation refusal. Measurement helpers
+return `Result` and the report's existing `ReportError` includes sampling
+failures. Direct checks preserve these failures as scoped
+`measurement_unavailable` coverage gaps, without changing the host's existing
+nonblocking ordinary-gap policy. No infallible compatibility wrapper is kept.
+The [CLI sampling policy](cli.md#sampling-admission) describes the fixed
+per-grid and cumulative per-owner ceilings and their limits.
 
 ## Compose the outputs you need
 

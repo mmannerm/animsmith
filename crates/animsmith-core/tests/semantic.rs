@@ -131,7 +131,8 @@ fn analytic_walk_metrics() {
     let roles = roles(&doc.skeleton);
     let config = Config::default();
     let grids = MetricGrids::new(&doc);
-    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config);
+    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
     let walk = &measurements["walk"];
 
     // L−R foot height = 2A·sin(θ): fundamental trough at 0.75.
@@ -233,7 +234,8 @@ fn min_stride_step_config_controls_tiny_stride_ratio() {
 
     let default_grids = MetricGrids::new(&doc);
     let default_measurements =
-        animsmith_core::measure::measure_document(&default_grids, &roles, &default_floor);
+        animsmith_core::measure::measure_document(&default_grids, &roles, &default_floor)
+            .expect("fixture measurements fit sampling limits");
     assert_eq!(default_measurements["walk"].loop_seam_ratio, None);
     let default_ctx = CheckCtx::new(&default_grids, &roles, &default_floor);
     let default_records = evaluate_checks(&default_ctx, &all_checks(), CheckSelection::All)
@@ -249,7 +251,8 @@ fn min_stride_step_config_controls_tiny_stride_ratio() {
 
     let tuned_grids = MetricGrids::new(&doc);
     let tuned_measurements =
-        animsmith_core::measure::measure_document(&tuned_grids, &roles, &tuned_floor);
+        animsmith_core::measure::measure_document(&tuned_grids, &roles, &tuned_floor)
+            .expect("fixture measurements fit sampling limits");
     let ratio = tuned_measurements["walk"]
         .loop_seam_ratio
         .expect("configured stride floor reports ratio");
@@ -275,7 +278,8 @@ fn zero_stride_floor_does_not_report_stationary_ratio() {
     }));
 
     let grids = MetricGrids::new(&doc);
-    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config);
+    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
     assert_eq!(measurements["walk"].loop_seam_ratio, None);
     let ctx = CheckCtx::new(&grids, &roles, &config);
     let records =
@@ -746,7 +750,8 @@ fn positive_group_amplitude_at_the_configured_floor_is_inclusive() {
     doc.clips.push(second);
     let roles = roles(&doc.skeleton);
     let grids = MetricGrids::new(&doc);
-    let measured = animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+    let measured = animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+        .expect("fixture measurements fit sampling limits");
     let exact_floor = measured["walk"]
         .gait
         .as_ref()

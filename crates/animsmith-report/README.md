@@ -121,6 +121,9 @@ animsmith-report = "0.14"
 The compiling render example lives in the crate-level API documentation.
 Pass the same `animsmith_core::MetricGrids` used for checks or measurements
 to render those sampled frames without resampling the clips.
+Sampling refusals propagate through `ReportError::Sampling` before HTML is
+returned, including evidence-only reports and group charts. A valid evidence
+record does not waive the shared sampler's per-grid and cumulative cache limits.
 
 ## Feature Flags
 

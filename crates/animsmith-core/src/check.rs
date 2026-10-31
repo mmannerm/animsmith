@@ -7,7 +7,7 @@ use crate::metrics::MetricGrids;
 use crate::model::Document;
 use crate::prediction::{PredictionFacetDemandV2, PredictionRuleAllocationV2};
 use crate::profile::ResolvedRoles;
-use crate::sample::PoseGrid;
+use crate::sample::{PoseGrid, SamplingError};
 use std::rc::Rc;
 
 /// Everything a check may consume: the document, the resolved rig
@@ -54,7 +54,12 @@ impl<'a> CheckCtx<'a> {
 
     /// The metric pose grid for clip `clip_index`, computed once and
     /// shared. `None` for clips too short to carry a cycle.
-    pub fn grid(&self, clip_index: usize) -> Option<Rc<PoseGrid>> {
+    ///
+    /// # Errors
+    ///
+    /// Returns a sampling refusal from the shared [`MetricGrids`] owner.
+    /// Checks must retain it as an explicit measurement-unavailable gap.
+    pub fn grid(&self, clip_index: usize) -> Result<Option<Rc<PoseGrid>>, SamplingError> {
         self.grids.grid(clip_index)
     }
 

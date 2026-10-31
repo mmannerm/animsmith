@@ -74,7 +74,7 @@ trait ContactMetricGridRuntime {
         &mut self,
         document: &animsmith_core::Document,
         clip_index: usize,
-    ) -> Option<Rc<PoseGrid>>;
+    ) -> Result<Option<Rc<PoseGrid>>, animsmith_core::SamplingError>;
 }
 
 struct ProductionContactMetricGridRuntime;
@@ -98,7 +98,7 @@ impl ContactMetricGridRuntime for ProductionContactMetricGridRuntime {
         &mut self,
         document: &animsmith_core::Document,
         clip_index: usize,
-    ) -> Option<Rc<PoseGrid>> {
+    ) -> Result<Option<Rc<PoseGrid>>, animsmith_core::SamplingError> {
         MetricGrids::new(document).grid(clip_index)
     }
 }
@@ -375,7 +375,8 @@ fn publish_loaded(
         &mut ProductionContactMetricGridRuntime,
     ) {
         Ok(fragment) => fragment,
-        Err(rejection) => return emit_refusal(format, tool, rejection),
+        Err(Failure::Refusal(rejection)) => return emit_refusal(format, tool, rejection),
+        Err(Failure::Operator(error)) => return Err(error),
     };
     require_source_dependencies_safe(source_input, loaded, output)?;
     let bytes = fragment
@@ -405,32 +406,35 @@ fn build_fragment(
     config: &LoadedConfig,
     selection: ClipSelection,
     grid_runtime: &mut impl ContactMetricGridRuntime,
-) -> Result<ContactFragmentV1, producer::Rejection> {
+) -> Result<ContactFragmentV1, Failure> {
     let document = loaded.document();
     validate_document_shape(document).map_err(|_| {
-        incomplete_refusal("source document shape is not valid for strict contact evidence")
+        Failure::Refusal(incomplete_refusal(
+            "source document shape is not valid for strict contact evidence",
+        ))
     })?;
     let closure = loaded.dependency_closure();
-    let closure_identity = complete_closure(closure, loaded.input())?;
+    let closure_identity = complete_closure(closure, loaded.input()).map_err(Failure::Refusal)?;
     let selected_index = selection.normalized_index;
-    let clip = document
-        .clips
-        .get(selected_index)
-        .ok_or_else(|| selection_refusal("selected collection clip disappeared"))?;
+    let clip = document.clips.get(selected_index).ok_or_else(|| {
+        Failure::Refusal(selection_refusal("selected collection clip disappeared"))
+    })?;
     if !clip.duration_s.is_finite() || clip.duration_s <= 0.0 {
-        return Err(incomplete_refusal(
+        return Err(Failure::Refusal(incomplete_refusal(
             "clip duration is not finite and positive",
-        ));
+        )));
     }
     let grid = build_contact_metric_grid_after_preflight(document, selected_index, grid_runtime)?
-        .ok_or_else(|| incomplete_refusal("metric grid is unavailable"))?;
+        .ok_or_else(|| Failure::Refusal(incomplete_refusal("metric grid is unavailable")))?;
     if grid.frame_count() < 3 || grid.times.len() != grid.frame_count() {
-        return Err(incomplete_refusal("metric grid is incomplete"));
+        return Err(Failure::Refusal(incomplete_refusal(
+            "metric grid is incomplete",
+        )));
     }
     if grid.times.iter().any(|time| !time.is_finite()) {
-        return Err(incomplete_refusal(
+        return Err(Failure::Refusal(incomplete_refusal(
             "metric grid has a non-finite sample time",
-        ));
+        )));
     }
     derive_contact_fragment_from_grid(
         document,
@@ -441,6 +445,7 @@ fn build_fragment(
         selection.reference,
         &grid,
     )
+    .map_err(Failure::Refusal)
 }
 
 /// Derive one strict contact fragment from an already-budgeted metric grid.
@@ -570,16 +575,25 @@ fn build_contact_metric_grid_after_preflight(
     document: &animsmith_core::Document,
     clip_index: usize,
     runtime: &mut impl ContactMetricGridRuntime,
-) -> Result<Option<Rc<PoseGrid>>, producer::Rejection> {
+) -> Result<Option<Rc<PoseGrid>>, Failure> {
     let clip = document
         .clips
         .get(clip_index)
-        .ok_or_else(|| incomplete_refusal("metric grid is unavailable"))?;
-    let (frame_count, bone_count, track_count) = runtime.dimensions(document, clip)?;
+        .ok_or_else(|| Failure::Refusal(incomplete_refusal("metric grid is unavailable")))?;
+    let (frame_count, bone_count, track_count) = runtime
+        .dimensions(document, clip)
+        .map_err(Failure::Refusal)?;
     checked_metric_grid_work(frame_count, bone_count, track_count).ok_or_else(|| {
-        incomplete_refusal("metric grid exceeds the 1000000-cell allocation or sampling-work limit")
+        Failure::Refusal(incomplete_refusal(
+            "metric grid exceeds the 1000000-cell allocation or sampling-work limit",
+        ))
     })?;
-    Ok(runtime.build_grid(document, clip_index))
+    runtime
+        .build_grid(document, clip_index)
+        .map_err(|error| match error {
+            animsmith_core::SamplingError::AllocationFailed { .. } => Failure::operator(error),
+            _ => Failure::Refusal(incomplete_refusal("metric grid sampling was refused")),
+        })
 }
 
 fn reserve_retained_run(retained_runs: &mut usize) -> Result<(), producer::Rejection> {
@@ -770,7 +784,7 @@ mod tests {
             &mut self,
             document: &animsmith_core::Document,
             clip_index: usize,
-        ) -> Option<Rc<PoseGrid>> {
+        ) -> Result<Option<Rc<PoseGrid>>, animsmith_core::SamplingError> {
             self.grids_built += 1;
             ProductionContactMetricGridRuntime.build_grid(document, clip_index)
         }
@@ -973,9 +987,48 @@ mod tests {
                 grids_built: 0,
             };
 
-            assert!(build_fragment(&loaded, &config, selection, &mut runtime).is_err());
+            assert!(matches!(
+                build_fragment(&loaded, &config, selection, &mut runtime),
+                Err(Failure::Refusal(producer::Rejection {
+                    kind: Kind::IncompleteEvidence,
+                    ..
+                }))
+            ));
             assert_eq!(runtime.grids_built, 0);
         }
+    }
+
+    #[test]
+    fn contact_allocation_failure_stays_an_operator_error_after_work_preflight() {
+        struct AllocationFailure;
+        impl ContactMetricGridRuntime for AllocationFailure {
+            fn dimensions(
+                &mut self,
+                document: &animsmith_core::Document,
+                clip: &animsmith_core::Clip,
+            ) -> Result<(usize, usize, usize), producer::Rejection> {
+                ProductionContactMetricGridRuntime.dimensions(document, clip)
+            }
+
+            fn build_grid(
+                &mut self,
+                _: &animsmith_core::Document,
+                _: usize,
+            ) -> Result<Option<Rc<PoseGrid>>, animsmith_core::SamplingError> {
+                Err(animsmith_core::SamplingError::AllocationFailed {
+                    buffer: "model poses",
+                    elements: 3,
+                })
+            }
+        }
+        let (_root, loaded, config) = loaded_contact_fixture();
+        let selection = exact_document_clip(&loaded, "Take 001").unwrap();
+        let error = build_fragment(&loaded, &config, selection, &mut AllocationFailure)
+            .expect_err("allocation pressure is not an asset finding");
+        let Failure::Operator(detail) = error else {
+            panic!("an allocation error must reach the operator route");
+        };
+        assert!(detail.contains("sampling could not allocate"));
     }
 
     #[test]
@@ -1013,6 +1066,9 @@ mod tests {
         )
         .expect_err("shared scene-root validation must run before contact analysis");
 
+        let Failure::Refusal(rejection) = rejection else {
+            panic!("invalid source shape remains an asset refusal");
+        };
         assert_eq!(rejection.stage, Stage::Analysis);
         assert_eq!(rejection.kind, Kind::IncompleteEvidence);
         assert_eq!(

@@ -52,7 +52,8 @@ fn reproduces_reference_numbers() {
     assert_eq!(roles.profile, "humanoid");
     let config = Config::default();
     let grids = MetricGrids::new(&doc);
-    let measurements = measure_document(&grids, &roles, &config);
+    let measurements = measure_document(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
 
     let mut failures = Vec::new();
     for &(clip, want_seam, want_phase, want_amplitude) in GOLDEN {

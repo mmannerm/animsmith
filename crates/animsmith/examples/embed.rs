@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4a. Measure: the raw metric map, no judgment. Share the metric
     //     grids with linting so each clip is sampled once.
     let grids = MetricGrids::new(doc);
-    let measurements = measure_document(&grids, &roles, &config);
+    let measurements = measure_document(&grids, &roles, &config)?;
     for (clip, m) in &measurements {
         println!(
             "measured '{clip}': {:.3}s, {} frames, {} animated bones",

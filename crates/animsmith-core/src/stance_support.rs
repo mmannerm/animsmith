@@ -178,7 +178,7 @@ mod tests {
             duration_s: 1.0,
             tracks,
         };
-        let grid = sample_clip(&skeleton, &clip, 3);
+        let grid = sample_clip(&skeleton, &clip, 3).unwrap();
         (skeleton, grid)
     }
 
@@ -262,7 +262,7 @@ mod tests {
                 ),
             }],
         };
-        let grid = sample_clip(&skeleton, &clip, 8);
+        let grid = sample_clip(&skeleton, &clip, 8).unwrap();
         let roles = ResolvedRoles::from_names(&skeleton, [(Role::LeftFoot, "left".to_string())]);
         let support = resolve_stance_support_v1(&grid, &roles, StanceSideV1::Left, 0.0).unwrap();
 
