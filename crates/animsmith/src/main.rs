@@ -878,25 +878,23 @@ fn write_report(
     output: &Path,
     inputs: &[(&str, &Path, &animsmith_core::DependencyClosureV1)],
     config: Option<&Path>,
-    doc: &Document,
-    finding_count: usize,
-    html: String,
+    report: animsmith_report::RenderedReport,
 ) -> Result<ExitCode, String> {
     let destination = preflight_report_output(output, inputs, config)?;
     let mut temp = tempfile::Builder::new()
         .prefix(".animsmith-report-")
         .tempfile_in(publish::parent_or_current(destination.identity()))
         .map_err(|error| format!("cannot stage report output: {error}"))?;
-    temp.write_all(html.as_bytes())
+    temp.write_all(report.html.as_bytes())
         .map_err(|error| format!("cannot stage report output: {error}"))?;
     temp.flush()
         .map_err(|error| format!("cannot stage report output: {error}"))?;
     publish::publish_single(temp.path(), destination.identity())?;
     publish::emit_text(&render::render_report_written(
         output,
-        doc.clips.len(),
-        finding_count,
-        html.len(),
+        report.clip_count,
+        report.finding_count,
+        report.html.len(),
     ));
     Ok(ExitCode::SUCCESS)
 }
@@ -2013,23 +2011,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 Severity::Error,
                 &BTreeSet::new(),
             )?;
-            let doc = loaded.document();
-            let evaluations = analysis.report.checks();
-            let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
-            let (html, finding_count) = match &comparison_after {
-                None => (
-                    animsmith_report::render(animsmith_report::ReportInputs {
-                        source: &loaded.source,
-                        grids: &analysis.grids,
-                        roles: &analysis.roles,
-                        evidence: &analysis.report,
-                        config,
-                        clip: clip.as_deref(),
-                        options: report_options,
-                    })
-                    .map_err(|error| error.to_string())?,
-                    finding_count,
-                ),
+            let report = match &comparison_after {
+                None => animsmith_report::render(animsmith_report::ReportInputs {
+                    source: &loaded.source,
+                    grids: &analysis.grids,
+                    roles: &analysis.roles,
+                    evidence: &analysis.report,
+                    config,
+                    clip: clip.as_deref(),
+                    options: report_options,
+                })
+                .map_err(|error| error.to_string())?,
                 Some((after_path, after_loaded)) => {
                     let before_clip = before_clip
                         .as_deref()
@@ -2045,7 +2037,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         Severity::Error,
                         &BTreeSet::new(),
                     )?;
-                    let html = animsmith_report::render_comparison(
+                    animsmith_report::render_comparison(
                         animsmith_report::ComparisonSide {
                             source: &loaded.source,
                             grids: &analysis.grids,
@@ -2064,24 +2056,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         },
                         report_options,
                     )
-                    .map_err(|error| error.to_string())?;
-                    let finding_count = finding_count
-                        + after_analysis
-                            .report
-                            .checks()
-                            .iter()
-                            .map(|check| check.findings().len())
-                            .sum::<usize>();
-                    (html, finding_count)
+                    .map_err(|error| error.to_string())?
                 }
             };
             write_report(
                 &output,
                 &report_inputs,
                 loaded_config.control_input(),
-                doc,
-                finding_count,
-                html,
+                report,
             )
         }
         Cmd::Transform {

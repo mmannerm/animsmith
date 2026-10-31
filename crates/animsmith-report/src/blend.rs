@@ -344,7 +344,8 @@ mod tests {
             clip: filter,
             ..ReportInputs::new(grids, &roles, source, &report, &config)
         })
-        .unwrap();
+        .unwrap()
+        .html;
         let raw = html
             .split_once("<script type=\"application/json\" id=\"report-data\">")
             .unwrap()

@@ -484,7 +484,8 @@ fn write_blend_goldens() {
         let html = render(ReportInputs::new(
             &grids, &roles, &source, &evidence, &config,
         ))
-        .unwrap();
+        .unwrap()
+        .html;
         assert_embedded_samples(&html, [&a, &b]);
         if let Some(path) = &output {
             std::fs::write(path.join(&html_name), html).unwrap();
