@@ -586,7 +586,11 @@ accessor's element, so an unwalkable layout passes parsing and reaches the
 reader.
 
 The same layout defect on an **animation sampler** is refused too, naming
-the clip and channel instead of a mesh:
+the clip and channel instead of a mesh. Both input times and output values
+must fit their declared views and the buffer bytes actually loaded. A truncated
+payload is an operator error (exit 2) for `lint`, `inspect`, and `measure`,
+never an empty animation. The `convert` and `assemble` producers classify
+this rejection from readable source bytes as an asset refusal (exit 1):
 
 ```console
 $ animsmith lint poisoned-track.gltf
@@ -606,6 +610,10 @@ reinterpretation:
 $ animsmith lint mistyped-track.gltf
 animsmith: animation 0 sampler 0 input for node 0 translation: accessor 0 is VEC3 of FLOAT, but the loader reads SCALAR of FLOAT
 ```
+
+Valid morph-weight channels remain unmodeled. Their sampler encodings,
+declared layouts, and resolved bytes still undergo the same checks; unsupported
+morph semantics do not permit malformed sampler data.
 
 ## Feature Flags
 
@@ -786,6 +794,11 @@ animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 For `.gltf` repairs, the JSON bytes captured when the input is opened are
 written unchanged, including when the output refers to the same file through
 another path spelling or link. The source JSON is not read again during writing.
+
+Before changing a rotation accessor, `fix` checks that its entire declared
+view and strided elements fit both the declaration and the loaded buffer.
+An unsafe layout is reported as a skipped track and left byte-identical,
+including any adjacent accessor; bytes outside its view are never repair data.
 
 ## Engine profiles and importer settings
 

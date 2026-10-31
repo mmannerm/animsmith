@@ -904,7 +904,7 @@ fn check_primitive_accessor(
             expected: describe_encoding(required),
         });
     }
-    if let Some(problem) = unreadable_primitive_layout(accessor, buffers) {
+    if let Some(problem) = unreadable_loaded_layout(accessor, buffers) {
         return Err(LoadError::PrimitiveAccessorLayout {
             mesh: mesh.index(),
             primitive: primitive.index(),
@@ -916,12 +916,9 @@ fn check_primitive_accessor(
     Ok(())
 }
 
-/// Why a modeled primitive accessor cannot be walked against both the JSON
+/// Why an accessor cannot be walked against both the JSON
 /// declarations and the bytes that buffer resolution actually returned.
-fn unreadable_primitive_layout(
-    accessor: &gltf::Accessor<'_>,
-    buffers: &[Vec<u8>],
-) -> Option<String> {
+fn unreadable_loaded_layout(accessor: &gltf::Accessor<'_>, buffers: &[Vec<u8>]) -> Option<String> {
     unreadable_layout(accessor).or_else(|| {
         if let Some(view) = accessor.view()
             && let Some(problem) = loaded_buffer_shortfall("elements", &view, buffers)
@@ -961,8 +958,8 @@ fn loaded_buffer_shortfall(
 /// `read_inputs` and `read_outputs` each build their own `Iter` over their
 /// own accessor, so an `input` and an `output` are judged separately and
 /// both before either reader exists. The layout shapes are exactly the ones
-/// [`unreadable_layout`] names for a primitive slot — the panic is in the
-/// shared accessor iterator, not in anything primitive-specific.
+/// [`unreadable_loaded_layout`] names for a primitive slot — the reader
+/// requires both a walkable declaration and all of its resolved bytes.
 ///
 /// **Layout only.** This judges *how* a sampler accessor addresses its
 /// bytes: its view's extent, its `byteStride`, its `sparse` count, and the
@@ -975,8 +972,9 @@ fn check_sampler_accessor(
     node: usize,
     slot: &'static str,
     accessor: &gltf::Accessor<'_>,
+    buffers: &[Vec<u8>],
 ) -> Result<(), LoadError> {
-    match unreadable_layout(accessor) {
+    match unreadable_loaded_layout(accessor, buffers) {
         Some(problem) => Err(LoadError::AnimationAccessorLayout {
             clip: clip.to_owned(),
             node,
@@ -1088,9 +1086,9 @@ fn unreadable_layout(accessor: &gltf::Accessor<'_>) -> Option<String> {
 /// itself, so [`unwalkable`] asks this before the reader is ever built — for a
 /// primitive slot in [`check_primitive_accessor`], for a skin's
 /// `inverseBindMatrices` in [`inverse_bind_is_readable`], and for an animation
-/// sampler's `input` and `output` in [`check_sampler_accessor`]. Primitive
-/// slots additionally compare the result with the resolved buffer length in
-/// [`loaded_buffer_shortfall`].
+/// sampler's `input` and `output` in [`check_sampler_accessor`]. Primitive and
+/// sampler slots additionally compare the result with the resolved buffer
+/// length in [`loaded_buffer_shortfall`], as does surgical repair admission.
 fn view_end(view: &gltf::buffer::View<'_>) -> Option<usize> {
     view.offset().checked_add(view.length())
 }
@@ -2657,8 +2655,8 @@ fn build_document(
             }
             // The layout the accessor declares is the other way, and each
             // half of the reader has to be judged on its own accessor.
-            check_sampler_accessor(&name, node, "input", &sampler.input())?;
-            check_sampler_accessor(&name, node, "output", &sampler.output())?;
+            check_sampler_accessor(&name, node, "input", &sampler.input(), buffers)?;
+            check_sampler_accessor(&name, node, "output", &sampler.output(), buffers)?;
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(Vec::as_slice));
             let times = reader.read_inputs().map(|it| it.collect::<Vec<f32>>());
             if let Some(pending) = pending_facts.as_mut()

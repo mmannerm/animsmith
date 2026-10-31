@@ -328,6 +328,63 @@ fn push_view(
     views.len() - 1
 }
 
+/// The declared layouts remain valid, but the resolved data URI ends before
+/// one sparse view. Both sampler slots must fail at that view, rather than
+/// turning an unreadable channel into an empty clip.
+#[test]
+fn sampler_sparse_views_must_fit_the_loaded_bytes() {
+    for input in [true, false] {
+        let sparse = Sparse::replacing_first(if input {
+            f32s(&[0.25])
+        } else {
+            f32s(&[0.0, 0.0, 0.0, 1.0])
+        });
+        let clip = if input {
+            Clip::new().input(|layout| layout.sparse = Some(sparse))
+        } else {
+            Clip::new().output(|layout| layout.sparse = Some(sparse))
+        };
+        let original: Value = serde_json::from_slice(&clip.to_json()).unwrap();
+        let uri = original["buffers"][0]["uri"].as_str().unwrap();
+        let blob = base64::engine::general_purpose::STANDARD
+            .decode(uri.split_once(',').unwrap().1)
+            .unwrap();
+        let (slot, accessor, first_view) = if input {
+            ("input", 0, 1)
+        } else {
+            ("output", 1, 2)
+        };
+        for (view, subject) in [(first_view, "indices"), (first_view + 1, "values")] {
+            let mut document = original.clone();
+            let offset = document["bufferViews"][view]["byteOffset"]
+                .as_u64()
+                .unwrap() as usize;
+            let length = document["bufferViews"][view]["byteLength"]
+                .as_u64()
+                .unwrap() as usize;
+            document["buffers"][0]["uri"] = json!(format!(
+                "data:application/octet-stream;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(&blob[..offset])
+            ));
+            let error = animsmith_gltf::load_bytes(
+                std::path::Path::new("short-sparse.gltf"),
+                &serde_json::to_vec(&document).unwrap(),
+            )
+            .expect_err("a truncated sparse view must be refused");
+            assert!(matches!(error, LoadError::AnimationAccessorLayout { .. }));
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "clip 'poisoned' node 0 sampler {slot}: accessor {accessor} reads its sparse \
+                     {subject} from buffer view {view}, whose byte extent ends at {} \
+                     beyond loaded buffer 0's {offset} bytes",
+                    offset + length
+                )
+            );
+        }
+    }
+}
+
 // --- Shape 1: a buffer view whose own extent overflows ----------------
 //
 // Three views reach the reader for one accessor — its own, and a sparse

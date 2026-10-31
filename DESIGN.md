@@ -202,8 +202,8 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
 - **Malformation policy**: *structural* malformation — keyframe/value
   count mismatch, zero-key channels, absolute or escaping external
   buffer URIs, non-forest node graphs (cycles or a node with two
-  parents), or a primitive accessor whose dense or sparse byte extent its
-  declared buffer view or resolved buffer bytes cannot satisfy, an integer
+  parents), or a primitive or animation sampler accessor whose dense or sparse
+  byte extent its declared buffer view or resolved buffer bytes cannot satisfy, an integer
   `TEXCOORD_0` or `WEIGHTS_0` accessor that omits `normalized: true`, or an
   animation sampler accessor whose declared element does not match its
   property-selected reader — is rejected
@@ -220,6 +220,10 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   `PrimitiveAccessorLayout` refusal; inverse-bind shortfalls remain typed
   source evidence because that domain already models unavailable bind
   declarations (decision recorded for #329).
+  Animation byte shortfalls use `AnimationAccessorLayout` with clip, node,
+  sampler slot and accessor identity. Surgical repairs share the checks of
+  declared layout and resolved bytes but skip unsafe tracks without mutating
+  them; the surgical writer remains separate from document loading.
   Sampler input is `SCALAR`/`FLOAT`; translation and scale output are
   `VEC3`/`FLOAT`; rotation output retains all five glTF quaternion encodings
   (`BYTE`, `UNSIGNED_BYTE`, `SHORT`, `UNSIGNED_SHORT`, `FLOAT`) as `VEC4`,
