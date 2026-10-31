@@ -4666,8 +4666,10 @@ The strict CLI-local reader supports collection-output:12 in addition to the
 current collection-output:11 writer and historical revisions. V12 introduces a
 post-load `sampling_limit_exceeded` document state, retaining input/config/closure
 and observed-take authority; its logical clips and runtime members cannot claim
-established measurements. Historical V11 forbids the new state. A refused
-analysis takes precedence over selector and oversized nested-name availability.
+established measurements. Historical V11 forbids the new state. The source
+refusal precedes oversized nested-name availability. Logical clips retain
+independently witnessed selector/digest/closure errors; the sampling refusal
+applies only after those binding prerequisites resolve.
 
 Evaluation-model V3 binds exact V12 bytes and source states. V2 remains frozen on
 V11. Both use one bounded captured buffer, the revision-specific Rust validation

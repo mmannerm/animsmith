@@ -2884,22 +2884,13 @@ fn validate_clip(
     clip: &CollectionClipWire,
     source: &CollectionSourceWire,
 ) -> Result<(), CollectionOutputError> {
-    // A post-load sampling refusal precedes binding: neither a selected take
-    // nor another generic unavailable reason may hide the refused analysis.
     let sampling_refused = matches!(
         source.result,
         DocumentResultWire::Unavailable {
             reason: DocumentUnavailableReason::SamplingLimit
         }
     );
-    if sampling_refused
-        != matches!(
-            clip.binding,
-            ClipBindingStateWire::Unavailable {
-                reason: ClipUnavailableReason::SamplingLimitExceeded
-            }
-        )
-    {
+    if sampling_refused && matches!(clip.binding, ClipBindingStateWire::Established { .. }) {
         return Err(CollectionOutputError::Malformed);
     }
     match &clip.binding {
@@ -3011,7 +3002,13 @@ fn validate_clip(
             }
         }
         ClipBindingStateWire::Unavailable { reason } => match reason {
-            ClipUnavailableReason::SamplingLimitExceeded => {},
+            ClipUnavailableReason::SamplingLimitExceeded => {
+                if !sampling_refused
+                    || !matches!(source.digest, DigestPinStateWire::Unpinned | DigestPinStateWire::Matched { .. })
+                    || !matches!(source.dependency_closure, SourceDependencyClosureStateWire::Complete { .. })
+                    || !has_matching_normalized_take(clip, source)
+                { return Err(CollectionOutputError::Malformed); }
+            },
             ClipUnavailableReason::SourceUnavailable => {
                 if !matches!(source.input, SourceInputStateWire::Unavailable { .. }) { return Err(CollectionOutputError::Malformed); }
             }
@@ -3019,7 +3016,7 @@ fn validate_clip(
                 if !matches!(source.digest, DigestPinStateWire::Mismatched { .. }) { return Err(CollectionOutputError::Malformed); }
             }
             ClipUnavailableReason::LoaderUnavailable | ClipUnavailableReason::DocumentUnavailable => {
-                if !matches!(source.loader, LoaderStateWire::Unavailable { .. }) && !matches!(source.result, DocumentResultWire::Unavailable { .. }) { return Err(CollectionOutputError::Malformed); }
+                if sampling_refused || (!matches!(source.loader, LoaderStateWire::Unavailable { .. }) && !matches!(source.result, DocumentResultWire::Unavailable { .. })) { return Err(CollectionOutputError::Malformed); }
             }
             ClipUnavailableReason::DependencyClosureIncomplete => {
                 if !matches!(source.loader, LoaderStateWire::Ready)
@@ -3031,14 +3028,7 @@ fn validate_clip(
                         source.dependency_closure,
                         SourceDependencyClosureStateWire::Complete { .. }
                     )
-                    || !source.observed_takes.iter().any(|take| {
-                        take.source_take_index == clip.take_index
-                            && matches!(
-                                &take.name,
-                                TakeNameState::Available { value } if value == &clip.take_name
-                            )
-                            && matches!(take.normalized, NormalizedClipState::Available { .. })
-                    })
+                    || !has_matching_normalized_take(clip, source)
                 {
                     return Err(CollectionOutputError::Malformed);
                 }
@@ -3062,6 +3052,15 @@ fn validate_clip(
     }
     Ok(())
 }
+
+fn has_matching_normalized_take(clip: &CollectionClipWire, source: &CollectionSourceWire) -> bool {
+    source.observed_takes.iter().any(|take| {
+        take.source_take_index == clip.take_index
+            && matches!(&take.name, TakeNameState::Available { value } if value == &clip.take_name)
+            && matches!(take.normalized, NormalizedClipState::Available { .. })
+    })
+}
+
 fn validate_set(
     set: &RuntimeSetWire,
     clips: &BTreeMap<&str, &ClipBindingStateWire>,
@@ -3695,6 +3694,63 @@ mod tests {
         downgraded["schema"] = COLLECTION_OUTPUT_V11_ID.into();
         downgraded["schema_version"] = COLLECTION_OUTPUT_V11_SCHEMA_VERSION.into();
         rejects(downgraded);
+    }
+
+    #[test]
+    fn refused_analysis_preserves_witnessed_binding_errors() {
+        let fixture: JsonValue = serde_json::from_slice(include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v12-sampling-refused.json"
+        )).unwrap();
+        let source: CollectionSourceWire =
+            serde_json::from_value(fixture["sources"][1].clone()).unwrap();
+        for (index, name, reason) in [
+            (99, "Walk", ClipUnavailableReason::TakeIndexMissing),
+            (
+                0,
+                "Mistyped take",
+                ClipUnavailableReason::TakeNameMismatched,
+            ),
+        ] {
+            let mut clip: CollectionClipWire =
+                serde_json::from_value(fixture["clips"][1].clone()).unwrap();
+            clip.take_index = index;
+            clip.take_name = name.to_owned();
+            assert!(
+                validate_clip(&clip, &source).is_err(),
+                "sampling must not hide an unresolved selector"
+            );
+            clip.binding = ClipBindingStateWire::Unavailable { reason };
+            assert!(validate_clip(&clip, &source).is_ok());
+        }
+        for reason in [
+            ClipUnavailableReason::DigestMismatched,
+            ClipUnavailableReason::DependencyClosureIncomplete,
+        ] {
+            let mut source: CollectionSourceWire =
+                serde_json::from_value(fixture["sources"][1].clone()).unwrap();
+            let mut clip: CollectionClipWire =
+                serde_json::from_value(fixture["clips"][1].clone()).unwrap();
+            if reason == ClipUnavailableReason::DigestMismatched {
+                let SourceInputStateWire::Available { input } = &source.input else {
+                    unreachable!()
+                };
+                source.digest = DigestPinStateWire::Mismatched {
+                    expected_sha256: "0".repeat(64),
+                    observed_sha256: Some(input.sha256.clone()),
+                };
+            } else {
+                source.dependency_closure = SourceDependencyClosureStateWire::Partial {
+                    reasons: vec![DependencyClosureCoverageReasonV1::UnavailableResource],
+                };
+            }
+            assert!(validate_source(&source, CollectionOutputRevision::V12).is_ok());
+            assert!(
+                validate_clip(&clip, &source).is_err(),
+                "sampling must not hide a binding integrity error"
+            );
+            clip.binding = ClipBindingStateWire::Unavailable { reason };
+            assert!(validate_clip(&clip, &source).is_ok());
+        }
     }
 
     #[test]

@@ -345,23 +345,23 @@ enum CollectionCmd {
         /// Strict collection-manifest V1 TOML input.
         #[arg(value_name = "COLLECTION.toml")]
         manifest: PathBuf,
-        /// Emit the collection-output V3 JSON contract.
+        /// Emit the current collection-output V11 JSON contract.
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
     },
     /// Render a bounded current-state dashboard from strict collection evidence.
     #[cfg(feature = "report")]
     #[command(
-        long_about = "Render one self-contained offline current-state collection dashboard from strict current collection-output V11 evidence. The separately written collection-dashboard V1 JSON authority binds the exact collection-output bytes and any supplied compatible transition-pose evaluation. Filters only select displayed rows; they never alter incomplete or unavailable evidence. This command does not load source assets, infer clip semantics, score quality, or establish engine, retargeting, contacts, visual/artistic, or gameplay acceptance."
+        long_about = "Render one self-contained offline current-state collection dashboard from strict collection-output V11 or V12 evidence. The separately written collection-dashboard V1 (for V11) or V2 (for V12) JSON authority binds the exact collection-output bytes and any supplied compatible transition-pose evaluation. Filters only select displayed rows; they never alter incomplete or unavailable evidence. This command does not load source assets, infer clip semantics, score quality, or establish engine, retargeting, contacts, visual/artistic, or gameplay acceptance."
     )]
     Dashboard {
-        /// Strict current collection-output V11 JSON input.
+        /// Strict collection-output V11 or V12 JSON input.
         #[arg(long, value_name = "COLLECTION-OUTPUT.json")]
         collection: PathBuf,
         /// Destination self-contained HTML dashboard.
         #[arg(short, long)]
         output: PathBuf,
-        /// Destination collection-dashboard V1 JSON authority.
+        /// Destination collection-dashboard V1 or V2 JSON authority, matching the input revision.
         #[arg(long)]
         authority: PathBuf,
         /// Optional compatible collection transition-pose evaluation V1 JSON.

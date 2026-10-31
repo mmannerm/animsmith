@@ -152,9 +152,19 @@ fn v12_sampling_refusal_remains_visible_without_a_logical_clip_declaration() {
     ))
     .unwrap();
     let validator = jsonschema::validator_for(&schema).unwrap();
-    for declare_refused_clip in [true, false] {
+    for logical_reason in [
+        Some("sampling_limit_exceeded"),
+        Some("take_name_mismatched"),
+        None,
+    ] {
         let mut evidence = fixture.clone();
-        if !declare_refused_clip {
+        if logical_reason == Some("take_name_mismatched") {
+            evidence["clips"][1]["take_name"] = json!("Mistyped take");
+            evidence["clips"][1]["binding"]["reason"] = json!("take_name_mismatched");
+            evidence["runtime_sets"][0]["members"][1]["resolution"]["reason"] =
+                json!("take_name_mismatched");
+        }
+        if logical_reason.is_none() {
             evidence["clips"].as_array_mut().unwrap().pop();
             evidence["runtime_sets"] = json!([]);
             evidence["summary"]["clips"] = json!(1);
@@ -190,6 +200,7 @@ fn v12_sampling_refusal_remains_visible_without_a_logical_clip_declaration() {
         let refused = &view["view"]["sources"][1];
         assert_eq!(refused["input"], evidence["sources"][1]["input"]["input"]);
         assert_eq!(refused["loader"], "ready");
+        assert_eq!(refused["dependency_closure"], "complete");
         assert_eq!(
             refused["result"],
             json!({"state":"unavailable","reason":"sampling_limit_exceeded"})
@@ -221,8 +232,12 @@ fn v12_sampling_refusal_remains_visible_without_a_logical_clip_declaration() {
         );
         assert_eq!(
             view["summary"]["unavailable"],
-            usize::from(declare_refused_clip)
+            usize::from(logical_reason.is_some())
         );
+        if let Some(reason) = logical_reason {
+            assert_eq!(view["view"]["clips"][1]["availability"], reason);
+            assert!(rendered["clips"].as_str().unwrap().contains(reason));
+        }
     }
 }
 

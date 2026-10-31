@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:animsmith:schema:collection-dashboard:2",
   "title": "AnimSmith collection dashboard V2 authority",
-  "description": "Presentation-independent current-state projection of one exact current collection-output input.",
+  "description": "Presentation-independent current-state projection of one exact collection-output V12 input.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -1146,7 +1146,8 @@ impl CollectionDashboardAuthority {
                 .find(|source| source.key == clip.source)
                 .and_then(|source| source.result)
                 .is_some_and(DashboardDocumentResult::sampling_refused);
-            if sampling_refused != (clip.availability == "sampling_limit_exceeded")
+            if (clip.availability == "sampling_limit_exceeded" && !sampling_refused)
+                || (sampling_refused && clip.availability == "established")
                 || sampling_refused
                     && (clip.findings != 0
                         || clip.coverage_gaps != 0
@@ -1921,6 +1922,37 @@ mod tests {
         clip.coverage = super::DashboardCoverageV1::default();
         authority.summary.partial = authority.summary.partial.saturating_sub(1);
         authority.summary.unavailable += 1;
+    }
+
+    #[test]
+    fn readback_rejects_sampling_refusal_on_a_successfully_analyzed_source() {
+        let bytes = include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v12-sampling-refused.json"
+        );
+        let collection = super::collection_output::read_evaluation_collection_output(&bytes[..])
+            .unwrap()
+            .dashboard_input()
+            .unwrap();
+        let mut authority = super::build_authority(
+            animsmith_core::InputIdentity::from_bytes(bytes),
+            &collection,
+            None,
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(authority.validate_semantics().is_ok());
+        // Forge only the logical claim and its partition counts. The source
+        // and physical evidence still correctly describe successful analysis.
+        let clip = &mut authority.view.clips[0];
+        clip.availability = "sampling_limit_exceeded".to_owned();
+        clip.outcome = "unavailable".to_owned();
+        clip.coverage_gaps = 0;
+        clip.coverage = super::DashboardCoverageV1::default();
+        authority.summary.evaluated = 0;
+        authority.summary.unavailable = 2;
+        let error = validate_authority_readback(&serde_json::to_vec(&authority).unwrap())
+            .expect_err("logical refusal needs the same source refusal");
+        assert!(error.contains("logical clip contradicts source sampling refusal"));
     }
 
     #[test]
