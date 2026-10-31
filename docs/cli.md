@@ -783,6 +783,10 @@ animsmith fix clip.glb --in-place
 animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 ```
 
+For `.gltf` repairs, the JSON bytes captured when the input is opened are
+written unchanged, including when the output refers to the same file through
+another path spelling or link. The source JSON is not read again during writing.
+
 ## Engine profiles and importer settings
 
 An optional `[engine]` section selects one exact, versioned importer contract.

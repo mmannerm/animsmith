@@ -5498,6 +5498,129 @@ fn fix_in_place_writes_selected_repair() {
     );
 }
 
+/// Two identity rotation keys, with the second authored in the opposite
+/// hemisphere. Explicit bytes keep both the JSON and repaired-buffer oracle
+/// independent of the model writer and repair implementation.
+fn write_external_fix_fixture(dir: &std::path::Path) -> (Vec<u8>, Vec<u8>) {
+    let json = br#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "scene.bin", "byteLength": 40 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 8, "byteLength": 32 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "test",
+    "samplers": [{ "input": 0, "output": 1 }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}
+"#;
+    let original_buffer: Vec<u8> = [0.0_f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    let repaired_buffer = [0.0_f32, 1.0, 0.0, 0.0, 0.0, 1.0, -0.0, -0.0, -0.0, 1.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    std::fs::write(dir.join("scene.gltf"), json).expect("writes external-buffer JSON fixture");
+    std::fs::write(dir.join("scene.bin"), original_buffer).expect("writes animation buffer");
+    (json.to_vec(), repaired_buffer)
+}
+
+fn assert_external_fix_output(
+    dir: &std::path::Path,
+    output: &std::path::Path,
+    original_json: &[u8],
+    repaired_buffer: &[u8],
+) {
+    let result = animsmith()
+        .current_dir(dir)
+        .args(["fix", "scene.gltf", "--repair", "quat-flip", "-o"])
+        .arg(output)
+        .output()
+        .expect("runs external-buffer repair");
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "output {output:?}; stdout:\n{}\nstderr:\n{}",
+        stdout(&result),
+        stderr(&result)
+    );
+    let output_path = dir.join(output);
+    assert_eq!(std::fs::read(&output_path).unwrap(), original_json);
+    assert_eq!(
+        std::fs::read(dir.join("scene.gltf")).unwrap(),
+        original_json
+    );
+    assert_eq!(
+        std::fs::read(output_path.parent().unwrap().join("scene.bin")).unwrap(),
+        repaired_buffer
+    );
+    let loaded = animsmith_gltf::load(&output_path).expect("output remains parseable");
+    assert_eq!(loaded.clips.len(), 1);
+    assert_eq!(loaded.clips[0].tracks.len(), 1);
+    assert_eq!(loaded.clips[0].tracks[0].key_count(), 2);
+}
+
+#[test]
+fn fix_gltf_output_aliases_preserve_captured_json() {
+    for alias in ["identical", "dot", "absolute", "hardlink"] {
+        let dir = unique_temp_dir(&format!("fix-gltf-alias-{alias}"));
+        let (json, repaired_buffer) = write_external_fix_fixture(dir.path());
+        let output = match alias {
+            "identical" => PathBuf::from("scene.gltf"),
+            "dot" => PathBuf::from("./scene.gltf"),
+            "absolute" => dir.path().join("scene.gltf"),
+            "hardlink" => {
+                let output = PathBuf::from("scene-hard.gltf");
+                std::fs::hard_link(dir.path().join("scene.gltf"), dir.path().join(&output))
+                    .expect("creates hardlink alias");
+                output
+            }
+            _ => unreachable!("fixed alias cases"),
+        };
+        assert_external_fix_output(dir.path(), &output, &json, &repaired_buffer);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_gltf_symlink_output_preserves_captured_json() {
+    let dir = unique_temp_dir("fix-gltf-symlink");
+    let (json, repaired_buffer) = write_external_fix_fixture(dir.path());
+    let output = PathBuf::from("scene-link.gltf");
+    std::os::unix::fs::symlink("scene.gltf", dir.path().join(&output))
+        .expect("creates symlink alias");
+    assert_external_fix_output(dir.path(), &output, &json, &repaired_buffer);
+}
+
+#[test]
+fn fix_gltf_distinct_output_directory_preserves_the_source_pair() {
+    let dir = unique_temp_dir("fix-gltf-output-directory");
+    let (json, repaired_buffer) = write_external_fix_fixture(dir.path());
+    let original_buffer = std::fs::read(dir.path().join("scene.bin")).unwrap();
+    std::fs::create_dir(dir.path().join("out")).expect("creates output directory");
+    assert_external_fix_output(
+        dir.path(),
+        std::path::Path::new("out/scene-fixed.gltf"),
+        &json,
+        &repaired_buffer,
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("scene.bin")).unwrap(),
+        original_buffer
+    );
+}
+
 #[test]
 fn help_matches_compiled_feature_set() {
     let output = animsmith().arg("--help").output().expect("runs animsmith");

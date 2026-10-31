@@ -360,15 +360,18 @@ impl FixSession {
         report
     }
 
-    /// Write the patched buffers, preserving the original container bytes.
+    /// Write the patched buffers, preserving the captured container bytes.
+    ///
+    /// The container is not read again from disk. `input` remains accepted for
+    /// API compatibility; the bytes captured by [`Self::read`] are authoritative.
     ///
     /// # Errors
     ///
     /// Returns [`FixError::Load`] if the original container framing cannot
     /// be safely reassembled, or [`FixError::Write`] if writing the output
     /// path fails.
-    pub fn write(&self, input: &Path, output: &Path) -> Result<(), FixError> {
-        write_patched(input, output, &self.original, &self.gltf, &self.buffers)
+    pub fn write(&self, _input: &Path, output: &Path) -> Result<(), FixError> {
+        write_patched(output, &self.original, &self.gltf, &self.buffers)
     }
 }
 
@@ -403,7 +406,6 @@ fn write_rotation(buffer: &mut [u8], layout: RotationLayout, element: usize, q: 
 /// Reassemble the container with the original structure and the
 /// patched buffer bytes.
 fn write_patched(
-    input: &Path,
     output: &Path,
     original: &[u8],
     gltf: &gltf::Gltf,
@@ -473,13 +475,10 @@ fn write_patched(
         return write_uri_buffers(output, gltf, buffers);
     }
 
-    // .gltf: the JSON is untouched; copy it through and write each
-    // patched non-data-URI buffer back to its own file (resolved
-    // against the OUTPUT location so `-o elsewhere/` keeps the pair
-    // together).
-    if input != output {
-        std::fs::copy(input, output).map_err(io_err(output))?;
-    }
+    // .gltf: emit the captured JSON rather than copying from a path that may
+    // alias the output. A self-copy can truncate the source before reading it.
+    // External buffers remain resolved against the output location.
+    std::fs::write(output, original).map_err(io_err(output))?;
     write_uri_buffers(output, gltf, buffers)
 }
 
