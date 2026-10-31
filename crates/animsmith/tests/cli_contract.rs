@@ -5499,6 +5499,74 @@ fn fix_in_place_writes_selected_repair() {
 }
 
 #[test]
+fn fix_copy_refuses_shared_source_sidecars_before_publishing_success() {
+    let dir = unique_temp_dir("fix-copy-sidecars");
+    let input = dir.path().join("scene.gltf");
+    let json = br#"{
+  "asset":{"version":"2.0"}, "nodes":[{"name":"joint"}],
+  "buffers":[{"uri":"scene%2Ebin","byteLength":40}],
+  "bufferViews":[{"buffer":0,"byteLength":8},{"buffer":0,"byteOffset":8,"byteLength":32}],
+  "accessors":[
+    {"bufferView":0,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},
+    {"bufferView":1,"componentType":5126,"count":2,"type":"VEC4"}],
+  "animations":[{"samplers":[{"input":0,"output":1}],
+    "channels":[{"sampler":0,"target":{"node":0,"path":"rotation"}}]}]
+}"#;
+    let original: Vec<u8> = [0.0f32, 1., 0., 1., 0., 0., 0.6, -0.8, 0., 0.]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    std::fs::write(&input, json).unwrap();
+    std::fs::write(dir.path().join("scene.bin"), &original).unwrap();
+    let output = dir.path().join("fixed.gltf");
+    std::fs::write(&output, b"previous output").unwrap();
+    let result = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--repair", "quat-flip"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2));
+    assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+    assert!(
+        stderr(&result).contains("separate output directory"),
+        "{}",
+        stderr(&result)
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"previous output");
+    assert_eq!(std::fs::read(&input).unwrap(), json);
+    assert_eq!(
+        std::fs::read(dir.path().join("scene.bin")).unwrap(),
+        original
+    );
+
+    let out = dir.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+    let result = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("-o")
+        .arg(out.join("fixed.gltf"))
+        .args(["--repair", "quat-flip"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+    let repaired: Vec<u8> = [0.0f32, 1., 0., 1., 0., 0., -0.6, 0.8, -0., -0.]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    assert_eq!(std::fs::read(out.join("scene.bin")).unwrap(), repaired);
+    assert_eq!(std::fs::read(out.join("fixed.gltf")).unwrap(), json);
+    assert_eq!(std::fs::read(&input).unwrap(), json);
+    assert_eq!(
+        std::fs::read(dir.path().join("scene.bin")).unwrap(),
+        original
+    );
+}
+
+#[test]
 fn help_matches_compiled_feature_set() {
     let output = animsmith().arg("--help").output().expect("runs animsmith");
 
