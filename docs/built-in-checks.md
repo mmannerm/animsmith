@@ -89,7 +89,9 @@ only after an explicit `note`, `warn`, or `error` severity.
 
 - Default findings: `error`.
 - Measurement and finding: reports the worst rotation key whose quaternion norm
-  deviates materially from `1.0`.
+  deviates materially from `1.0`. Norms use `f64` arithmetic, matching repair
+  admission at the shared `1e-3` tolerance and keeping every finite `f32` key's
+  measured magnitude finite.
 - Prerequisites and applicability: none. This is generic file-ready coverage.
 - Config, defaults, and units: `[checks.quat-norm] severity` only.
 - Inactive, not-applicable, and coverage gaps: never `not_applicable` and no

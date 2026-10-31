@@ -3300,8 +3300,12 @@ fn prepare_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
                 Interpolation::CubicSpline => key * 3 + 1,
                 _ => key,
             };
-            let mut value = values[index];
-            if !value.is_finite() || value.length_squared() <= f32::EPSILON {
+            let value = values[index];
+            // Finite f32 components can overflow or underflow a squared f32
+            // norm. Keep magnitude admission and normalization in f64.
+            let wide = value.as_dquat();
+            let norm = wide.length();
+            if !value.is_finite() || norm == 0.0 {
                 return Err(format!(
                     "clip {:?} has a non-finite or zero quaternion at bone {} key {key}",
                     clip.name, track.bone
@@ -3310,13 +3314,6 @@ fn prepare_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
             if interpolation == Interpolation::CubicSpline {
                 // Preserve accepted rounding, signs and tangents exactly. Even
                 // value-only normalization changes the component Hermite curve.
-                // Widen before squaring: finite f32 components cannot overflow f64.
-                let norm = value
-                    .to_array()
-                    .into_iter()
-                    .map(|component| f64::from(component).powi(2))
-                    .sum::<f64>()
-                    .sqrt();
                 let tolerance = animsmith_core::QUAT_NORM_TOLERANCE;
                 if (norm - 1.0).abs() > f64::from(tolerance) {
                     return Err(format!(
@@ -3325,8 +3322,7 @@ fn prepare_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
                     ));
                 }
             } else {
-                value = value.normalize();
-                values[index] = value;
+                values[index] = wide.normalize().as_quat();
             }
         }
     }

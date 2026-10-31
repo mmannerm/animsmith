@@ -2609,6 +2609,97 @@ fn assembly_preserves_in_band_cubic_magnitudes_and_refuses_curve_changing_cleanu
 }
 
 #[test]
+fn assembly_normalizes_finite_linear_and_step_quaternions_without_overflow_or_underflow() {
+    for (interpolation, magnitude) in [
+        ("LINEAR", f32::MAX),
+        ("LINEAR", 1e20),
+        ("LINEAR", f32::from_bits(1)),
+        ("STEP", f32::MAX),
+        ("STEP", 1e20),
+        ("STEP", f32::from_bits(1)),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let authored = [[0.0, 0.0, magnitude, magnitude]; 2];
+        write_rotation_cleanup_fixture(dir.path(), interpolation, &authored, false);
+        let source_path = dir.path().join("inputs/clips.glb");
+        let source = std::fs::read(&source_path).unwrap();
+        assert_eq!(raw_rotation_components(&source_path).1, authored);
+        let output = run(dir.path());
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (mode, values) = raw_rotation_components(&dir.path().join("character.glb"));
+        assert_eq!(
+            mode,
+            if interpolation == "LINEAR" {
+                gltf::animation::Interpolation::Linear
+            } else {
+                gltf::animation::Interpolation::Step
+            }
+        );
+        assert_eq!(values.len(), 2);
+        for value in values {
+            assert_eq!(&value[..2], &[0.0, 0.0]);
+            for component in &value[2..] {
+                assert!((f64::from(*component) - std::f64::consts::FRAC_1_SQRT_2).abs() < 3e-8);
+            }
+            let norm_squared = value.map(f64::from).iter().map(|v| v * v).sum::<f64>();
+            assert!((norm_squared - 1.0).abs() < 1e-7);
+        }
+        assert_eq!(std::fs::read(source_path).unwrap(), source);
+    }
+}
+
+#[test]
+fn assembly_refuses_exactly_zero_quaternions_before_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    write_rotation_cleanup_fixture(
+        dir.path(),
+        "LINEAR",
+        &[[0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+        false,
+    );
+    let source_path = dir.path().join("inputs/clips.glb");
+    let source = std::fs::read(&source_path).unwrap();
+    std::fs::write(dir.path().join("character.glb"), b"artifact sentinel").unwrap();
+    std::fs::write(
+        dir.path().join("character.assembly.json"),
+        b"evidence sentinel",
+    )
+    .unwrap();
+    let output = run_args(
+        dir.path(),
+        &[
+            "recipe.toml",
+            "-o",
+            "character.glb",
+            "--evidence",
+            "character.assembly.json",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let refusal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(refusal["rejection"]["kind"], "transform-refused");
+    let detail = refusal["rejection"]["detail"].as_str().unwrap();
+    assert!(detail.contains("zero quaternion"), "{detail}");
+    assert!(detail.contains("bone 0 key 0"), "{detail}");
+    assert_eq!(
+        std::fs::read(dir.path().join("character.glb")).unwrap(),
+        b"artifact sentinel"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+        b"evidence sentinel"
+    );
+    assert_eq!(std::fs::read(source_path).unwrap(), source);
+}
+
+#[test]
 fn assembly_keeps_linear_and_step_quaternion_cleanup() {
     for interpolation in ["LINEAR", "STEP"] {
         let dir = tempfile::tempdir().unwrap();
