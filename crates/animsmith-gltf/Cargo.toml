@@ -29,6 +29,9 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 image = { workspace = true }
 sha2 = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 animsmith-testkit = { path = "../animsmith-testkit" }

@@ -222,6 +222,34 @@ animsmith-gltf = "0.14"
 The compiling load/check and repair examples live in the crate-level API
 documentation.
 
+`FixSession::write` preflights the primary and all external-buffer destinations
+before changing existing bytes. A distinct primary output must preserve the
+source primary, buffers, and safe local image keys, including missing images. Use a
+separate output directory when a same-directory copy would share sidecars.
+In-place repair permits each resource's own file, but two destinations may
+never alias through hardlinks or followed symlinks. Source locations are
+captured by `FixSession::read`; they are not inferred from the later `write`
+input argument. JSON and URI spellings remain unchanged. Collision and
+unavailable file-identity errors return `WriteError::RepairPublication` before
+any existing primary/sidecar bytes change. Missing output names are reserved as
+empty files in their actual directories so filesystem aliases, including Windows
+short names, are checked against the real namespace. Normal refusal removes
+reservations; interruption can leave empty placeholders, even when a later
+dependency is missing. Files are opened without truncation during preflight and
+published through retained handles, so write permission is required before
+admission. In-place `.gltf` repair also republishes the captured JSON, so its
+primary file must be writable even when the JSON is unchanged. Later I/O errors
+or interruption can leave an incomplete primary or sidecar; rollback and
+concurrent namespace transactions are not guaranteed. On Unix, distinct JSON
+copies inherit captured source access permissions. New reservations are no
+broader than those permissions; existing copies are restricted before writing
+and receive the exact source mode only after a successful overwrite. In-place
+primary, GLB and sidecar permission behavior is unchanged.
+Windows JSON copies preserve the captured read-only attribute. Distinct copies
+of encrypted JSON sources are refused to avoid emitting plaintext; use an
+EFS-aware copy workflow or repair the original in place. Other Windows metadata
+and alternate data streams are not copied.
+
 ## Feature Flags
 
 This crate has no public feature flags. In the `animsmith` CLI, glTF

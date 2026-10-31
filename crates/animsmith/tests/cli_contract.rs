@@ -5498,6 +5498,247 @@ fn fix_in_place_writes_selected_repair() {
     );
 }
 
+/// Two identity rotation keys, with the second authored in the opposite
+/// hemisphere. Explicit bytes keep both the JSON and repaired-buffer oracle
+/// independent of the model writer and repair implementation.
+fn write_external_fix_fixture(dir: &std::path::Path) -> (Vec<u8>, Vec<u8>) {
+    let json = br#"{
+  "asset": { "version": "2.0" },
+  "buffers": [{ "uri": "scene.bin", "byteLength": 40 }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 8, "byteLength": 32 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ],
+  "nodes": [{ "name": "root" }],
+  "animations": [{
+    "name": "test",
+    "samplers": [{ "input": 0, "output": 1 }],
+    "channels": [{ "sampler": 0, "target": { "node": 0, "path": "rotation" } }]
+  }],
+  "scenes": [{ "nodes": [0] }],
+  "scene": 0
+}
+"#;
+    let original_buffer: Vec<u8> = [0.0_f32, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    let repaired_buffer = [0.0_f32, 1.0, 0.0, 0.0, 0.0, 1.0, -0.0, -0.0, -0.0, 1.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    std::fs::write(dir.join("scene.gltf"), json).expect("writes external-buffer JSON fixture");
+    std::fs::write(dir.join("scene.bin"), original_buffer).expect("writes animation buffer");
+    (json.to_vec(), repaired_buffer)
+}
+
+fn assert_external_fix_output(
+    dir: &std::path::Path,
+    output: &std::path::Path,
+    original_json: &[u8],
+    repaired_buffer: &[u8],
+) {
+    let result = animsmith()
+        .current_dir(dir)
+        .args(["fix", "scene.gltf", "--repair", "quat-flip", "-o"])
+        .arg(output)
+        .output()
+        .expect("runs external-buffer repair");
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "output {output:?}; stdout:\n{}\nstderr:\n{}",
+        stdout(&result),
+        stderr(&result)
+    );
+    let output_path = dir.join(output);
+    assert_eq!(std::fs::read(&output_path).unwrap(), original_json);
+    assert_eq!(
+        std::fs::read(dir.join("scene.gltf")).unwrap(),
+        original_json
+    );
+    assert_eq!(
+        std::fs::read(output_path.parent().unwrap().join("scene.bin")).unwrap(),
+        repaired_buffer
+    );
+    let loaded = animsmith_gltf::load(&output_path).expect("output remains parseable");
+    assert_eq!(loaded.clips.len(), 1);
+    assert_eq!(loaded.clips[0].tracks.len(), 1);
+    assert_eq!(loaded.clips[0].tracks[0].key_count(), 2);
+}
+
+#[test]
+fn fix_gltf_output_aliases_preserve_captured_json() {
+    for alias in ["identical", "dot", "absolute", "hardlink"] {
+        let dir = unique_temp_dir(&format!("fix-gltf-alias-{alias}"));
+        let (json, repaired_buffer) = write_external_fix_fixture(dir.path());
+        let output = match alias {
+            "identical" => PathBuf::from("scene.gltf"),
+            "dot" => PathBuf::from("./scene.gltf"),
+            "absolute" => dir.path().join("scene.gltf"),
+            "hardlink" => {
+                let output = PathBuf::from("scene-hard.gltf");
+                std::fs::hard_link(dir.path().join("scene.gltf"), dir.path().join(&output))
+                    .expect("creates hardlink alias");
+                output
+            }
+            _ => unreachable!("fixed alias cases"),
+        };
+        assert_external_fix_output(dir.path(), &output, &json, &repaired_buffer);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_gltf_symlink_output_preserves_captured_json() {
+    let dir = unique_temp_dir("fix-gltf-symlink");
+    let (json, repaired_buffer) = write_external_fix_fixture(dir.path());
+    let output = PathBuf::from("scene-link.gltf");
+    std::os::unix::fs::symlink("scene.gltf", dir.path().join(&output))
+        .expect("creates symlink alias");
+    assert_external_fix_output(dir.path(), &output, &json, &repaired_buffer);
+}
+
+#[test]
+fn fix_copy_refuses_shared_source_sidecars_before_publishing_success() {
+    let dir = unique_temp_dir("fix-copy-sidecars");
+    let input = dir.path().join("scene.gltf");
+    let json = br#"{
+  "asset":{"version":"2.0"}, "nodes":[{"name":"joint"}],
+  "buffers":[{"uri":"scene%2Ebin","byteLength":40}],
+  "bufferViews":[{"buffer":0,"byteLength":8},{"buffer":0,"byteOffset":8,"byteLength":32}],
+  "accessors":[
+    {"bufferView":0,"componentType":5126,"count":2,"type":"SCALAR","min":[0],"max":[1]},
+    {"bufferView":1,"componentType":5126,"count":2,"type":"VEC4"}],
+  "animations":[{"samplers":[{"input":0,"output":1}],
+    "channels":[{"sampler":0,"target":{"node":0,"path":"rotation"}}]}]
+}"#;
+    let original: Vec<u8> = [0.0f32, 1., 0., 1., 0., 0., 0.6, -0.8, 0., 0.]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    std::fs::write(&input, json).unwrap();
+    std::fs::write(dir.path().join("scene.bin"), &original).unwrap();
+    let output = dir.path().join("fixed.gltf");
+    std::fs::write(&output, b"previous output").unwrap();
+    let result = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .args(["--repair", "quat-flip"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2));
+    assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+    assert!(
+        stderr(&result).contains("separate output directory"),
+        "{}",
+        stderr(&result)
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"previous output");
+    assert_eq!(std::fs::read(&input).unwrap(), json);
+    assert_eq!(
+        std::fs::read(dir.path().join("scene.bin")).unwrap(),
+        original
+    );
+
+    let out = dir.path().join("out");
+    std::fs::create_dir(&out).unwrap();
+    let result = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("-o")
+        .arg(out.join("fixed.gltf"))
+        .args(["--repair", "quat-flip"])
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+    let repaired: Vec<u8> = [0.0f32, 1., 0., 1., 0., 0., -0.6, 0.8, -0., -0.]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    assert_eq!(std::fs::read(out.join("scene.bin")).unwrap(), repaired);
+    assert_eq!(std::fs::read(out.join("fixed.gltf")).unwrap(), json);
+    assert_eq!(std::fs::read(&input).unwrap(), json);
+    assert_eq!(
+        std::fs::read(dir.path().join("scene.bin")).unwrap(),
+        original
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn fix_json_write_errors_preserve_in_place_bytes_and_private_copy_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = unique_temp_dir("fix-json-write-error");
+    let input = dir.path().join("scene.gltf");
+    let original = format!("{{\"asset\":{{\"version\":\"2.0\"}}}}{}", " ".repeat(4096));
+    std::fs::write(&input, &original).unwrap();
+    // POSIX shells express this limit in blocks; either 512 or 1024 bytes is
+    // below our JSON length. Ignore SIGXFSZ so the real writer reports its I/O
+    // error. The limit applies only to this child, never the parallel test runner.
+    // Its LLVM profile would also be truncated, so discard only this limited
+    // child's coverage output; the test and unrestricted control stay covered.
+    let result = Command::new("sh")
+        .env("LLVM_PROFILE_FILE", "/dev/null")
+        .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "sh"])
+        .arg(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("fix")
+        .arg(&input)
+        .arg("--in-place")
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2), "{}", stderr(&result));
+    assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+    assert!(!stderr(&result).is_empty());
+    assert_eq!(std::fs::read(&input).unwrap(), original.as_bytes());
+
+    let control = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("--in-place")
+        .output()
+        .unwrap();
+    assert_eq!(control.status.code(), Some(0), "{}", stderr(&control));
+    assert_eq!(std::fs::read(&input).unwrap(), original.as_bytes());
+
+    // Both directions matter on failure: tighten a public destination before
+    // private bytes are written, and do not expose an older private destination
+    // while a public-source overwrite is incomplete.
+    let output = dir.path().join("copy.gltf");
+    for (source_mode, previous_mode) in [(0o600, 0o644), (0o644, 0o600)] {
+        std::fs::set_permissions(&input, std::fs::Permissions::from_mode(source_mode)).unwrap();
+        let previous = vec![b'x'; original.len() + 100];
+        std::fs::write(&output, &previous).unwrap();
+        std::fs::set_permissions(&output, std::fs::Permissions::from_mode(previous_mode)).unwrap();
+        let result = Command::new("sh")
+            .env("LLVM_PROFILE_FILE", "/dev/null")
+            .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "sh"])
+            .arg(env!("CARGO_BIN_EXE_animsmith"))
+            .arg("fix")
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2), "{}", stderr(&result));
+        assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+        assert_eq!(
+            std::fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), original.as_bytes());
+        let partial = std::fs::read(&output).unwrap();
+        assert_eq!(partial.len(), previous.len());
+        assert_eq!(&partial[original.len()..], &previous[original.len()..]);
+    }
+}
+
 #[test]
 fn help_matches_compiled_feature_set() {
     let output = animsmith().arg("--help").output().expect("runs animsmith");
@@ -12411,11 +12652,26 @@ fn fix_ownership_preserves_external_aliases_and_repairs_distinct_resources() {
                 let result = command.output().unwrap();
                 assert_eq!(
                     result.status.code(),
-                    Some(if write || alias { 0 } else { 1 }),
+                    Some(match (write, alias) {
+                        (true, true) => 2,
+                        (false, false) => 1,
+                        _ => 0,
+                    }),
                     "{}",
                     stderr(&result)
                 );
-                if alias {
+                if write && alias {
+                    assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+                    let error = stderr(&result);
+                    assert!(error.contains("output buffer 0"), "{error}");
+                    assert!(error.contains("aliases output buffer 1"), "{error}");
+                    for name in ["scene.gltf", "data.bin", "separate.bin"] {
+                        assert!(
+                            !output_dir.join(name).exists(),
+                            "refusal must remove the new {name} reservation"
+                        );
+                    }
+                } else if alias {
                     assert!(
                         stdout(&result).contains(
                             "ownership unavailable: /buffers/1/uri aliases /buffers/0/uri"
@@ -12431,22 +12687,32 @@ fn fix_ownership_preserves_external_aliases_and_repairs_distinct_resources() {
                 }
             }
             assert_eq!(std::fs::read(&input).unwrap(), json);
+            if alias {
+                let source_bytes = std::fs::read(dir.path().join("data.bin")).unwrap();
+                assert_eq!(source_bytes, blob);
+                let xs: [f32; 3] = std::array::from_fn(|vertex| {
+                    f32::from_le_bytes(
+                        source_bytes[24 + vertex * 12..28 + vertex * 12]
+                            .try_into()
+                            .unwrap(),
+                    )
+                });
+                assert_eq!(xs, [0.6, -0.8, 0.0]);
+                continue;
+            }
             assert_eq!(std::fs::read(output_dir.join("scene.gltf")).unwrap(), json);
             for (index, name) in ["data.bin", "separate.bin"].into_iter().enumerate() {
-                if alias && index == 1 {
-                    continue;
-                }
                 assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), blob);
                 let after = std::fs::read(output_dir.join(name)).unwrap();
                 let mut expected = blob.clone();
-                if !alias && index == rotation_buffer {
+                if index == rotation_buffer {
                     for (component, value) in [-0.6f32, -0.0, -0.0, 0.8].into_iter().enumerate() {
                         expected[24 + component * 4..28 + component * 4]
                             .copy_from_slice(&value.to_le_bytes());
                     }
                 }
                 assert_eq!(after, expected, "{uri}, rotation buffer {rotation_buffer}");
-                if alias || index != rotation_buffer {
+                if index != rotation_buffer {
                     let xs: [f32; 3] = std::array::from_fn(|vertex| {
                         f32::from_le_bytes(
                             after[24 + vertex * 12..28 + vertex * 12]

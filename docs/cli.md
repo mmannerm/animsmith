@@ -798,6 +798,41 @@ animsmith fix clip.glb --in-place
 animsmith fix clip.glb --repair quat-norm,quat-flip -o fixed.glb
 ```
 
+For an output copy, the primary file and every external buffer destination
+must be distinct from the source primary, buffers, and safe local image keys.
+For example, `fix scene.gltf -o fixed.gltf` is refused when both files would
+use the same `scene.bin`; create a separate output directory and write there,
+or choose `--in-place` to repair the original. JSON bytes and buffer URI
+spellings are preserved; repair does not rename sidecars or copy images.
+
+Before writing any primary or sidecar bytes, repair checks the complete
+destination set. Hardlinks and followed symlinks cannot make two destinations
+overwrite one another, even in-place. A collision or unavailable filesystem
+identity exits 2, leaves existing files unchanged, and emits no repair-success
+transcript. This preflight does not make later filesystem errors or interrupted
+multi-file writes transactional.
+
+Preflight reserves missing output names as empty files in their actual
+directories, checks all protected source paths again after those names exist,
+and holds writable file handles through publication. This detects filesystem
+aliases such as Windows short names without truncating existing files. A normal
+refusal removes the reservations; interruption can leave empty placeholders,
+even if a later dependency is missing. Write permission is required during
+preflight. In-place `.gltf` repair also republishes the captured JSON, so the
+primary must be writable even when its JSON is unchanged. After admission, an
+I/O failure or interruption can leave an incomplete primary or sidecar; rollback
+and concurrent directory/name transactions are not guaranteed. On Unix,
+distinct JSON copies inherit captured source access permissions. New
+reservations are no broader than those permissions; existing copies are
+restricted before writing and receive the exact source mode only after a
+successful overwrite. In-place primary, GLB and sidecar permission behavior
+is unchanged.
+
+Windows JSON copies preserve the captured read-only attribute. Distinct copies
+of encrypted JSON sources are refused to avoid emitting plaintext; use an
+EFS-aware copy workflow or repair the original in place. Other Windows metadata
+and alternate data streams are not copied.
+
 ## Engine profiles and importer settings
 
 An optional `[engine]` section selects one exact, versioned importer contract.

@@ -306,6 +306,10 @@ pub enum FixError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum WriteError {
+    /// Repair output paths overlap source resources or one another, or their
+    /// filesystem identity could not be established before writing.
+    #[error("repair publication refused: {0}")]
+    RepairPublication(String),
     /// The output file could not be written.
     #[error("failed to write {path}: {source}")]
     Io {
