@@ -4419,6 +4419,39 @@ class EvaluationModelTests(unittest.TestCase):
         model["clips"].reverse()
         self.assertIn("model.clips must be sorted by id", model_validator_v2.validate_model(model, binding, raw))
 
+    def test_v2_v3_projection_preserves_exact_original_references(self) -> None:
+        for version, validator in ((2, model_validator_v2), (3, model_validator_v3)):
+            with self.subTest(version=version):
+                if version == 2:
+                    model, binding, raw = self.valid()
+                else:
+                    raw = (Path(__file__).parents[1] / "fixtures" / "collection-output-v12-sampling-refused.json").read_bytes()
+                    binding = json.loads(raw)
+                    model = valid_evaluation_model_v2(binding, raw)
+                    model.update(schema=model_contract_v3.SCHEMA, schema_version=3)
+                clip_id = binding["clips"][0]["id"]
+                set_id = binding["runtime_sets"][0]["id"]
+                model["narratives"][0]["fact_refs"] = sorted(["evidence-a", clip_id, set_id])
+                self.assertEqual(validator.validate_model(model, binding, raw), [])
+                # Neither an old hash alias nor the first ordinal alias names
+                # any original fact. Both previously fabricated a known clip.
+                for unknown in ("v2:0000000000000000", "v2:" + hashlib.sha256(clip_id.encode()).hexdigest()):
+                    forged = copy.deepcopy(model)
+                    forged["narratives"][0]["fact_refs"] = [unknown]
+                    errors = validator.validate_model(forged, binding, raw)
+                    self.assertTrue(any("dangling references: " + unknown in error for error in errors), errors)
+                # Authored private-looking evidence is legal and must remain
+                # distinct from every clip/set, including in evidence-only refs.
+                private_id = "v2:0000000000000000"
+                evidence = dict(model["evidence"][0], id=private_id)
+                model["evidence"].append(evidence)
+                model["evidence"].sort(key=lambda item: item["id"])
+                model["clips"][0]["evidence_refs"] = [private_id]
+                model["narratives"][0]["fact_refs"] = sorted([clip_id, set_id, private_id])
+                self.assertEqual(validator.validate_model(model, binding, raw), [])
+                model["narratives"][0]["fact_refs"].reverse()
+                self.assertIn("model.narratives[0].fact_refs must be uniquely sorted", validator.validate_model(model, binding, raw))
+
     def test_v2_runtime_member_order_is_exact_even_when_membership_is_unchanged(self) -> None:
         model, binding, raw = self.valid()
         model["runtime_sets"][0]["members"].reverse()  # type: ignore[index]
