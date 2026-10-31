@@ -7,6 +7,7 @@
 //! (Rest-vs-inverse-bind disagreement is deferred: IBMs live in mesh
 //! space, which needs per-mesh space handling to compare fairly.)
 
+use super::constant_track::quaternion_angular_delta;
 use crate::check::{Check, CheckCtx};
 use crate::evaluation::{
     Applicability, CheckOutput, CoverageGap, CoverageGapCode, EvaluationScope, EvaluationScopeCode,
@@ -56,19 +57,10 @@ impl Check for BindPose {
                 let Some(first) = track.key_quat(0) else {
                     continue;
                 };
-                if !first.is_finite()
-                    || first.length_squared() == 0.0
-                    || !bone.rest.rotation.is_finite()
-                    || bone.rest.rotation.length_squared() == 0.0
-                {
+                let Some(angle) = quaternion_angular_delta(bone.rest.rotation, first) else {
                     continue;
-                }
-                let deg = bone
-                    .rest
-                    .rotation
-                    .normalize()
-                    .angle_between(first.normalize())
-                    .to_degrees() as f64;
+                };
+                let deg = f64::from(angle.to_degrees());
                 total_deg += deg;
                 counted += 1;
                 if worst.is_none_or(|(w, _)| deg > w) {
