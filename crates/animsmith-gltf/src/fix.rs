@@ -380,7 +380,8 @@ impl FixSession {
     /// The primary must be writable even when its JSON is unchanged. Later I/O
     /// failure or interruption can leave an incomplete primary or sidecar;
     /// neither rollback nor concurrent namespace transactions are guaranteed.
-    /// New files use creation permissions, not copied source permissions.
+    /// On Unix, new primary files inherit captured source access permissions;
+    /// existing destination permissions are unchanged.
     ///
     /// # Errors
     ///

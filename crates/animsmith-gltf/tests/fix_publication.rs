@@ -120,6 +120,41 @@ fn separate_directory_copy_preserves_json_uris_and_source_bytes() {
     assert_eq!(fs::read(dir.path().join("first.bin")).unwrap(), payload());
 }
 
+#[cfg(unix)]
+#[test]
+fn new_primary_copies_captured_permissions_but_existing_output_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let input = source(dir.path(), false, 0);
+    let original = fs::read(&input).unwrap();
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+    let session = session(&input);
+    // Both JSON and permissions belong to the captured session.
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o644)).unwrap();
+    let out = dir.path().join("out");
+    fs::create_dir(&out).unwrap();
+    let output = out.join("fixed.gltf");
+    session.write(&input, &output).unwrap();
+    assert_eq!(
+        fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(fs::read(&output).unwrap(), original);
+    assert_eq!(fs::read(out.join("first.bin")).unwrap(), repaired_payload());
+
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o640)).unwrap();
+    // A prior longer destination must end at the captured snapshot's exact length.
+    fs::write(&output, vec![b'x'; original.len() + 100]).unwrap();
+    session.write(&input, &output).unwrap();
+    assert_eq!(
+        fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    assert_eq!(fs::read(&output).unwrap(), original);
+    assert_eq!(fs::read(&input).unwrap(), original);
+    assert_eq!(fs::read(dir.path().join("first.bin")).unwrap(), payload());
+}
+
 #[test]
 fn hardlinked_buffers_refuse_both_write_orders_but_distinct_files_work() {
     for rotation_buffer in [0, 1] {

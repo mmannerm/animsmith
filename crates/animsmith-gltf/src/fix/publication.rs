@@ -38,6 +38,8 @@ struct Source {
 
 pub(super) struct Origin {
     sources: Vec<Source>,
+    #[cfg(unix)]
+    primary_mode: io::Result<u32>,
 }
 
 #[derive(Default)]
@@ -79,8 +81,10 @@ impl Destination {
         let mut file = &self.file;
         let mut write = || -> io::Result<()> {
             file.seek(SeekFrom::Start(0))?;
-            file.set_len(0)?;
-            file.write_all(bytes)
+            // Write before shortening so a refused write need not truncate an
+            // unchanged in-place JSON snapshot.
+            file.write_all(bytes)?;
+            file.set_len(bytes.len() as u64)
         };
         write().map_err(|source| {
             WriteError::Io {
@@ -171,6 +175,11 @@ impl Origin {
             path: input.display().to_string(),
             source,
         })?;
+        #[cfg(unix)]
+        let primary_mode = {
+            use std::os::unix::fs::PermissionsExt;
+            fs::metadata(&input).map(|metadata| metadata.permissions().mode() & 0o7777)
+        };
         let root = parent(&input);
         let mut paths = vec![(Role::Primary, input.clone())];
         for buffer in gltf.buffers() {
@@ -208,7 +217,11 @@ impl Origin {
                 }
             })
             .collect();
-        Ok(Self { sources })
+        Ok(Self {
+            sources,
+            #[cfg(unix)]
+            primary_mode,
+        })
     }
 
     pub(super) fn preflight(
@@ -265,7 +278,23 @@ impl Origin {
             if let Some(Identity::Missing(path)) =
                 resolve(&entry.path, true, 0).map_err(|e| inspect_error(&entry.path, &e))?
             {
-                match destination_options(true).create_new(true).open(&path) {
+                let mut options = destination_options(true);
+                #[cfg(unix)]
+                let primary_mode = if entry.role == Role::Primary {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let mode = *self.primary_mode.as_ref().map_err(|error| {
+                        WriteError::RepairPublication(format!(
+                            "cannot read captured source permissions: {error}"
+                        ))
+                    })?;
+                    // Creation must never expose a private source under broader
+                    // default permissions, even before admission finishes.
+                    options.mode(mode);
+                    Some(mode)
+                } else {
+                    None
+                };
+                match options.create_new(true).open(&path) {
                     Ok(file) => {
                         let id = match handle_id(&file) {
                             Ok(id) => id,
@@ -289,6 +318,19 @@ impl Origin {
                             id,
                             reserved: true,
                         });
+                        #[cfg(unix)]
+                        if let Some(mode) = primary_mode {
+                            use std::os::unix::fs::PermissionsExt;
+                            // Restore source bits removed by umask, through the
+                            // owned handle. Existing destinations are untouched.
+                            destinations
+                                .files
+                                .last()
+                                .expect("just retained the reservation")
+                                .file
+                                .set_permissions(fs::Permissions::from_mode(mode))
+                                .map_err(|error| inspect_error(&entry.path, &error))?;
+                        }
                     }
                     // A prior reservation may have created this alias. Resolve
                     // every entry again below, after ALL prospective names exist.
@@ -602,6 +644,30 @@ mod tests {
             .unwrap()
             .preflight(&dir.join("output.gltf"), &gltf)
             .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_primary_is_private_while_reserved() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.gltf");
+        let bytes = br#"{"asset":{"version":"2.0"}}"#;
+        fs::write(&input, bytes).unwrap();
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+        let gltf = gltf::Gltf::from_slice(bytes).unwrap();
+        let output = dir.path().join("output.gltf");
+        let destinations = Origin::capture(&input, &gltf)
+            .unwrap()
+            .preflight(&output, &gltf)
+            .unwrap();
+        assert_eq!(
+            fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&output).unwrap(), b"");
+        drop(destinations);
+        assert!(!output.exists());
     }
 
     #[cfg(unix)]

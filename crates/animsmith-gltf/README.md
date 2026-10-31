@@ -240,8 +240,9 @@ published through retained handles, so write permission is required before
 admission. In-place `.gltf` repair also republishes the captured JSON, so its
 primary file must be writable even when the JSON is unchanged. Later I/O errors
 or interruption can leave an incomplete primary or sidecar; rollback and
-concurrent namespace transactions are not guaranteed. New files use creation
-permissions rather than copied source permissions.
+concurrent namespace transactions are not guaranteed. On Unix, new primary
+files inherit captured source access permissions; existing destination
+permissions are unchanged.
 
 ## Feature Flags
 
