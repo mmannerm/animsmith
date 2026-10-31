@@ -4300,6 +4300,9 @@ class EvaluationModelTests(unittest.TestCase):
             model_path.write_bytes(model_contract_v3.canonical_json(model))
             binding_path.write_bytes(raw)
             common = [str(model_path), "--binding", str(binding_path), "--animsmith", str(self.animsmith)]
+            # Build the shared parser before timing report execution: a cold
+            # Cargo build is a prerequisite, not part of the runtime bound.
+            report_validator._parser_binary()
             for command in [
                 [str(Path(__file__).with_name("validate_evaluation_model_v3.py")), *common, "--check-canonical"],
                 [str(Path(__file__).with_name("render_evaluation_model.py")), *common, "--report", str(report_path), "--appendix", str(appendix_path)],
