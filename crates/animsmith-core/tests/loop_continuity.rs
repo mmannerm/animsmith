@@ -187,7 +187,8 @@ fn clean_stationary_loop_is_measured_without_roles_or_stride() {
     roles.profile = "intentionally-unresolved".into();
     let config = loop_config();
     let grids = MetricGrids::new(&doc);
-    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config);
+    let measurements = animsmith_core::measure::measure_document(&grids, &roles, &config)
+        .expect("fixture measurements fit sampling limits");
     let continuity = measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -250,7 +251,8 @@ fn angular_continuity_catches_a_rotational_cusp_with_no_linear_metric() {
         &grids,
         &ResolvedRoles::default(),
         &Config::default(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let metric = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -271,7 +273,8 @@ fn angular_continuity_uses_shortest_path_and_quaternion_sign_equivalence() {
         &grids,
         &ResolvedRoles::default(),
         &Config::default(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let clean_metric = clean["guard"]
         .loop_continuity
         .as_ref()
@@ -295,7 +298,8 @@ fn angular_continuity_uses_shortest_path_and_quaternion_sign_equivalence() {
         &grids,
         &ResolvedRoles::default(),
         &Config::default(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let sign_metric = sign_equivalent["guard"]
         .loop_continuity
         .as_ref()
@@ -336,7 +340,8 @@ fn angular_continuity_compares_rotation_vectors_and_uses_the_actual_timestep() {
         &grids,
         &ResolvedRoles::default(),
         &Config::default(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let metric = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -380,7 +385,8 @@ fn angular_check_reports_the_maximum_bone_and_preserves_per_bone_evidence() {
         &grids,
         &ResolvedRoles::default(),
         &Config::default(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let bones = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -447,7 +453,8 @@ fn closed_pose_with_a_velocity_cusp_fails_only_c1() {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     let metric = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -466,7 +473,8 @@ fn seam_velocity_uses_independent_incoming_and_outgoing_steps() {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     let metric = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -490,7 +498,8 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     assert!(
         (measurements["guard"]
             .loop_continuity
@@ -507,7 +516,8 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
     let long_path = rotation_doc(350.0);
     let grids = MetricGrids::new(&long_path);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     assert!(
         (measurements["guard"]
             .loop_continuity
@@ -529,7 +539,8 @@ fn rotation_closure_uses_shortest_path_model_space_delta() {
     values[4] = -Quat::IDENTITY;
     let grids = MetricGrids::new(&sign_equivalent);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     assert_eq!(
         measurements["guard"]
             .loop_continuity
@@ -1045,7 +1056,8 @@ fn one_unusable_bone_retains_other_bones_measurements_and_findings() {
         &grids,
         &ResolvedRoles::default(),
         &loop_config(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let continuity = measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -1106,7 +1118,8 @@ fn all_unusable_bones_are_explicit_and_checks_remain_not_evaluated() {
         &grids,
         &ResolvedRoles::default(),
         &loop_config(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let clip = &measurements["guard"];
     let continuity = clip
         .loop_continuity
@@ -1157,7 +1170,8 @@ fn measurements_keep_indices_when_bone_names_repeat() {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     let bones = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -1192,7 +1206,8 @@ fn model_rotation_is_composed_independently_of_non_uniform_scale() {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     let bones = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -1255,7 +1270,8 @@ fn child_metrics_include_parent_driven_model_space_c0_and_c1_motion() {
     let roles = ResolvedRoles::default();
     let grids = MetricGrids::new(&cusp_doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &roles, &Config::default());
+        animsmith_core::measure::measure_document(&grids, &roles, &Config::default())
+            .expect("fixture measurements fit sampling limits");
     let bones = &measurements["guard"]
         .loop_continuity
         .as_ref()
@@ -1291,7 +1307,8 @@ fn child_metrics_include_parent_driven_model_space_c0_and_c1_motion() {
         &grids,
         &ResolvedRoles::default(),
         &Config::default(),
-    );
+    )
+    .expect("fixture measurements fit sampling limits");
     let angular_bones = &angular_measurements["guard"]
         .loop_continuity
         .as_ref()

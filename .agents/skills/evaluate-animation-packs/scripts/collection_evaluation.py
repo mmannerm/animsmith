@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -197,42 +198,60 @@ def _v1_relation_projection(binding: dict[str, Any]) -> dict[str, Any]:
 
 def _v1_relation_ids(
     model: dict[str, Any], binding: dict[str, Any]
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Losslessly alias slash-separated manifest IDs for frozen V1 relations."""
-    aliases = {
-        identifier: "v2:" + hashlib.sha256(identifier.encode()).hexdigest()
-        for identifier in (
-            [clip["id"] for clip in binding["clips"]]
-            + [runtime_set["id"] for runtime_set in binding["runtime_sets"]]
-        )
-    }
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    """Alias the complete relation namespace for frozen V1 without losing identity."""
     model = copy.deepcopy(model)
     binding = copy.deepcopy(binding)
-    for clip in model["clips"]:
-        clip["id"] = aliases[clip["id"]]
-    for clip in binding["clips"]:
-        clip["id"] = aliases[clip["id"]]
-    for runtime_set in model["runtime_sets"]:
-        runtime_set["id"] = aliases[runtime_set["id"]]
-        for member in runtime_set["members"]:
-            member["clip_id"] = aliases[member["clip_id"]]
-    for runtime_set in binding["runtime_sets"]:
-        runtime_set["id"] = aliases[runtime_set["id"]]
-        for member in runtime_set["members"]:
-            member["id"] = aliases[member["id"]]
-    for narrative in model["narratives"]:
-        narrative["fact_refs"] = sorted(
-            aliases.get(reference, reference) for reference in narrative["fact_refs"]
+    identifiers = [
+        (record, "id")
+        for owner, fields in ((model, ("clips", "runtime_sets", "evidence")),
+                              (binding, ("clips", "runtime_sets")))
+        for field in fields for record in owner[field]
+    ]
+    for owner, member_key in ((model, "clip_id"), (binding, "id")):
+        identifiers.extend(
+            (member, member_key)
+            for runtime_set in owner["runtime_sets"]
+            for member in runtime_set["members"]
         )
-    for constituent in model["collection"]["constituents"]:
-        constituent["clip_ids"] = sorted(
-            aliases.get(identifier, identifier) for identifier in constituent["clip_ids"]
-        )
-        constituent["runtime_set_ids"] = sorted(
-            aliases.get(identifier, identifier)
-            for identifier in constituent["runtime_set_ids"]
-        )
-    return model, binding
+    # These are the schema's evidence/clip/set reference positions. Unknown
+    # original references must receive distinct aliases too: passing them
+    # through could capture a generated alias and fabricate a known fact.
+    references = [
+        record["evidence_refs"]
+        for field in ("runs", "clips", "runtime_sets", "profiles", "pipeline_stages",
+                      "readiness", "capabilities", "integration_steps", "issues",
+                      "engine_evidence", "limitations", "sources")
+        for record in model[field]
+    ]
+    references.extend(
+        record["evidence_refs"]
+        for field in ("exclusions", "cross_pack_records")
+        for record in model["collection"][field]
+    )
+    references.extend(
+        record[field] for record in model["remediations"]
+        for field in ("input_evidence_refs", "refusal_evidence_refs")
+    )
+    references.extend(record["fact_refs"] for record in model["narratives"])
+    references.extend(
+        record[field] for record in model["collection"]["constituents"]
+        for field in ("clip_ids", "runtime_set_ids")
+    )
+    originals = {record[key] for record, key in identifiers}
+    originals.update(reference for items in references for reference in items)
+    aliases = {
+        original: f"v2:{index:016x}"
+        for index, original in enumerate(sorted(originals))
+    }
+    # A bijection preserves equality, duplicates and lexical order, including
+    # authored IDs which themselves look like private aliases. Never sort the
+    # projected rows or reference arrays: malformed input must remain malformed.
+    for record, key in identifiers:
+        record[key] = aliases[record[key]]
+    for items in references:
+        items[:] = [aliases[reference] for reference in items]
+    return model, binding, {alias: original for original, alias in aliases.items()}
 
 
 
@@ -420,11 +439,12 @@ class CollectionEvaluationValidator:
             if runtime_set["kind"] == "gait-group":
                 runtime_set["kind"] = "sync-group"
         relation_binding = _v1_relation_projection(binding)
-        relation_model, relation_binding = _v1_relation_ids(
+        relation_model, relation_binding, original_ids = _v1_relation_ids(
             relation_model, relation_binding
         )
         errors.extend(
-            error.replace("model must identify urn:animsmith:skill:animation-pack-evaluation:1 version 1", "model relation projection is invalid")
+            re.sub(r"v2:[0-9a-f]{16}", lambda match: original_ids.get(match[0], match[0]), error)
+            .replace("model must identify urn:animsmith:skill:animation-pack-evaluation:1 version 1", "model relation projection is invalid")
             for error in v1_validator.validate_model(relation_model, relation_binding)
         )
         return errors

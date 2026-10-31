@@ -1131,7 +1131,8 @@ fn measurements_report_rotation_range() {
     let config = Config::default();
     let grids = MetricGrids::new(&doc);
     let measurements =
-        animsmith_core::measure::measure_document(&grids, &ResolvedRoles::default(), &config);
+        animsmith_core::measure::measure_document(&grids, &ResolvedRoles::default(), &config)
+            .expect("fixture measurements fit sampling limits");
     let walk = &measurements["walk"];
     assert_eq!(walk.frame_count, 3);
     assert_eq!(walk.animated_bones, vec!["hips", "spine"]);

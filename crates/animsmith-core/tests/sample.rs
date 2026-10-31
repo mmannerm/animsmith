@@ -49,7 +49,7 @@ fn linear_translation_lerps() {
         times: vec![0.0, 1.0],
         values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0)]),
     }]);
-    let grid = sample_clip(&skel, &c, 3);
+    let grid = sample_clip(&skel, &c, 3).expect("fixture fits sampling limits");
     assert_eq!(grid.times, vec![0.0, 0.5, 1.0]);
     assert!(
         (grid.local(1, 0).translation - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-6,
@@ -68,7 +68,7 @@ fn step_holds_left_key() {
         times: vec![0.0, 1.0],
         values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0)]),
     }]);
-    let grid = sample_clip(&skel, &c, 3);
+    let grid = sample_clip(&skel, &c, 3).expect("fixture fits sampling limits");
     assert_eq!(grid.local(1, 0).translation, Vec3::ZERO);
     assert_eq!(grid.local(2, 0).translation, Vec3::new(2.0, 0.0, 0.0));
 }
@@ -91,7 +91,7 @@ fn slerp_takes_shortest_path() {
         times: vec![0.0, 1.0],
         values: TrackValues::Quats(vec![Quat::IDENTITY, q1]),
     }]);
-    let grid = sample_clip(&skel, &c, 3);
+    let grid = sample_clip(&skel, &c, 3).expect("fixture fits sampling limits");
     let mid = grid.local(1, 0).rotation;
     let expected_angle = (2.0 * std::f32::consts::PI - 3.5) / 2.0;
     let actual = Quat::IDENTITY.angle_between(mid);
@@ -118,7 +118,7 @@ fn cubic_spline_with_zero_tangents_matches_hermite() {
             Vec3::ZERO,               // out-tangent k1
         ]),
     }]);
-    let grid = sample_clip(&skel, &c, 3);
+    let grid = sample_clip(&skel, &c, 3).expect("fixture fits sampling limits");
     // With zero tangents, h(0.5) = 0.5·p0 + 0.5·p1.
     assert!(
         (grid.local(1, 0).translation - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-6,
@@ -141,7 +141,7 @@ fn fk_accumulates_parent_chain() {
             Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
         ]),
     }]);
-    let grid = sample_clip(&skel, &c, 2);
+    let grid = sample_clip(&skel, &c, 2).expect("fixture fits sampling limits");
     let child_pos = grid.model_position(0, 1);
     assert!(
         (child_pos - Vec3::new(-1.0, 0.0, 0.0)).length() < 1e-5,
@@ -161,7 +161,7 @@ fn sampling_clamps_outside_key_range() {
         values: TrackValues::Vec3s(vec![Vec3::new(1.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0)]),
     }]);
     c.duration_s = 1.0;
-    let grid = sample_clip(&skel, &c, 5);
+    let grid = sample_clip(&skel, &c, 5).expect("fixture fits sampling limits");
     assert_eq!(grid.local(0, 0).translation, Vec3::new(1.0, 0.0, 0.0));
     assert_eq!(grid.local(4, 0).translation, Vec3::new(3.0, 0.0, 0.0));
     assert!((grid.local(2, 0).translation.x - 2.0).abs() < 1e-6);
@@ -179,7 +179,7 @@ fn sample_clip_short_vec3_scale_values_use_zero_storage_default() {
         values: TrackValues::Vec3s(vec![Vec3::splat(2.0)]),
     }]);
 
-    let grid = sample_clip(&skel, &c, 2);
+    let grid = sample_clip(&skel, &c, 2).expect("fixture fits sampling limits");
     assert_eq!(grid.local(0, 0).scale, Vec3::splat(2.0));
     assert_eq!(grid.local(1, 0).scale, Vec3::ZERO);
 }
@@ -198,7 +198,7 @@ fn sample_clip_quat_storage_drives_rotation_for_mismatched_property() {
         values: TrackValues::Quats(vec![rotation]),
     }]);
 
-    let grid = sample_clip(&skel, &c, 2);
+    let grid = sample_clip(&skel, &c, 2).expect("fixture fits sampling limits");
     assert!(grid.local(0, 0).rotation.angle_between(rotation) < 1e-6);
     assert_eq!(grid.local(1, 0).rotation, Quat::IDENTITY);
     assert_eq!(grid.local(0, 0).scale, Vec3::splat(3.0));
@@ -219,7 +219,7 @@ fn sample_clip_vec3_storage_does_not_drive_a_rotation_property() {
         values: TrackValues::Vec3s(vec![Vec3::splat(42.0)]),
     }]);
 
-    let grid = sample_clip(&skel, &c, 2);
+    let grid = sample_clip(&skel, &c, 2).expect("fixture fits sampling limits");
     for frame in 0..2 {
         assert_eq!(
             grid.local(frame, 0),

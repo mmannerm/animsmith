@@ -345,7 +345,7 @@ enum CollectionCmd {
         /// Strict collection-manifest V1 TOML input.
         #[arg(value_name = "COLLECTION.toml")]
         manifest: PathBuf,
-        /// Emit the current collection-output V11 JSON contract.
+        /// Emit the current collection-output V12 JSON contract.
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
     },
@@ -1582,6 +1582,31 @@ struct LintAnalysis<'a> {
     indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
 }
 
+/// Keep deterministic sampling refusal distinct from configuration, evidence,
+/// and evaluation failures until the command's result policy is applied.
+enum LintAnalysisError {
+    Sampling {
+        path: String,
+        error: animsmith_core::sample::SamplingError,
+    },
+    Other(String),
+}
+
+impl From<String> for LintAnalysisError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl std::fmt::Display for LintAnalysisError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Sampling { path, error } => write!(f, "{path}: {error}"),
+            Self::Other(message) => f.write_str(message),
+        }
+    }
+}
+
 fn analyze_loaded_lint<'a>(
     loaded: &'a LoadedInput,
     config: &LoadedConfig,
@@ -1589,7 +1614,8 @@ fn analyze_loaded_lint<'a>(
     selection: CheckSelection<'_>,
     fail_at: Severity,
     allowed: &BTreeSet<String>,
-) -> Result<LintAnalysis<'a>, String> {
+) -> Result<LintAnalysis<'a>, LintAnalysisError> {
+    let path_label = path_label.into();
     let input = loaded.input().clone();
     let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.config.rig);
@@ -1653,7 +1679,12 @@ fn analyze_loaded_lint<'a>(
     );
     let grids = MetricGrids::new(doc);
     let indexed_measurements =
-        animsmith_core::measure::measure_document_indexed(&grids, &roles, &config.config);
+        animsmith_core::measure::measure_document_indexed(&grids, &roles, &config.config).map_err(
+            |error| LintAnalysisError::Sampling {
+                path: path_label.clone(),
+                error,
+            },
+        )?;
     let ctx = CheckCtx::new(&grids, &roles, &config.config);
     let evaluations = {
         let mut checks: Vec<Box<dyn Check + '_>> = all_checks();
@@ -1762,7 +1793,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         input,
                         RigInfo::from_resolved(doc, &roles).map_err(|error| error.to_string())?,
                         MeasurementContract::new(
-                            animsmith_core::measure::measure_document(&grids, &roles, config),
+                            animsmith_core::measure::measure_document(&grids, &roles, config)
+                                .map_err(|error| format!("{}: {error}", file.display()))?,
                             animsmith_core::measure::measure_assets(doc),
                         )
                         .map_err(|error| error.to_string())?,
@@ -1822,7 +1854,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     selection,
                     fail_at,
                     &allowed,
-                )?;
+                )
+                .map_err(|error| error.to_string())?;
                 requires_failure |= analysis.requires_failure;
                 reports.push(analysis.report);
             }
@@ -2011,7 +2044,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 CheckSelection::All,
                 Severity::Error,
                 &BTreeSet::new(),
-            )?;
+            )
+            .map_err(|error| error.to_string())?;
             let doc = loaded.document();
             let evaluations = analysis.report.checks();
             let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
@@ -2041,7 +2075,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                         CheckSelection::All,
                         Severity::Error,
                         &BTreeSet::new(),
-                    )?;
+                    )
+                    .map_err(|error| error.to_string())?;
                     let html = animsmith_report::render_comparison(
                         animsmith_report::ComparisonSide {
                             source: &loaded.source,
@@ -2665,9 +2700,8 @@ fn load_measurements(
     let doc = loaded.document();
     let roles = resolve_configured_roles(&doc.skeleton, &config.rig);
     let grids = MetricGrids::new(doc);
-    Ok(animsmith_core::measure::measure_document(
-        &grids, &roles, config,
-    ))
+    animsmith_core::measure::measure_document(&grids, &roles, config)
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Add `diff` consumer policy and operator remediation to neutral core errors.

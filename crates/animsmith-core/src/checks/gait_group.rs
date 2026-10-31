@@ -62,11 +62,23 @@ fn run_content(ctx: &CheckCtx, out: &mut Vec<Finding>) -> GaitCoverage {
             // One classifier serves the check and every presentation of it,
             // so a picture cannot show a member as measured where this
             // records a coverage gap. Only the wording below is the check's.
-            let evidence = index
-                .and_then(|index| ctx.grid(index))
-                .and_then(|grid| gait_phase_evidence(&grid, ctx.roles));
             let phase_scope =
                 || EvaluationScope::new(EvaluationScopeCode::PHASE_MEASUREMENT).subject(clip_name);
+            let grid = match index.map(|index| ctx.grid(index)).transpose() {
+                Ok(grid) => grid.flatten(),
+                Err(error) => {
+                    existing_members += 1;
+                    coverage.gaps.push(
+                        CoverageGap::new(
+                            CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                            error.to_string(),
+                        )
+                        .scope(phase_scope()),
+                    );
+                    continue;
+                }
+            };
+            let evidence = grid.and_then(|grid| gait_phase_evidence(&grid, ctx.roles));
             match gait_member_phase(
                 ctx.roles,
                 index.is_some(),

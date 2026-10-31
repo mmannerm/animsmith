@@ -7,7 +7,7 @@
 
 use crate::model::{Clip, Document, Property, Track};
 use crate::profile::{ResolvedRoles, Role};
-use crate::sample::{PoseGrid, sample_clip};
+use crate::sample::{PoseGrid, SamplingCost, SamplingError, SamplingLimits, sample_clip};
 use glam::{DQuat, DVec3, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -34,10 +34,21 @@ pub const ROOT_YAW_HALF_TURN_AMBIGUITY_DEG: f64 = 1.0e-4;
 /// The cache uses `Rc` and `RefCell`, so it is intentionally neither
 /// `Send` nor `Sync`. Create one owner per document on each worker thread,
 /// then share it by reference among consumers on that thread.
+/// Successful insertions cumulatively charge the same fixed frame, retained
+/// buffer-payload and track-evaluation ceilings as [`sample_clip`]. Cache hits
+/// are free; refused requests neither insert a grid nor consume a charge.
+/// These bounds are per owner, not a process-memory or elapsed-time guarantee.
 #[derive(Debug)]
 pub struct MetricGrids<'a> {
     doc: &'a Document,
-    grids: RefCell<BTreeMap<usize, Rc<PoseGrid>>>,
+    cache: RefCell<MetricGridCache>,
+    limits: SamplingLimits,
+}
+
+#[derive(Debug, Default)]
+struct MetricGridCache {
+    grids: BTreeMap<usize, Rc<PoseGrid>>,
+    cost: SamplingCost,
 }
 
 impl<'a> MetricGrids<'a> {
@@ -45,7 +56,8 @@ impl<'a> MetricGrids<'a> {
     pub fn new(doc: &'a Document) -> Self {
         Self {
             doc,
-            grids: RefCell::new(BTreeMap::new()),
+            cache: RefCell::new(MetricGridCache::default()),
+            limits: SamplingLimits::DEFAULT,
         }
     }
 
@@ -57,16 +69,29 @@ impl<'a> MetricGrids<'a> {
     /// The metric pose grid for clip `clip_index`, computed once and
     /// shared. Returns `None` for an out-of-range index, non-positive
     /// duration, or fewer than three keys on the longest track.
-    pub fn grid(&self, clip_index: usize) -> Option<Rc<PoseGrid>> {
-        let clip = self.doc.clips.get(clip_index)?;
-        let frames = metric_frame_count(clip)?;
-        Some(
-            self.grids
-                .borrow_mut()
-                .entry(clip_index)
-                .or_insert_with(|| Rc::new(sample_clip(&self.doc.skeleton, clip, frames)))
-                .clone(),
-        )
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SamplingError`] if this grid or the accumulated cache would
+    /// exceed admission limits, or the grid's buffers cannot be reserved.
+    pub fn grid(&self, clip_index: usize) -> Result<Option<Rc<PoseGrid>>, SamplingError> {
+        if let Some(grid) = self.cache.borrow().grids.get(&clip_index) {
+            return Ok(Some(Rc::clone(grid)));
+        }
+        let Some(clip) = self.doc.clips.get(clip_index) else {
+            return Ok(None);
+        };
+        let Some(frames) = metric_frame_count(clip) else {
+            return Ok(None);
+        };
+        let cost = SamplingCost::checked(frames, self.doc.skeleton.bones.len(), clip.tracks.len())?;
+        let mut cache = self.cache.borrow_mut();
+        let total = cache.cost.checked_add(cost)?;
+        total.admit(self.limits, true)?;
+        let grid = Rc::new(sample_clip(&self.doc.skeleton, clip, frames)?);
+        cache.grids.insert(clip_index, Rc::clone(&grid));
+        cache.cost = total;
+        Ok(Some(grid))
     }
 }
 
@@ -1085,16 +1110,16 @@ mod tests {
         let grids = MetricGrids::new(&doc);
 
         let ctx = CheckCtx::new(&grids, &roles, &config);
-        let from_ctx = ctx.grid(0).expect("metric grid");
-        let from_owner = grids.grid(0).expect("same metric grid");
+        let from_ctx = ctx.grid(0).unwrap().expect("metric grid");
+        let from_owner = grids.grid(0).unwrap().expect("same metric grid");
         assert!(Rc::ptr_eq(&from_ctx, &from_owner));
 
-        let measurements = measure_document(&grids, &roles, &config);
+        let measurements = measure_document(&grids, &roles, &config).unwrap();
         assert!(measurements.contains_key("walk"));
         let fresh_grids = MetricGrids::new(&doc);
         assert_eq!(
             serde_json::to_value(&measurements).expect("shared measurements serialize"),
-            serde_json::to_value(measure_document(&fresh_grids, &roles, &config))
+            serde_json::to_value(measure_document(&fresh_grids, &roles, &config).unwrap())
                 .expect("plain measurements serialize")
         );
     }
@@ -1103,19 +1128,19 @@ mod tests {
     fn grid_returns_none_for_each_documented_invalid_request() {
         let valid = document_with_grid_inputs(1.0, vec![0.0, 0.5, 1.0]);
         let valid_grids = MetricGrids::new(&valid);
-        assert!(valid_grids.grid(0).is_some());
+        assert!(valid_grids.grid(0).unwrap().is_some());
         for clip_index in [1, 2, usize::MAX] {
-            assert!(valid_grids.grid(clip_index).is_none());
+            assert!(valid_grids.grid(clip_index).unwrap().is_none());
         }
 
         for duration_s in [0.0, -1.0] {
             let non_positive = document_with_grid_inputs(duration_s, vec![0.0, 0.5, 1.0]);
-            assert!(MetricGrids::new(&non_positive).grid(0).is_none());
+            assert!(MetricGrids::new(&non_positive).grid(0).unwrap().is_none());
         }
 
         for times in [vec![], vec![0.0], vec![0.0, 1.0]] {
             let too_few_keys = document_with_grid_inputs(1.0, times);
-            assert!(MetricGrids::new(&too_few_keys).grid(0).is_none());
+            assert!(MetricGrids::new(&too_few_keys).grid(0).unwrap().is_none());
         }
     }
 
@@ -1134,6 +1159,7 @@ mod tests {
 
         let grid = MetricGrids::new(&doc)
             .grid(0)
+            .unwrap()
             .expect("later longest track supplies a metric grid");
         assert_eq!(grid.frame_count(), 3);
     }
@@ -1187,6 +1213,7 @@ mod tests {
         };
         let coarse_grid = MetricGrids::new(&document)
             .grid(0)
+            .unwrap()
             .expect("three-sample grid");
         assert_eq!(coarse_grid.frame_count(), 3);
         let coarse = root_trajectory_metrics(&coarse_grid, 0).expect("coarse trajectory");
@@ -1219,6 +1246,7 @@ mod tests {
         });
         let dense_grid = MetricGrids::new(&dense_document)
             .grid(0)
+            .unwrap()
             .expect("unrelated track selects five-sample grid");
         assert_eq!(dense_grid.frame_count(), 5);
         let dense = root_trajectory_metrics(&dense_grid, 0).expect("dense trajectory");
@@ -1240,7 +1268,8 @@ mod tests {
             &MetricGrids::new(&document),
             &coarse_roles,
             &Config::default(),
-        );
+        )
+        .unwrap();
         let coarse_published = coarse_measurements["aliased"]
             .root_trajectory
             .as_ref()
@@ -1261,7 +1290,8 @@ mod tests {
             &MetricGrids::new(&dense_document),
             &dense_roles,
             &Config::default(),
-        );
+        )
+        .unwrap();
         let dense_published = dense_measurements["aliased"]
             .root_trajectory
             .as_ref()
@@ -1321,7 +1351,10 @@ mod tests {
                 (Role::LeftFoot, "left".to_string()),
             ],
         );
-        let grid = MetricGrids::new(&doc).grid(0).expect("metric grid");
+        let grid = MetricGrids::new(&doc)
+            .grid(0)
+            .unwrap()
+            .expect("metric grid");
 
         assert!(grid.model_position(0, 0).is_finite());
         assert!(grid.model_position(0, 1).is_finite());
@@ -1376,7 +1409,10 @@ mod tests {
                 (Role::LeftFoot, "left".to_string()),
             ],
         );
-        let grid = MetricGrids::new(&doc).grid(0).expect("metric grid");
+        let grid = MetricGrids::new(&doc)
+            .grid(0)
+            .unwrap()
+            .expect("metric grid");
 
         let metrics = foot_cycle_metrics(&grid, &roles, f64::from(f32::MIN_POSITIVE))
             .expect("hips + one foot role with enough frames yields metrics");
@@ -1427,7 +1463,7 @@ mod tests {
                 },
             ],
         };
-        sample_clip(&skeleton, &clip, last + 1)
+        sample_clip(&skeleton, &clip, last + 1).unwrap()
     }
 
     fn trajectory_grid(positions: Vec<Vec3>, yaw_degrees: Vec<f32>) -> PoseGrid {
@@ -1668,7 +1704,7 @@ mod tests {
                 values: TrackValues::Quats(vec![Quat::IDENTITY; 2]),
             }],
         };
-        let grid = sample_clip(&skeleton, &clip, 2);
+        let grid = sample_clip(&skeleton, &clip, 2).unwrap();
 
         assert!(
             skeleton
@@ -1853,7 +1889,7 @@ mod tests {
                 },
             ],
         };
-        let grid = sample_clip(&skeleton, &clip, 3);
+        let grid = sample_clip(&skeleton, &clip, 3).unwrap();
         for frame in 0..grid.frame_count() {
             assert_eq!(grid.local(frame, 1).rotation, Quat::IDENTITY);
         }
@@ -1865,5 +1901,70 @@ mod tests {
         assert!((yaw.net_yaw_deg - 90.0).abs() < 1.0e-4);
         assert!((yaw.unwrapped_yaw_deg - 90.0).abs() < 1.0e-4);
         assert!((yaw.yaw_travel_deg - 90.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn metric_cache_charges_only_successful_new_grids_and_keeps_cached_identity() {
+        let mut doc = document_with_grid_inputs(1.0, vec![0.0, 0.5, 1.0]);
+        let mut larger = document_with_grid_inputs(1.0, vec![0.0, 0.25, 0.5, 1.0])
+            .clips
+            .remove(0);
+        larger.name = "larger".into();
+        let mut small = doc.clips[0].clone();
+        small.name = "small".into();
+        doc.clips.extend([larger, small]);
+        let mut grids = MetricGrids::new(&doc);
+        // A one-bone three-frame grid is 372 bytes. Two fit exactly;
+        // the intervening four-frame request would require 868 bytes.
+        grids.limits = SamplingLimits {
+            bytes: 744,
+            ..SamplingLimits::DEFAULT
+        };
+        let first = grids.grid(0).unwrap().unwrap();
+        assert!(matches!(
+            grids.grid(1),
+            Err(SamplingError::LimitExceeded {
+                required: 868,
+                limit: 744,
+                ..
+            })
+        ));
+        assert!(Rc::ptr_eq(&first, &grids.grid(0).unwrap().unwrap()));
+        assert!(grids.grid(2).unwrap().is_some());
+        assert!(Rc::ptr_eq(&first, &grids.grid(0).unwrap().unwrap()));
+        // A new cache owner has an independent budget; refusal is not a
+        // property attached to the document or a poisoned global counter.
+        let mut fresh = MetricGrids::new(&doc);
+        fresh.limits = grids.limits;
+        assert!(fresh.grid(1).unwrap().is_some());
+    }
+
+    #[test]
+    fn metric_cache_also_accumulates_frame_and_track_work_for_small_grids() {
+        let mut doc = document_with_grid_inputs(1.0, vec![0.0, 0.5, 1.0]);
+        doc.clips.push(doc.clips[0].clone());
+        for limits in [
+            SamplingLimits {
+                frames: 5,
+                ..SamplingLimits::DEFAULT
+            },
+            SamplingLimits {
+                track_evaluations: 5,
+                ..SamplingLimits::DEFAULT
+            },
+        ] {
+            let mut grids = MetricGrids::new(&doc);
+            grids.limits = limits;
+            assert!(grids.grid(0).unwrap().is_some());
+            assert!(matches!(
+                grids.grid(1),
+                Err(SamplingError::LimitExceeded {
+                    required: 6,
+                    limit: 5,
+                    ..
+                })
+            ));
+            assert!(grids.grid(0).unwrap().is_some());
+        }
     }
 }

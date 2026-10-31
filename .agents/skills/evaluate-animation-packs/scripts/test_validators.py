@@ -4096,7 +4096,7 @@ def valid_evaluation_model_v2(
     binding: dict[str, object] | None = None,
     binding_bytes: bytes | None = None,
 ) -> dict[str, object]:
-    """Current V2 model whose facts exactly match complete or unavailable V11."""
+    """Historical V2 model whose facts exactly match complete or unavailable V11."""
     binding = binding or valid_collection_output_v11()
     binding_bytes = binding_bytes or model_contract_v2.canonical_json(binding)
     model = copy.deepcopy(valid_evaluation_model())
@@ -4243,6 +4243,79 @@ class EvaluationModelTests(unittest.TestCase):
             self.assertIn(hashlib.sha256(raw).hexdigest(), appendix_path.read_text())
             self.assertIn(binding["clips"][1]["id"], appendix_path.read_text())
 
+    @unittest.skipUnless(sys.platform == "linux", "requires Linux bounded child execution")
+    def test_current_v3_workflow_consumes_real_partial_collection_output(self) -> None:
+        import base64
+        import struct
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source_dir = directory / "source"
+            source_dir.mkdir()
+            for name, bones, frames in [("good", 1, 3), ("refused", 2048, 4096)]:
+                times = [i / (frames - 1) for i in range(frames)]
+                values = times + [v for t in times for v in (t, 0.0, 0.0)]
+                raw_buffer = struct.pack(f"<{len(values)}f", *values)
+                asset = {
+                    "asset": {"version": "2.0"},
+                    "buffers": [{"uri": "data:application/octet-stream;base64," + base64.b64encode(raw_buffer).decode(), "byteLength": len(raw_buffer)}],
+                    "bufferViews": [{"buffer": 0, "byteLength": frames * 4}, {"buffer": 0, "byteOffset": frames * 4, "byteLength": frames * 12}],
+                    "accessors": [{"bufferView": 0, "componentType": 5126, "count": frames, "type": "SCALAR", "min": [0], "max": [1]}, {"bufferView": 1, "componentType": 5126, "count": frames, "type": "VEC3"}],
+                    "nodes": [{"name": f"bone_{i}"} for i in range(bones)],
+                    "scenes": [{"nodes": list(range(bones))}], "scene": 0,
+                    "animations": [{"name": "walk", "samplers": [{"input": 0, "output": 1, "interpolation": "LINEAR"}], "channels": [{"sampler": 0, "target": {"node": 0, "path": "translation"}}]}],
+                }
+                (source_dir / f"{name}.gltf").write_text(json.dumps(asset))
+            (directory / "fixture.toml").write_text('[rig]\nroles = { root = "bone_0" }\n')
+            manifest = 'schema = "urn:animsmith:schema:collection-manifest:1"\nschema_version = 1\ncollection_id = "com.example.partial"\ninput_root = "source"\n'
+            for name in ["good", "refused"]:
+                manifest += f'\n[[sources]]\nkey = "{name}"\npath = "{name}.gltf"\nconfig = "fixture.toml"\n\n[[clips]]\nid = "com.example.partial/{name}"\nsource = "{name}"\ntake_index = 0\ntake_name = "walk"\n'
+            manifest += '\n[[runtime_sets]]\nid = "com.example.partial/pair"\nkind = "gait-group"\nmembers = ["com.example.partial/refused", "com.example.partial/good"]\n'
+            manifest_path = directory / "collection.toml"
+            manifest_path.write_text(manifest)
+            emitted = subprocess.run(
+                ["bash", "-c", 'set -e; ulimit -c 0; ulimit -v 524288; exec "$@"', "bounded-collection", str(self.animsmith), "collection", "lint", str(manifest_path), "--format", "json"],
+                capture_output=True, timeout=20, check=False,
+            )
+            self.assertEqual(emitted.returncode, 1, emitted.stderr.decode())
+            raw = emitted.stdout
+            binding = json.loads(raw)
+            model = valid_evaluation_model_v2(binding, raw)
+            model.update(schema=model_contract_v3.SCHEMA, schema_version=3)
+            self.assertEqual(model_validator_v3.validate_model(model, binding, raw), [])
+            unsorted = copy.deepcopy(model)
+            unsorted["clips"].reverse()
+            self.assertIn("model.clips must be sorted by id", model_validator_v3.validate_model(unsorted, binding, raw))
+            self.assertEqual(binding["schema"], model_contract_v3.COLLECTION_OUTPUT_SCHEMA)
+            self.assertEqual(model["clips"][0]["duration_s"], {"state": "available", "value": 1.0})
+            self.assertEqual(model["clips"][0]["root_motion_speed_mps"], {"state": "available", "value": 1.0})
+            self.assertEqual(model["clips"][1]["duration_s"], {"state": "unavailable"})
+            self.assertEqual(model["binding"]["sources"][1]["result"], {"state": "unavailable", "reason": "sampling_limit_exceeded"})
+            self.assertEqual(model["runtime_sets"][0]["members"], [
+                {"clip_id": "com.example.partial/refused", "eligibility": "incomplete"},
+                {"clip_id": "com.example.partial/good", "eligibility": "complete"},
+            ])
+            model_path, binding_path = directory / "model.json", directory / "binding.json"
+            report_path, appendix_path = directory / "report.md", directory / "report-evidence.md"
+            model_path.write_bytes(model_contract_v3.canonical_json(model))
+            binding_path.write_bytes(raw)
+            common = [str(model_path), "--binding", str(binding_path), "--animsmith", str(self.animsmith)]
+            # Build the shared parser before timing report execution: a cold
+            # Cargo build is a prerequisite, not part of the runtime bound.
+            report_validator._parser_binary()
+            for command in [
+                [str(Path(__file__).with_name("validate_evaluation_model_v3.py")), *common, "--check-canonical"],
+                [str(Path(__file__).with_name("render_evaluation_model.py")), *common, "--report", str(report_path), "--appendix", str(appendix_path)],
+                [str(Path(__file__).with_name("validate_report.py")), str(report_path), "--appendix", str(appendix_path), "--evaluation-model-v3", "--report-format", "2"],
+            ]:
+                result = subprocess.run(command, check=False, text=True, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            appendix = appendix_path.read_text()
+            self.assertIn("sampling_limit_exceeded", appendix)
+            self.assertIn("com.example.partial/good", appendix)
+            self.assertIn("com.example.partial/refused", appendix)
+            self.assertIn(hashlib.sha256(raw).hexdigest(), appendix)
+
     def test_synthetic_fixture_covers_pair_refusal_unknown_and_artist_work(self) -> None:
         self.assertEqual(model_validator.validate_model(valid_evaluation_model(), valid_collection_output_projection()), [])
 
@@ -4269,7 +4342,7 @@ class EvaluationModelTests(unittest.TestCase):
             binding["work"]["serialized_bytes"] = len(raw)  # type: ignore[index]
         raise AssertionError("mutated collection-output byte count did not converge")
 
-    def test_current_model_binds_exact_v11_and_keeps_v1_frozen(self) -> None:
+    def test_historical_v2_model_binds_exact_v11_and_keeps_v1_frozen(self) -> None:
         model, binding, raw = self.valid()
         self.assert_authoritative_accepts(raw)
         self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
@@ -4331,6 +4404,56 @@ class EvaluationModelTests(unittest.TestCase):
                 mutate(binding)
                 model, binding, raw = self.synchronized(binding)
                 self.assert_authoritative_rejects(raw)
+
+    def test_v2_private_id_projection_preserves_canonical_order_for_real_slash_ids(self) -> None:
+        _model, binding, _raw = self.valid()
+        replacements = dict(zip(
+            [clip["id"] for clip in binding["clips"]],
+            ["com.example.partial/good", "com.example.partial/refused"],
+        ))
+        for clip in binding["clips"]:
+            clip["id"] = replacements[clip["id"]]
+        for runtime_set in binding["runtime_sets"]:
+            for member in runtime_set["members"]:
+                member["id"] = replacements[member["id"]]
+        model, binding, raw = self.synchronized(binding)
+        self.assert_authoritative_accepts(raw)
+        self.assertEqual(model_validator_v2.validate_model(model, binding, raw), [])
+        model["clips"].reverse()
+        self.assertIn("model.clips must be sorted by id", model_validator_v2.validate_model(model, binding, raw))
+
+    def test_v2_v3_projection_preserves_exact_original_references(self) -> None:
+        for version, validator in ((2, model_validator_v2), (3, model_validator_v3)):
+            with self.subTest(version=version):
+                if version == 2:
+                    model, binding, raw = self.valid()
+                else:
+                    raw = (Path(__file__).parents[1] / "fixtures" / "collection-output-v12-sampling-refused.json").read_bytes()
+                    binding = json.loads(raw)
+                    model = valid_evaluation_model_v2(binding, raw)
+                    model.update(schema=model_contract_v3.SCHEMA, schema_version=3)
+                clip_id = binding["clips"][0]["id"]
+                set_id = binding["runtime_sets"][0]["id"]
+                model["narratives"][0]["fact_refs"] = sorted(["evidence-a", clip_id, set_id])
+                self.assertEqual(validator.validate_model(model, binding, raw), [])
+                # Neither an old hash alias nor the first ordinal alias names
+                # any original fact. Both previously fabricated a known clip.
+                for unknown in ("v2:0000000000000000", "v2:" + hashlib.sha256(clip_id.encode()).hexdigest()):
+                    forged = copy.deepcopy(model)
+                    forged["narratives"][0]["fact_refs"] = [unknown]
+                    errors = validator.validate_model(forged, binding, raw)
+                    self.assertTrue(any("dangling references: " + unknown in error for error in errors), errors)
+                # Authored private-looking evidence is legal and must remain
+                # distinct from every clip/set, including in evidence-only refs.
+                private_id = "v2:0000000000000000"
+                evidence = dict(model["evidence"][0], id=private_id)
+                model["evidence"].append(evidence)
+                model["evidence"].sort(key=lambda item: item["id"])
+                model["clips"][0]["evidence_refs"] = [private_id]
+                model["narratives"][0]["fact_refs"] = sorted([clip_id, set_id, private_id])
+                self.assertEqual(validator.validate_model(model, binding, raw), [])
+                model["narratives"][0]["fact_refs"].reverse()
+                self.assertIn("model.narratives[0].fact_refs must be uniquely sorted", validator.validate_model(model, binding, raw))
 
     def test_v2_runtime_member_order_is_exact_even_when_membership_is_unchanged(self) -> None:
         model, binding, raw = self.valid()

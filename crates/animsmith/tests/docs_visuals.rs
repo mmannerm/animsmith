@@ -558,6 +558,7 @@ fn every_report_fixture_moves_a_bone_the_reader_can_see() {
         for (index, clip) in document.clips.iter().enumerate() {
             let grid = grids
                 .grid(index)
+                .expect("fixture fits sampling limits")
                 .unwrap_or_else(|| panic!("{input} clip '{}' has a pose grid", clip.name));
             let travel = (0..grid.bone_count())
                 .map(|bone| {

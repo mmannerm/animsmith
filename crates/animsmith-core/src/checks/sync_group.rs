@@ -80,16 +80,31 @@ impl Check for SyncGroupCheck {
                 }
 
                 let (position_cap, rotation_cap) = effective_caps(ctx.config, expectations);
-                let endpoint = (expectations.looping == Some(true))
-                    .then(|| {
-                        measure_loop_endpoint_mode(
+                let endpoint = if expectations.looping == Some(true) {
+                    match ctx.grid(index) {
+                        Ok(grid) => measure_loop_endpoint_mode(
                             clip,
-                            ctx.grid(index).as_deref(),
+                            grid.as_deref(),
                             position_cap,
                             rotation_cap,
-                        )
-                    })
-                    .flatten();
+                        ),
+                        Err(error) => {
+                            gaps.push(
+                                CoverageGap::new(
+                                    CoverageGapCode::MEASUREMENT_UNAVAILABLE,
+                                    error.to_string(),
+                                )
+                                .scope(
+                                    EvaluationScope::new(EvaluationScopeCode::SYNC_COMPATIBILITY)
+                                        .subject(name),
+                                ),
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
                 if let Some(mode) = endpoint {
                     row = row.measurement("loop_endpoint_mode", mode.as_str());
                 } else {

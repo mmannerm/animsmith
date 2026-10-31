@@ -1,7 +1,8 @@
 # Animation-pack evaluation model V2
 
-`urn:animsmith:skill:animation-pack-evaluation:2` is the current structured
-authority for a new animation-pack evaluation. It binds directly to one exact,
+`urn:animsmith:skill:animation-pack-evaluation:2` is the historical structured
+authority for V11 evidence. New evaluations use [V3](evaluation-model-v3.md)
+with current V12 output. V2 binds directly to one exact,
 independently validated `urn:animsmith:schema:collection-output:11` document.
 It does not reinterpret that input as historical collection-output V2, and it
 does not broaden the frozen V1 validator or renderer contract.
@@ -9,10 +10,10 @@ does not broaden the frozen V1 validator or renderer contract.
 The machine-readable closed schema is
 [`schemas/evaluation-model-v2.schema.json`](../schemas/evaluation-model-v2.schema.json).
 V2 deliberately reuses V1 record definitions where their meanings did not
-change. Its version delta is the current binding: the model records the raw
+change. Its version delta is the V11 binding: the model records the raw
 collection-output SHA-256 and byte count in addition to exact manifest
 identity, and retains a path-scrubbed typed row for every V11 source. The model
-runtime-set vocabulary also matches the current producer exactly, including
+runtime-set vocabulary also matches the V11 producer exactly, including
 `gait-group`; it does not preserve V1's report-only `other` token.
 
 ## Exact current binding
@@ -71,7 +72,7 @@ retain the frozen V1 ID grammar; only collection logical-ID positions widen.
 
 ## Decision authoring with the frozen fields
 
-Populate every current V11 runtime set under its exact ID, kind, member order,
+Populate every bound V11 runtime set under its exact ID, kind, member order,
 assessment, coverage, and evidence. Missing vendor/project intent belongs in
 the assessment, evidence, readiness consequence, and integration gate; it does
 not justify dropping a measured gait group. Any additional evaluator-proposed

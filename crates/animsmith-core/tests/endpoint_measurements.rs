@@ -44,6 +44,7 @@ fn config(looping: bool, fps: Option<f64>) -> Config {
 fn measure(doc: &Document, config: &Config) -> animsmith_core::measure::ClipMeasurements {
     let grids = MetricGrids::new(doc);
     measure_document(&grids, &ResolvedRoles::default(), config)
+        .expect("fixture measurements fit sampling limits")
         .remove("cycle")
         .expect("cycle measurements")
 }
