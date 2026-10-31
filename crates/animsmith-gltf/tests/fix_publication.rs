@@ -542,6 +542,8 @@ fn readonly_source_with_missing_images_needs_no_source_directory_probe() {
 
 #[cfg(windows)]
 #[test]
+// Clearing the Windows read-only attribute does not widen Unix mode bits.
+#[allow(clippy::permissions_set_readonly_false)]
 fn json_copies_preserve_captured_readonly_attribute() {
     let dir = tempfile::tempdir().unwrap();
     let input = source(dir.path(), false, 0);
