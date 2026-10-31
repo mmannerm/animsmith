@@ -185,11 +185,12 @@ fn rest_completion_only_adds_requested_absent_channels() {
 }
 
 #[test]
-fn hemisphere_normalization_flips_cubic_triplets_but_keeps_zero_dot_ties() {
+fn hemisphere_cleanup_preserves_cubic_storage_and_linear_step_ties() {
     let q = Quat::from_rotation_y(0.5);
     let qx = Quat::from_xyzw(1.0, 0.0, 0.0, 0.0);
     let qy = Quat::from_xyzw(0.0, 1.0, 0.0, 0.0);
     let qz = Quat::from_xyzw(0.0, 0.0, 1.0, 0.0);
+    let authored = vec![qx, q, qy, -qx, -q, -qy, qy, qz, qx];
     let mut clip = Clip {
         name: "turn".into(),
         duration_s: 1.0,
@@ -198,17 +199,41 @@ fn hemisphere_normalization_flips_cubic_triplets_but_keeps_zero_dot_ties() {
             property: Property::Rotation,
             interpolation: Interpolation::CubicSpline,
             times: vec![0.0, 0.5, 1.0],
-            values: TrackValues::Quats(vec![qx, q, qy, -qx, -q, -qy, qy, qz, qx]),
+            values: TrackValues::Quats(authored.clone()),
         }],
     };
-    assert_eq!(normalize_quaternion_hemispheres(&mut clip), 1);
+    for interpolation in [Interpolation::Linear, Interpolation::Step] {
+        clip.tracks.push(Track {
+            bone: 1,
+            property: Property::Rotation,
+            interpolation,
+            times: vec![0.0, 0.5, 1.0],
+            values: TrackValues::Quats(vec![q, -q, qz]),
+        });
+    }
+    assert_eq!(normalize_quaternion_hemispheres(&mut clip), 2);
     let TrackValues::Quats(values) = &clip.tracks[0].values else {
         unreachable!()
     };
-    assert_eq!(values[3], qx);
-    assert_eq!(values[4], q);
-    assert_eq!(values[5], qy);
-    assert_eq!(values[7], qz, "zero-dot tie retains its supplied sign");
+    let bits = |values: &[Quat]| {
+        values
+            .iter()
+            .map(|q| q.to_array().map(f32::to_bits))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        bits(values),
+        bits(&authored),
+        "cubic values and tangents retain every bit"
+    );
+    for track in &clip.tracks[1..] {
+        assert_eq!(track.key_quat(1), Some(q));
+        assert_eq!(
+            track.key_quat(2),
+            Some(qz),
+            "zero-dot tie retains its supplied sign"
+        );
+    }
 }
 
 #[test]

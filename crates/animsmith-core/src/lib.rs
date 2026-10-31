@@ -167,6 +167,7 @@ pub mod transition_pose_evaluation;
 
 pub use check::{Check, CheckCtx, all_checks, mechanical_checks};
 pub use checks::foot_slide::DEFAULT_CONTACT_HEIGHT_M;
+pub use checks::quat_norm::NORM_TOLERANCE as QUAT_NORM_TOLERANCE;
 pub use collection::{
     COLLECTION_MANIFEST_V1_BUDGET_ID, COLLECTION_MANIFEST_V1_ID,
     COLLECTION_MANIFEST_V1_MAX_AGGREGATE_MEMBERS, COLLECTION_MANIFEST_V1_MAX_AGGREGATE_WORK,

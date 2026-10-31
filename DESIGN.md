@@ -287,6 +287,14 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   require scale's broad extension refusal. Shared sparse range corrections
   intentionally tighten scale preflight for malformed unreferenced payloads
   whose declared count or stride makes them overlap rewritten data.
+- Assembly quaternion cleanup unit-normalizes and aligns LINEAR/STEP signs.
+  CUBICSPLINE value keys are admitted within the existing `quat-norm` length
+  tolerance (`1e-3`, evaluated in `f64`) and retained with every tangent and
+  sign unchanged. Out-of-band cubic values produce the existing transform
+  refusal before publication; individual normalization or triplet flipping is
+  not a lossless curve repair. The independent scale reference uses this same
+  admission without mutating accepted cubic components. Constant-track pruning
+  remains owned by the shared interpolation-aware classifier.
 - `convert` and `assemble` are compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the

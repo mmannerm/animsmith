@@ -2842,7 +2842,7 @@ fn complete_and_normalize_clip(
         0
     };
     validate_unique_channels(clip, skeleton)?;
-    normalize_quaternion_magnitudes(clip)?;
+    prepare_quaternion_magnitudes(clip)?;
     animsmith_core::assembly::normalize_quaternion_hemispheres(clip);
     Ok(completed)
 }
@@ -3288,7 +3288,7 @@ fn stripped_bone_motion(
         .collect()
 }
 
-fn normalize_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
+fn prepare_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
     for track in &mut clip.tracks {
         let key_count = track.key_count();
         let interpolation = track.interpolation;
@@ -3307,8 +3307,27 @@ fn normalize_quaternion_magnitudes(clip: &mut Clip) -> Result<(), String> {
                     clip.name, track.bone
                 ));
             }
-            value = value.normalize();
-            values[index] = value;
+            if interpolation == Interpolation::CubicSpline {
+                // Preserve accepted rounding, signs and tangents exactly. Even
+                // value-only normalization changes the component Hermite curve.
+                // Widen before squaring: finite f32 components cannot overflow f64.
+                let norm = value
+                    .to_array()
+                    .into_iter()
+                    .map(|component| f64::from(component).powi(2))
+                    .sum::<f64>()
+                    .sqrt();
+                let tolerance = animsmith_core::QUAT_NORM_TOLERANCE;
+                if (norm - 1.0).abs() > f64::from(tolerance) {
+                    return Err(format!(
+                        "clip {:?} has non-unit CUBICSPLINE quaternion at bone {} key {key} (norm {norm}, tolerance {tolerance}); re-export with unit value keys because normalization would change the curve",
+                        clip.name, track.bone
+                    ));
+                }
+            } else {
+                value = value.normalize();
+                values[index] = value;
+            }
         }
     }
     Ok(())
@@ -3488,7 +3507,7 @@ mod tests {
             .unwrap(),
             5
         );
-        normalize_quaternion_magnitudes(&mut clip).unwrap();
+        prepare_quaternion_magnitudes(&mut clip).unwrap();
         animsmith_core::assembly::normalize_quaternion_hemispheres(&mut clip);
         let rotation = clip
             .tracks
