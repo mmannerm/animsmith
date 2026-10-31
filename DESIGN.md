@@ -305,9 +305,10 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   repair writes file contents directly; the CLI's staged rename publisher
   intentionally has different directory-entry semantics.
   Missing repair destinations are reserved in the actual parent namespace and
-  all protected paths are resolved again before publication through held file
-  handles. Ordinary refusals remove reservations; interruption may leave empty
-  placeholders. This boundary does not provide a multi-file transaction.
+  all protected source paths are resolved again during admission. Destination
+  handles are held and their path identities rechecked for publication. Ordinary
+  refusals remove reservations; interruption may leave empty placeholders.
+  This boundary does not provide a multi-file transaction.
 - Assembly quaternion cleanup unit-normalizes and aligns LINEAR/STEP signs.
   CUBICSPLINE value keys are admitted within the existing `quat-norm` length
   tolerance (`1e-3`, evaluated in `f64`) and retained with every tangent and

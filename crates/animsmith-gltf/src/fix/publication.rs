@@ -38,6 +38,10 @@ struct Source {
 
 pub(super) struct Origin {
     sources: Vec<Source>,
+    #[cfg(unix)]
+    primary_mode: Option<io::Result<u32>>,
+    #[cfg(windows)]
+    primary_attributes: Option<io::Result<u32>>,
 }
 
 #[derive(Default)]
@@ -51,6 +55,10 @@ struct Destination {
     file: fs::File,
     id: FileId,
     reserved: bool,
+    #[cfg(unix)]
+    copy_mode: Option<u32>,
+    #[cfg(windows)]
+    copy_readonly: Option<bool>,
 }
 
 impl Destination {
@@ -78,9 +86,31 @@ impl Destination {
         self.verify_identity()?;
         let mut file = &self.file;
         let mut write = || -> io::Result<()> {
+            #[cfg(unix)]
+            if let Some(mode) = self.copy_mode {
+                use std::os::unix::fs::PermissionsExt;
+                // Tighten before publishing private bytes, but never expose a
+                // prior private destination before its overwrite succeeds.
+                let current = file.metadata()?.permissions().mode();
+                file.set_permissions(fs::Permissions::from_mode(current & mode))?;
+            }
             file.seek(SeekFrom::Start(0))?;
-            file.set_len(0)?;
-            file.write_all(bytes)
+            // Write before shortening so a refused write need not truncate an
+            // unchanged in-place JSON snapshot.
+            file.write_all(bytes)?;
+            file.set_len(bytes.len() as u64)?;
+            #[cfg(unix)]
+            if let Some(mode) = self.copy_mode {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(mode))?;
+            }
+            #[cfg(windows)]
+            if let Some(readonly) = self.copy_readonly {
+                let mut permissions = file.metadata()?.permissions();
+                permissions.set_readonly(readonly);
+                file.set_permissions(permissions)?;
+            }
+            Ok(())
         };
         write().map_err(|source| {
             WriteError::Io {
@@ -166,11 +196,31 @@ enum Identity {
 }
 
 impl Origin {
-    pub(super) fn capture(input: &Path, gltf: &gltf::Gltf) -> Result<Self, LoadError> {
+    pub(super) fn capture(
+        input: &Path,
+        gltf: &gltf::Gltf,
+        json_primary: bool,
+    ) -> Result<Self, LoadError> {
         let input = std::path::absolute(input).map_err(|source| LoadError::Io {
             path: input.display().to_string(),
             source,
         })?;
+        #[cfg(unix)]
+        let primary_mode = {
+            use std::os::unix::fs::PermissionsExt;
+            json_primary.then(|| {
+                fs::metadata(&input).map(|metadata| metadata.permissions().mode() & 0o7777)
+            })
+        };
+        #[cfg(windows)]
+        let primary_attributes = json_primary.then(|| {
+            use std::os::windows::fs::MetadataExt;
+            metadata_handle(&input)
+                .and_then(|file| file.metadata())
+                .map(|metadata| metadata.file_attributes())
+        });
+        #[cfg(not(any(unix, windows)))]
+        let _ = json_primary;
         let root = parent(&input);
         let mut paths = vec![(Role::Primary, input.clone())];
         for buffer in gltf.buffers() {
@@ -208,7 +258,13 @@ impl Origin {
                 }
             })
             .collect();
-        Ok(Self { sources })
+        Ok(Self {
+            sources,
+            #[cfg(unix)]
+            primary_mode,
+            #[cfg(windows)]
+            primary_attributes,
+        })
     }
 
     pub(super) fn preflight(
@@ -245,6 +301,18 @@ impl Origin {
     }
 
     fn admit(&self, entries: &[Entry], destinations: &mut Destinations) -> Result<(), FixError> {
+        #[cfg(unix)]
+        let primary_mode = self
+            .primary_mode
+            .as_ref()
+            .map(|mode| {
+                mode.as_ref().copied().map_err(|error| {
+                    WriteError::RepairPublication(format!(
+                        "cannot read captured source permissions: {error}"
+                    ))
+                })
+            })
+            .transpose()?;
         let mut groups = BTreeMap::<FileId, Vec<&Entry>>::new();
         for (source, entry) in self
             .sources
@@ -265,7 +333,17 @@ impl Origin {
             if let Some(Identity::Missing(path)) =
                 resolve(&entry.path, true, 0).map_err(|e| inspect_error(&entry.path, &e))?
             {
-                match destination_options(true).create_new(true).open(&path) {
+                let mut options = destination_options(true);
+                #[cfg(unix)]
+                if entry.role == Role::Primary
+                    && let Some(mode) = primary_mode
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    // Creation must never expose a private source under broader
+                    // default permissions, even before admission finishes.
+                    options.mode(mode);
+                }
+                match options.create_new(true).open(&path) {
                     Ok(file) => {
                         let id = match handle_id(&file) {
                             Ok(id) => id,
@@ -288,6 +366,10 @@ impl Origin {
                             file,
                             id,
                             reserved: true,
+                            #[cfg(unix)]
+                            copy_mode: None,
+                            #[cfg(windows)]
+                            copy_readonly: None,
                         });
                     }
                     // A prior reservation may have created this alias. Resolve
@@ -327,6 +409,30 @@ impl Origin {
                     .iter()
                     .any(|entry| !entry.output && entry.role == Role::Primary)
         });
+        #[cfg(windows)]
+        let copy_readonly = if !in_place {
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_READONLY,
+            };
+            self.primary_attributes
+                .as_ref()
+                .map(|attributes| {
+                    let attributes = attributes.as_ref().map_err(|error| {
+                        WriteError::RepairPublication(format!(
+                            "cannot read captured source attributes: {error}"
+                        ))
+                    })?;
+                    if attributes & FILE_ATTRIBUTE_ENCRYPTED != 0 {
+                        return Err(WriteError::RepairPublication(
+                            "encrypted JSON source cannot be copied by repair; use an EFS-aware copy workflow or repair the original in place".into(),
+                        ));
+                    }
+                    Ok(attributes & FILE_ATTRIBUTE_READONLY != 0)
+                })
+                .transpose()?
+        } else {
+            None
+        };
         for group in groups.values() {
             let mut outputs = group.iter().filter(|entry| entry.output);
             let Some(first) = outputs.next() else {
@@ -372,7 +478,25 @@ impl Origin {
                 file,
                 id,
                 reserved: false,
+                #[cfg(unix)]
+                copy_mode: None,
+                #[cfg(windows)]
+                copy_readonly: None,
             });
+        }
+        #[cfg(unix)]
+        if !in_place {
+            for destination in &mut destinations.files {
+                if destination.role == Role::Primary {
+                    destination.copy_mode = primary_mode;
+                }
+            }
+        }
+        #[cfg(windows)]
+        for destination in &mut destinations.files {
+            if destination.role == Role::Primary {
+                destination.copy_readonly = copy_readonly;
+            }
         }
         Ok(())
     }
@@ -598,10 +722,34 @@ mod tests {
         let bytes = br#"{"asset":{"version":"2.0"}}"#;
         fs::write(&input, bytes).unwrap();
         let gltf = gltf::Gltf::from_slice(bytes).unwrap();
-        Origin::capture(&input, &gltf)
+        Origin::capture(&input, &gltf, true)
             .unwrap()
             .preflight(&dir.join("output.gltf"), &gltf)
             .unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_primary_is_private_while_reserved() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.gltf");
+        let bytes = br#"{"asset":{"version":"2.0"}}"#;
+        fs::write(&input, bytes).unwrap();
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+        let gltf = gltf::Gltf::from_slice(bytes).unwrap();
+        let output = dir.path().join("output.gltf");
+        let destinations = Origin::capture(&input, &gltf, true)
+            .unwrap()
+            .preflight(&output, &gltf)
+            .unwrap();
+        assert_eq!(
+            fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&output).unwrap(), b"");
+        drop(destinations);
+        assert!(!output.exists());
     }
 
     #[cfg(unix)]
@@ -621,6 +769,30 @@ mod tests {
             assert_eq!(fs::read(&output).unwrap(), b"unrelated replacement");
             assert_eq!(fs::read(&moved).unwrap(), b"");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn captured_encryption_flag_refuses_json_copies_before_publication() {
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_ENCRYPTED;
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.gltf");
+        let bytes = br#"{"asset":{"version":"2.0"}}"#;
+        fs::write(&input, bytes).unwrap();
+        let gltf = gltf::Gltf::from_slice(bytes).unwrap();
+        let mut origin = Origin::capture(&input, &gltf, true).unwrap();
+        // Supply the documented OS metadata bit without creating EFS keys in
+        // a developer's account. This tests admission, not EFS encryption I/O.
+        origin.primary_attributes = Some(Ok(FILE_ATTRIBUTE_ENCRYPTED));
+        let output = dir.path().join("output.gltf");
+        let error = origin.preflight(&output, &gltf).err().unwrap();
+        assert!(error.to_string().contains("encrypted JSON source"));
+        assert!(!output.exists());
+        fs::write(&output, b"previous output").unwrap();
+        assert!(origin.preflight(&output, &gltf).is_err());
+        assert_eq!(fs::read(&output).unwrap(), b"previous output");
+        assert_eq!(fs::read(&input).unwrap(), bytes);
+        assert!(origin.preflight(&input, &gltf).is_ok());
     }
 
     #[cfg(windows)]

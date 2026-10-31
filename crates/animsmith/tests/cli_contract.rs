@@ -6336,6 +6336,70 @@ fn fix_copy_refuses_shared_source_sidecars_before_publishing_success() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn fix_json_write_errors_preserve_in_place_bytes_and_private_copy_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = unique_temp_dir("fix-json-write-error");
+    let input = dir.path().join("scene.gltf");
+    let original = format!("{{\"asset\":{{\"version\":\"2.0\"}}}}{}", " ".repeat(4096));
+    std::fs::write(&input, &original).unwrap();
+    // POSIX shells express this limit in blocks; either 512 or 1024 bytes is
+    // below our JSON length. Ignore SIGXFSZ so the real writer reports its I/O
+    // error. The limit applies only to this child, never the parallel test runner.
+    let result = Command::new("sh")
+        .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "sh"])
+        .arg(env!("CARGO_BIN_EXE_animsmith"))
+        .arg("fix")
+        .arg(&input)
+        .arg("--in-place")
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2), "{}", stderr(&result));
+    assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+    assert!(!stderr(&result).is_empty());
+    assert_eq!(std::fs::read(&input).unwrap(), original.as_bytes());
+
+    let control = animsmith()
+        .arg("fix")
+        .arg(&input)
+        .arg("--in-place")
+        .output()
+        .unwrap();
+    assert_eq!(control.status.code(), Some(0), "{}", stderr(&control));
+    assert_eq!(std::fs::read(&input).unwrap(), original.as_bytes());
+
+    // Both directions matter on failure: tighten a public destination before
+    // private bytes are written, and do not expose an older private destination
+    // while a public-source overwrite is incomplete.
+    let output = dir.path().join("copy.gltf");
+    for (source_mode, previous_mode) in [(0o600, 0o644), (0o644, 0o600)] {
+        std::fs::set_permissions(&input, std::fs::Permissions::from_mode(source_mode)).unwrap();
+        let previous = vec![b'x'; original.len() + 100];
+        std::fs::write(&output, &previous).unwrap();
+        std::fs::set_permissions(&output, std::fs::Permissions::from_mode(previous_mode)).unwrap();
+        let result = Command::new("sh")
+            .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "sh"])
+            .arg(env!("CARGO_BIN_EXE_animsmith"))
+            .arg("fix")
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2), "{}", stderr(&result));
+        assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+        assert_eq!(
+            std::fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), original.as_bytes());
+        let partial = std::fs::read(&output).unwrap();
+        assert_eq!(partial.len(), previous.len());
+        assert_eq!(&partial[original.len()..], &previous[original.len()..]);
+    }
+}
+
 #[test]
 fn help_matches_compiled_feature_set() {
     let output = animsmith().arg("--help").output().expect("runs animsmith");

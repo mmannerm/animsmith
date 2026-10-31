@@ -966,7 +966,20 @@ and holds writable file handles through publication. This detects filesystem
 aliases such as Windows short names without truncating existing files. A normal
 refusal removes the reservations; interruption can leave empty placeholders,
 even if a later dependency is missing. Write permission is required during
-preflight. Concurrent directory/name edits are not a multi-file transaction.
+preflight. In-place `.gltf` repair also republishes the captured JSON, so the
+primary must be writable even when its JSON is unchanged. After admission, an
+I/O failure or interruption can leave an incomplete primary or sidecar; rollback
+and concurrent directory/name transactions are not guaranteed. On Unix,
+distinct JSON copies inherit captured source access permissions. New
+reservations are no broader than those permissions; existing copies are
+restricted before writing and receive the exact source mode only after a
+successful overwrite. In-place primary, GLB and sidecar permission behavior
+is unchanged.
+
+Windows JSON copies preserve the captured read-only attribute. Distinct copies
+of encrypted JSON sources are refused to avoid emitting plaintext; use an
+EFS-aware copy workflow or repair the original in place. Other Windows metadata
+and alternate data streams are not copied.
 
 ## Engine profiles and importer settings
 

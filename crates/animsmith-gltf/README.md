@@ -262,8 +262,18 @@ short names, are checked against the real namespace. Normal refusal removes
 reservations; interruption can leave empty placeholders, even when a later
 dependency is missing. Files are opened without truncation during preflight and
 published through retained handles, so write permission is required before
-admission. Later I/O errors and concurrent namespace edits are not a multi-file
-transaction or rollback guarantee.
+admission. In-place `.gltf` repair also republishes the captured JSON, so its
+primary file must be writable even when the JSON is unchanged. Later I/O errors
+or interruption can leave an incomplete primary or sidecar; rollback and
+concurrent namespace transactions are not guaranteed. On Unix, distinct JSON
+copies inherit captured source access permissions. New reservations are no
+broader than those permissions; existing copies are restricted before writing
+and receive the exact source mode only after a successful overwrite. In-place
+primary, GLB and sidecar permission behavior is unchanged.
+Windows JSON copies preserve the captured read-only attribute. Distinct copies
+of encrypted JSON sources are refused to avoid emitting plaintext; use an
+EFS-aware copy workflow or repair the original in place. Other Windows metadata
+and alternate data streams are not copied.
 
 ## Feature Flags
 

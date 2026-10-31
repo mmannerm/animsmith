@@ -83,13 +83,31 @@ fn distinct_primary_cannot_repair_the_source_sidecar() {
     let input = source(dir.path(), false, 0);
     let original = fs::read(&input).unwrap();
     let output = dir.path().join("fixed.gltf");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let session = session(&input);
     refused(session.write(&input, &output));
     assert!(!output.exists());
     fs::write(&output, b"previous output").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&output, fs::Permissions::from_mode(0o640)).unwrap();
+    }
     // The session's read location, not this legacy argument, owns protection.
     refused(session.write(&dir.path().join("unrelated.gltf"), &output));
     assert_eq!(fs::read(&output).unwrap(), b"previous output");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
     assert_eq!(fs::read(&input).unwrap(), original);
     assert_eq!(fs::read(dir.path().join("first.bin")).unwrap(), payload());
 }
@@ -118,6 +136,64 @@ fn separate_directory_copy_preserves_json_uris_and_source_bytes() {
     assert_eq!(fs::read(&renamed).unwrap(), original);
     assert_eq!(fs::read(&output).unwrap(), original);
     assert_eq!(fs::read(dir.path().join("first.bin")).unwrap(), payload());
+}
+
+#[cfg(unix)]
+#[test]
+fn json_copies_use_captured_permissions_while_in_place_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let input = source(dir.path(), false, 0);
+    let original = fs::read(&input).unwrap();
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
+    let session = session(&input);
+    // Both JSON and permissions belong to the captured session.
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o644)).unwrap();
+    let out = dir.path().join("out");
+    fs::create_dir(&out).unwrap();
+    let output = out.join("fixed.gltf");
+    session.write(&input, &output).unwrap();
+    assert_eq!(
+        fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(fs::read(&output).unwrap(), original);
+    assert_eq!(fs::read(out.join("first.bin")).unwrap(), repaired_payload());
+
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o640)).unwrap();
+    // A prior longer destination must end at the captured snapshot's exact length.
+    fs::write(&output, vec![b'x'; original.len() + 100]).unwrap();
+    session.write(&input, &output).unwrap();
+    assert_eq!(
+        fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(fs::read(&output).unwrap(), original);
+    assert_eq!(fs::read(&input).unwrap(), original);
+    assert_eq!(fs::read(dir.path().join("first.bin")).unwrap(), payload());
+
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o640)).unwrap();
+    session.write(&input, &input).unwrap();
+    assert_eq!(
+        fs::metadata(&input).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    assert_eq!(fs::read(&input).unwrap(), original);
+    assert_eq!(
+        fs::read(dir.path().join("first.bin")).unwrap(),
+        repaired_payload()
+    );
+
+    // The other direction may widen permissions only after replacing all old
+    // bytes. A successful public copy restores its source mode.
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o644)).unwrap();
+    let public_session = FixSession::read(&input).unwrap();
+    public_session.write(&input, &output).unwrap();
+    assert_eq!(
+        fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    assert_eq!(fs::read(&output).unwrap(), original);
 }
 
 #[test]
@@ -462,6 +538,42 @@ fn readonly_source_with_missing_images_needs_no_source_directory_probe() {
     assert_eq!(fs::read(src.join("first.bin")).unwrap(), payload());
     assert_eq!(fs::read(out.join("first.bin")).unwrap(), repaired_payload());
     assert_eq!(fs::read_dir(&src).unwrap().count(), 2);
+}
+
+#[cfg(windows)]
+#[test]
+// Clearing the Windows read-only attribute does not widen Unix mode bits.
+#[allow(clippy::permissions_set_readonly_false)]
+fn json_copies_preserve_captured_readonly_attribute() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = source(dir.path(), false, 0);
+    let original = fs::read(&input).unwrap();
+    let mut permissions = fs::metadata(&input).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&input, permissions.clone()).unwrap();
+    let session = session(&input);
+    permissions.set_readonly(false);
+    fs::set_permissions(&input, permissions.clone()).unwrap();
+    let out = dir.path().join("out");
+    fs::create_dir(&out).unwrap();
+    let output = out.join("fixed.gltf");
+    for existing in [false, true] {
+        if existing {
+            fs::set_permissions(&output, permissions.clone()).unwrap();
+            fs::write(&output, b"previous output").unwrap();
+        }
+        session.write(&input, &output).unwrap();
+        assert!(fs::metadata(&output).unwrap().permissions().readonly());
+        assert_eq!(fs::read(&output).unwrap(), original);
+        assert_eq!(fs::read(out.join("first.bin")).unwrap(), repaired_payload());
+        assert_eq!(fs::read(&input).unwrap(), original);
+        assert_eq!(fs::read(dir.path().join("first.bin")).unwrap(), payload());
+    }
+    // In-place repair keeps the current file's attribute, rather than applying
+    // a distinct copy's captured metadata policy to the source.
+    session.write(&input, &input).unwrap();
+    assert!(!fs::metadata(&input).unwrap().permissions().readonly());
+    fs::set_permissions(&output, permissions).unwrap();
 }
 
 #[cfg(unix)]

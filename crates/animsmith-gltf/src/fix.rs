@@ -134,7 +134,7 @@ impl FixSession {
         // are loaded, patched, and written back to where they came from.
         let buffers = resolve_buffers(&gltf, input.parent())?;
         let ownership = ownership::Ownership::read(&original, &buffers)?;
-        let origin = publication::Origin::capture(input, &gltf)?;
+        let origin = publication::Origin::capture(input, &gltf, !original.starts_with(b"glTF"))?;
 
         Ok(Self {
             original,
@@ -399,8 +399,15 @@ impl FixSession {
     /// directories, then every protected source path is checked again. Ordinary
     /// refusals remove reservations; interruption can leave empty placeholders,
     /// even if a later dependency is missing. Publication uses retained writable
-    /// handles and the captured JSON bytes. Later I/O failure is not a multi-file
-    /// rollback guarantee, and concurrent namespace edits are not transactional.
+    /// handles and the captured JSON bytes, including for in-place `.gltf` writes.
+    /// The primary must be writable even when its JSON is unchanged. Later I/O
+    /// failure or interruption can leave an incomplete primary or sidecar;
+    /// neither rollback nor concurrent namespace transactions are guaranteed.
+    /// On Unix, distinct JSON copies inherit captured source access permissions.
+    /// In-place primary, GLB and sidecar permission behavior is unchanged.
+    /// Windows JSON copies preserve the captured read-only attribute; encrypted
+    /// JSON sources are refused for distinct copies to avoid plaintext output.
+    /// Other Windows metadata and alternate data streams are not copied.
     ///
     /// # Errors
     ///
