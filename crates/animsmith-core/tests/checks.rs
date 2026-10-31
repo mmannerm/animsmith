@@ -1116,6 +1116,80 @@ fn cubic_quaternion_tangents_do_not_count_as_redundant() {
 }
 
 #[test]
+fn constant_rotation_classification_respects_interpolation_and_hemisphere() {
+    let near = Quat::from_xyzw(0.0, 0.0, 0.000_25, 0.999_999_94);
+    let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    for (interpolation, keys, constant) in [
+        (
+            Interpolation::Linear,
+            vec![Quat::IDENTITY, -Quat::IDENTITY],
+            true,
+        ),
+        (
+            Interpolation::Step,
+            vec![Quat::IDENTITY, -Quat::IDENTITY],
+            true,
+        ),
+        (Interpolation::CubicSpline, vec![Quat::IDENTITY, near], true),
+        (
+            Interpolation::CubicSpline,
+            vec![-Quat::IDENTITY, -near],
+            true,
+        ),
+        (
+            Interpolation::CubicSpline,
+            vec![Quat::IDENTITY, -Quat::IDENTITY],
+            false,
+        ),
+        (
+            Interpolation::CubicSpline,
+            vec![Quat::IDENTITY, -near],
+            false,
+        ),
+        (
+            Interpolation::CubicSpline,
+            vec![-Quat::IDENTITY, near],
+            false,
+        ),
+        (
+            Interpolation::CubicSpline,
+            vec![Quat::IDENTITY, near, -near],
+            false,
+        ),
+    ] {
+        let mut doc = clean_doc();
+        let times = (0..keys.len())
+            .map(|index| index as f32 / (keys.len() - 1) as f32)
+            .collect();
+        let values = if interpolation == Interpolation::CubicSpline {
+            keys.iter().flat_map(|&key| [zero, key, zero]).collect()
+        } else {
+            keys.clone()
+        };
+        doc.clips[0].tracks[0] = Track {
+            bone: 1,
+            property: Property::Rotation,
+            interpolation,
+            times,
+            values: TrackValues::Quats(values),
+        };
+        let findings = lint(&doc);
+        let constant_findings: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding.check_id == "constant-track")
+            .collect();
+        assert_eq!(
+            constant_findings.len(),
+            usize::from(constant),
+            "{interpolation:?} keys {keys:?}: {constant_findings:?}"
+        );
+        if constant {
+            assert_eq!(constant_findings[0].bone.as_deref(), Some("spine"));
+        }
+    }
+}
+
+#[test]
 fn constant_rotation_track_is_noted() {
     let mut doc = clean_doc();
     let q = Quat::from_rotation_y(0.8);
