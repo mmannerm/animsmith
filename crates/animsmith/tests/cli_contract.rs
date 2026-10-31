@@ -6347,7 +6347,10 @@ fn fix_json_write_errors_preserve_in_place_bytes_and_private_copy_permissions() 
     // POSIX shells express this limit in blocks; either 512 or 1024 bytes is
     // below our JSON length. Ignore SIGXFSZ so the real writer reports its I/O
     // error. The limit applies only to this child, never the parallel test runner.
+    // Its LLVM profile would also be truncated, so discard only this limited
+    // child's coverage output; the test and unrestricted control stay covered.
     let result = Command::new("sh")
+        .env("LLVM_PROFILE_FILE", "/dev/null")
         .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "sh"])
         .arg(env!("CARGO_BIN_EXE_animsmith"))
         .arg("fix")
@@ -6379,6 +6382,7 @@ fn fix_json_write_errors_preserve_in_place_bytes_and_private_copy_permissions() 
         std::fs::write(&output, &previous).unwrap();
         std::fs::set_permissions(&output, std::fs::Permissions::from_mode(previous_mode)).unwrap();
         let result = Command::new("sh")
+            .env("LLVM_PROFILE_FILE", "/dev/null")
             .args(["-c", "trap '' XFSZ; ulimit -f 1; exec \"$@\"", "sh"])
             .arg(env!("CARGO_BIN_EXE_animsmith"))
             .arg("fix")
