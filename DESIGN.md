@@ -275,6 +275,18 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   is not byte-identical and would rewrite bytes `fix` must leave
   untouched. The `Document` round-trip is the right tool for
   `convert`/`transform`; in-place `fix` is not a round-trip.
+  Before either quaternion repair mutates bytes, one original-source inventory
+  checks declared storage ownership using the capability scanner's checked
+  ranges and sorted overlap sweep. Repair-specific semantic uses remain
+  separate from scale's acceptance policy. Conflicting tracks are skipped;
+  an unresolved range, unknown extension owner or duplicate normalized external
+  buffer key skips all quaternion repairs. Duplicate buffer copies cannot be
+  safely patched independently and then published to one resource.
+  Packed disjoint ranges stay admitted, while stride padding is conservatively
+  protected. Known non-storage extensions and inventoried Draco views do not
+  require scale's broad extension refusal. Shared sparse range corrections
+  intentionally tighten scale preflight for malformed unreferenced payloads
+  whose declared count or stride makes them overlap rewritten data.
 - `convert` and `assemble` are compiled only with the `fbx` feature. `--no-default-features`
   remains a glTF-only pure-Rust CLI with validation, transform, fix, and
   diff commands intact; `report` is controlled separately by the

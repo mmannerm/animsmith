@@ -19,12 +19,19 @@
 //! negating individual tangent/value triplets can change interior Hermite
 //! samples, even when endpoint rotations stay equivalent. Sparse accessors
 //! and quantized (normalized-int) rotations are skipped.
+//!
+//! Both repairs require exclusive storage ownership. Original source ranges
+//! and semantic uses are inventoried once before mutation; conflicting or
+//! unprovable ownership produces a located skip instead of altering another
+//! accessor, image or extension payload. Disjoint accessors may share a view.
 
 use crate::{
     FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path,
     unreadable_loaded_layout,
 };
 use std::path::Path;
+
+mod ownership;
 
 const QUAT_NORM_TOLERANCE: f32 = 1e-3;
 
@@ -49,8 +56,8 @@ pub struct TrackFix {
 pub struct FixReport {
     /// Rotation tracks that were patched.
     pub tracks: Vec<TrackFix>,
-    /// Tracks that needed repair but were skipped (data URI, cubic,
-    /// quantized, sparse, or malformed accessors), with reasons.
+    /// Tracks skipped because interpolation, encoding, layout, or source storage
+    /// ownership prevents a safe repair, with reasons.
     pub skipped: Vec<String>,
 }
 
@@ -99,6 +106,7 @@ pub struct FixSession {
     original: Vec<u8>,
     gltf: gltf::Gltf,
     buffers: Vec<Vec<u8>>,
+    ownership: ownership::Ownership,
 }
 
 impl FixSession {
@@ -122,11 +130,13 @@ impl FixSession {
         // time, not assumed to be index 0). External and data-URI buffers
         // are loaded, patched, and written back to where they came from.
         let buffers = resolve_buffers(&gltf, input.parent())?;
+        let ownership = ownership::Ownership::read(&original, &buffers)?;
 
         Ok(Self {
             original,
             gltf,
             buffers,
+            ownership,
         })
     }
 
@@ -328,6 +338,13 @@ impl FixSession {
                     report
                         .skipped
                         .push(format!("{clip}/{bone}: malformed cubic rotation accessor"));
+                    continue;
+                }
+                if let Some(reason) = self.ownership.reason(accessor.index()) {
+                    report.skipped.push(format!(
+                        "{clip}/{bone}: /accessors/{} {reason}",
+                        accessor.index()
+                    ));
                     continue;
                 }
                 let layout = RotationLayout {
