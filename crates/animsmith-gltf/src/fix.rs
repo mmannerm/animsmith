@@ -29,15 +29,13 @@
 //! unprovable ownership produces a located skip instead of altering another
 //! accessor, image or extension payload. Disjoint accessors may share a view.
 
-use crate::{
-    FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path,
-    unreadable_loaded_layout,
-};
+use crate::{FixError, LoadError, resolve_buffers, unreadable_loaded_layout};
 use animsmith_core::QUAT_NORM_TOLERANCE;
 use glam::DQuat;
 use std::path::Path;
 
 mod ownership;
+mod publication;
 
 /// One track's repair summary.
 #[derive(Debug, Clone)]
@@ -111,6 +109,7 @@ pub struct FixSession {
     gltf: gltf::Gltf,
     buffers: Vec<Vec<u8>>,
     ownership: ownership::Ownership,
+    origin: publication::Origin,
 }
 
 impl FixSession {
@@ -135,12 +134,14 @@ impl FixSession {
         // are loaded, patched, and written back to where they came from.
         let buffers = resolve_buffers(&gltf, input.parent())?;
         let ownership = ownership::Ownership::read(&original, &buffers)?;
+        let origin = publication::Origin::capture(input, &gltf)?;
 
         Ok(Self {
             original,
             gltf,
             buffers,
             ownership,
+            origin,
         })
     }
 
@@ -389,13 +390,30 @@ impl FixSession {
     /// The container is not read again from disk. `input` remains accepted for
     /// API compatibility; the bytes captured by [`Self::read`] are authoritative.
     ///
+    /// Every primary and external-buffer destination is checked before any
+    /// existing bytes change. A distinct primary output must not overwrite a
+    /// source buffer or image; choose a separate output directory for a copy.
+    /// In-place repair permits each resource's own file, but never overlapping
+    /// destinations.
+    /// Missing output names are reserved as empty files in their actual
+    /// directories, then every protected source path is checked again. Ordinary
+    /// refusals remove reservations; interruption can leave empty placeholders,
+    /// even if a later dependency is missing. Publication uses retained writable
+    /// handles and the captured JSON bytes. Later I/O failure is not a multi-file
+    /// rollback guarantee, and concurrent namespace edits are not transactional.
+    ///
     /// # Errors
     ///
     /// Returns [`FixError::Load`] if the original container framing cannot
     /// be safely reassembled, or [`FixError::Write`] if writing the output
-    /// path fails.
+    /// path fails or its resource paths overlap. Source locations are retained
+    /// from [`Self::read`], independently of the `input` argument.
     pub fn write(&self, _input: &Path, output: &Path) -> Result<(), FixError> {
-        write_patched(output, &self.original, &self.gltf, &self.buffers)
+        let mut destinations = self.origin.preflight(output, &self.gltf)?;
+        match write_patched(&self.original, &self.gltf, &self.buffers, &mut destinations) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(destinations.refuse(error)),
+        }
     }
 }
 
@@ -430,21 +448,11 @@ fn write_rotation(buffer: &mut [u8], layout: RotationLayout, element: usize, q: 
 /// Reassemble the container with the original structure and the
 /// patched buffer bytes.
 fn write_patched(
-    output: &Path,
     original: &[u8],
     gltf: &gltf::Gltf,
     buffers: &[Vec<u8>],
+    destinations: &mut publication::Destinations,
 ) -> Result<(), FixError> {
-    let io_err = |path: &Path| {
-        let path = path.display().to_string();
-        move |source: std::io::Error| {
-            FixError::Write(WriteError::Io {
-                path: path.clone(),
-                source,
-            })
-        }
-    };
-
     if original.starts_with(b"glTF") {
         // GLB: copy the header + JSON chunk verbatim, splice the
         // patched BIN chunk (same length — we only overwrote values).
@@ -492,45 +500,17 @@ fn write_patched(
             }
             out.extend_from_slice(&original[padding_start..]);
         }
-        std::fs::write(output, out).map_err(io_err(output))?;
+        destinations.write_primary(&out)?;
         // A GLB may also reference external URI buffers; their patched
         // bytes must land on disk too, or "N keys fixed" is a false
         // success (the repaired keys would be in the untouched .bin).
-        return write_uri_buffers(output, gltf, buffers);
+        return destinations.write_buffers(buffers);
     }
 
-    // .gltf: emit the captured JSON rather than copying from a path that may
-    // alias the output. A self-copy can truncate the source before reading it.
-    // External buffers remain resolved against the output location.
-    std::fs::write(output, original).map_err(io_err(output))?;
-    write_uri_buffers(output, gltf, buffers)
-}
-
-/// Write every patched external (non-data-URI) buffer next to
-/// `output`, keeping the container/buffer pair together.
-fn write_uri_buffers(
-    output: &Path,
-    gltf: &gltf::Gltf,
-    buffers: &[Vec<u8>],
-) -> Result<(), FixError> {
-    for (buffer, data) in gltf.buffers().zip(buffers) {
-        if let gltf::buffer::Source::Uri(uri) = buffer.source() {
-            if uri.starts_with("data:") {
-                continue; // never patched — such tracks are skipped upstream
-            }
-            let path = output
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join(safe_external_buffer_path(uri)?);
-            std::fs::write(&path, data).map_err(|source| {
-                FixError::Write(WriteError::Io {
-                    path: path.display().to_string(),
-                    source,
-                })
-            })?;
-        }
-    }
-    Ok(())
+    // Publish the bytes captured by read, through the admitted handle. A
+    // fresh path copy could truncate an alias or read a different source.
+    destinations.write_primary(original)?;
+    destinations.write_buffers(buffers)
 }
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<usize, LoadError> {

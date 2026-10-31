@@ -299,6 +299,15 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   require scale's broad extension refusal. Shared sparse range corrections
   intentionally tighten scale preflight for malformed unreferenced payloads
   whose declared count or stride makes them overlap rewritten data.
+  `FixSession` also owns one complete destination preflight: output copies
+  preserve source resources, and no two primary/sidecar writes may alias,
+  including in-place. Its identity follows final symlinks and hardlinks because
+  repair writes file contents directly; the CLI's staged rename publisher
+  intentionally has different directory-entry semantics.
+  Missing repair destinations are reserved in the actual parent namespace and
+  all protected paths are resolved again before publication through held file
+  handles. Ordinary refusals remove reservations; interruption may leave empty
+  placeholders. This boundary does not provide a multi-file transaction.
 - Assembly quaternion cleanup unit-normalizes and aligns LINEAR/STEP signs.
   CUBICSPLINE value keys are admitted within the existing `quat-norm` length
   tolerance (`1e-3`, evaluated in `f64`) and retained with every tangent and

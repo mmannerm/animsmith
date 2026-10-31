@@ -247,6 +247,24 @@ animsmith-gltf = "0.14"
 The compiling load/check and repair examples live in the crate-level API
 documentation.
 
+`FixSession::write` preflights the primary and all external-buffer destinations
+before changing existing bytes. A distinct primary output must preserve the
+source primary, buffers, and safe local image keys, including missing images. Use a
+separate output directory when a same-directory copy would share sidecars.
+In-place repair permits each resource's own file, but two destinations may
+never alias through hardlinks or followed symlinks. Source locations are
+captured by `FixSession::read`; they are not inferred from the later `write`
+input argument. JSON and URI spellings remain unchanged. Collision and
+unavailable file-identity errors return `WriteError::RepairPublication` before
+any existing primary/sidecar bytes change. Missing output names are reserved as
+empty files in their actual directories so filesystem aliases, including Windows
+short names, are checked against the real namespace. Normal refusal removes
+reservations; interruption can leave empty placeholders, even when a later
+dependency is missing. Files are opened without truncation during preflight and
+published through retained handles, so write permission is required before
+admission. Later I/O errors and concurrent namespace edits are not a multi-file
+transaction or rollback guarantee.
+
 ## Feature Flags
 
 This crate has no public feature flags. In the `animsmith` CLI, glTF
