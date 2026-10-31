@@ -154,7 +154,9 @@ feature-isolated target directory. An AnimSmith checkout already separates
 them: `just gates` and CI send every `--no-default-features` command to
 `target/no-default-features/`, so `target/release/animsmith` holds the
 default-feature CLI, and `just release-cli` proves that by probing the binary
-and prints the provenance record to retain. Repeat this preflight for each
+and prints the provenance record to retain. The report validator's Markdown
+parser helper uses the same isolated minimal target directory and selects its
+executable from Cargo's compiler-artifact output. Repeat this preflight for each
 batch when the binary, target directory, feature set, source format, or
 required command changes.
 

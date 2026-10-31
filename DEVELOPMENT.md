@@ -98,6 +98,7 @@ pure-Rust glTF-only binary:
 ```console
 $ cargo test -p animsmith --test cli_contract --no-default-features --target-dir target/no-default-features
 $ cargo test -p animsmith --test foot_cycle_cli --no-default-features --target-dir target/no-default-features
+$ cargo test -p animsmith --test measure_mesh --no-default-features --target-dir target/no-default-features
 $ cargo test -p animsmith --test scale_cli --no-default-features --target-dir target/no-default-features
 $ cargo test -p animsmith --test transition_pose_cli --no-default-features --target-dir target/no-default-features
 $ cargo build -p animsmith --no-default-features --target-dir target/no-default-features
@@ -111,6 +112,16 @@ below. `just github-community` enforces the pairing: in `justfile`,
 `.github/workflows/checks.yml`, and `scripts/*.sh`, a non-comment line naming
 `--no-default-features` must name `--target-dir target/no-default-features` on
 that same line.
+
+The animation-pack report validator also builds its Markdown parser helper in
+`target/no-default-features`, explicitly overriding an ambient
+`CARGO_TARGET_DIR`. It runs the executable reported by Cargo's compiler-artifact
+JSON. A fresh-process test proves this ownership by checking the returned
+executable path while a different ambient target directory is set. Separate
+byte and capability probes confirm that the configured default CLI stays
+unchanged and admits glTF, FBX, and report commands. These tests cover the
+Python invocation through real execution; the shell command scan above does
+not inspect it.
 
 In that build, glTF inspect, measure, lint, transform, fix, scale, diff,
 `generate addressability`, and `collection transform-foot-cycle` stay
