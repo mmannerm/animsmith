@@ -122,6 +122,37 @@ fn quaternion_norm_reports_a_finite_magnitude_for_finite_f32_components() {
 }
 
 #[test]
+fn quaternion_flip_detects_raw_finite_keys_without_overflow_or_underflow() {
+    for magnitude in [1e20, f32::from_bits(1)] {
+        for (second, expected_count) in [
+            ([magnitude, -magnitude, -magnitude, -magnitude], 1),
+            ([-magnitude, magnitude, magnitude, magnitude], 0),
+        ] {
+            let mut doc = clean_doc();
+            doc.clips[0].tracks[0].values = TrackValues::Quats(vec![
+                Quat::from_array([magnitude; 4]),
+                Quat::from_array(second),
+                Quat::from_array(second),
+            ]);
+            // The normalized dots are exactly -1/2 and +1/2. The sign
+            // expectation is independent of any production dot operation.
+            let findings = lint(&doc)
+                .into_iter()
+                .filter(|finding| finding.check_id == "quat-flip")
+                .collect::<Vec<_>>();
+            assert_eq!(findings.len(), expected_count, "{magnitude:?}, {second:?}");
+            if let Some(finding) = findings.first() {
+                let json = serde_json::to_value(finding).unwrap();
+                assert_eq!(json["measured"], 1.0);
+                assert_eq!(json["bone"], "spine");
+                assert_eq!(json["time_s"], 0.5);
+                assert_eq!(finding.severity, Severity::Warning);
+            }
+        }
+    }
+}
+
+#[test]
 fn clean_document_has_no_findings() {
     let findings = lint(&clean_doc());
     assert!(findings.is_empty(), "clean doc flagged: {findings:#?}");

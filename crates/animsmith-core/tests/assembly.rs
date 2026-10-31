@@ -237,6 +237,49 @@ fn hemisphere_cleanup_preserves_cubic_storage_and_linear_step_ties() {
 }
 
 #[test]
+fn hemisphere_cleanup_preserves_magnitudes_across_finite_f32_ranges() {
+    for (interpolation, magnitude) in [
+        (Interpolation::Linear, 1e20),
+        (Interpolation::Step, f32::from_bits(1)),
+    ] {
+        let first = [magnitude; 4];
+        let second = [magnitude, -magnitude, -magnitude, -magnitude];
+        let positive = [-magnitude, magnitude, magnitude, magnitude];
+        let mut clip = Clip {
+            name: "raw-quaternions".into(),
+            duration_s: 1.0,
+            tracks: vec![Track {
+                bone: 0,
+                property: Property::Rotation,
+                interpolation,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Quats(
+                    [first, second, positive].map(Quat::from_array).to_vec(),
+                ),
+            }],
+        };
+        // The first pair has normalized dot -1/2; after negation the
+        // final key equals the repaired second key, so only one flips.
+        assert_eq!(normalize_quaternion_hemispheres(&mut clip), 1);
+        let expected = [first, positive, positive].map(|q| q.map(f32::to_bits));
+        let bits = |clip: &Clip| {
+            (0..3)
+                .map(|key| {
+                    clip.tracks[0]
+                        .key_quat(key)
+                        .unwrap()
+                        .to_array()
+                        .map(f32::to_bits)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bits(&clip), expected);
+        assert_eq!(normalize_quaternion_hemispheres(&mut clip), 0);
+        assert_eq!(bits(&clip), expected);
+    }
+}
+
+#[test]
 fn removing_final_keys_keeps_cubic_alignment_and_retimes_duration() {
     let mut cubic = track(0, Property::Translation);
     cubic.interpolation = Interpolation::CubicSpline;

@@ -32,7 +32,7 @@ impl Check for QuatFlip {
                 if !a.is_finite() || !b.is_finite() {
                     continue;
                 }
-                if a.dot(b) < 0.0 {
+                if a.as_dquat().dot(b.as_dquat()) < 0.0 {
                     count += 1;
                     first.get_or_insert(k);
                 }
