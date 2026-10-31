@@ -26,8 +26,9 @@ use super::collection_output::{
     SourceUnavailableReason, TakeInventoryState, TakeNameState,
 };
 use super::{
-    EXIT_FINDINGS, InputFormat, LintAnalysis, LoadedConfig, LoadedInput, analyze_loaded_lint,
-    current_tool, full_check_ids, input_format, load_source_bytes_typed, parse_config,
+    EXIT_FINDINGS, InputFormat, LintAnalysis, LintAnalysisError, LoadedConfig, LoadedInput,
+    analyze_loaded_lint, current_tool, full_check_ids, input_format, load_source_bytes_typed,
+    parse_config,
 };
 
 const COLLECTION_CONFIG_MAX_BYTES: u64 = animsmith_core::COLLECTION_MANIFEST_V1_MAX_MANIFEST_BYTES;
@@ -39,7 +40,9 @@ struct PreparedConfig {
 
 struct ReadySource {
     loaded: LoadedInput,
-    indexed_measurements: Vec<animsmith_core::measure::ClipMeasurements>,
+    // None records an admitted source whose analysis hit a deterministic
+    // sampling limit. Keep its same-load facts for truthful binding failures.
+    indexed_measurements: Option<Vec<animsmith_core::measure::ClipMeasurements>>,
     digest_mismatched: bool,
     nested_output_available: bool,
     duplicate_normalized_names: BTreeSet<String>,
@@ -285,22 +288,54 @@ fn execute_source(
         CheckSelection::All,
         Severity::Error,
         &BTreeSet::new(),
-    )?;
-    let LintAnalysis {
-        report,
-        requires_failure,
-        indexed_measurements,
-        grids,
-        #[cfg(feature = "report")]
-            roles: _,
-    } = analysis;
-    drop(grids);
-    let envelope =
-        LintEnvelopeV19::new(current_tool(), vec![report]).map_err(|error| error.to_string())?;
-    let nested_output_available =
-        loaded.document().clips.iter().all(|clip| {
-            clip.name.len() <= animsmith_core::COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES
-        });
+    );
+    let (result, indexed_measurements, requires_failure, nested_output_available) = match analysis {
+        Ok(LintAnalysis {
+            report,
+            requires_failure,
+            indexed_measurements,
+            grids,
+            #[cfg(feature = "report")]
+                roles: _,
+        }) => {
+            drop(grids);
+            let envelope = LintEnvelopeV19::new(current_tool(), vec![report])
+                .map_err(|error| error.to_string())?;
+            let nested_output_available = loaded.document().clips.iter().all(|clip| {
+                clip.name.len() <= animsmith_core::COLLECTION_MANIFEST_V1_MAX_TAKE_NAME_BYTES
+            });
+            let result = if nested_output_available {
+                DocumentResult::Available {
+                    envelope: Box::new(envelope),
+                }
+            } else {
+                DocumentResult::Unavailable {
+                    reason: DocumentUnavailableReason::NestedOutput,
+                }
+            };
+            (
+                result,
+                Some(indexed_measurements),
+                requires_failure,
+                nested_output_available,
+            )
+        }
+        Err(LintAnalysisError::Sampling {
+            error:
+                animsmith_core::sample::SamplingError::SizeOverflow
+                | animsmith_core::sample::SamplingError::LimitExceeded { .. },
+            ..
+        }) => (
+            DocumentResult::Unavailable {
+                reason: DocumentUnavailableReason::SamplingLimit,
+            },
+            None,
+            true,
+            false,
+        ),
+        // Allocation failure is an environment error, not an asset refusal.
+        Err(error) => return Err(error.to_string()),
+    };
     let (take_inventory, observed_takes) = observed_takes(&loaded);
     let duplicate_normalized_names = duplicate_clip_names(&loaded);
     let record = CollectionSourceRecord::new(
@@ -315,15 +350,7 @@ fn execute_source(
         dependency_closure,
         take_inventory,
         observed_takes,
-        if nested_output_available {
-            DocumentResult::Available {
-                envelope: Box::new(envelope),
-            }
-        } else {
-            DocumentResult::Unavailable {
-                reason: DocumentUnavailableReason::NestedOutput,
-            }
-        },
+        result,
     );
     Ok(SourceExecution {
         record,
@@ -469,7 +496,13 @@ fn bind_clip(clip: &CollectionClipV1, execution: &ExecutedSource) -> ClipBinding
             reason: ClipUnavailableReason::NormalizedClipUnavailable,
         };
     };
-    let Some(measurements) = source.indexed_measurements.get(*normalized_index).cloned() else {
+    let Some(normalized_name) = source
+        .loaded
+        .document()
+        .clips
+        .get(*normalized_index)
+        .map(|clip| clip.name.clone())
+    else {
         return ClipBindingState::Unavailable {
             reason: ClipUnavailableReason::NormalizedClipUnavailable,
         };
@@ -484,13 +517,12 @@ fn bind_clip(clip: &CollectionClipV1, execution: &ExecutedSource) -> ClipBinding
             reason: ClipUnavailableReason::DependencyClosureIncomplete,
         };
     }
-    let Some(normalized_name) = source
-        .loaded
-        .document()
-        .clips
-        .get(*normalized_index)
-        .map(|clip| clip.name.clone())
-    else {
+    let Some(indexed_measurements) = &source.indexed_measurements else {
+        return ClipBindingState::Unavailable {
+            reason: ClipUnavailableReason::SamplingLimitExceeded,
+        };
+    };
+    let Some(measurements) = indexed_measurements.get(*normalized_index).cloned() else {
         return ClipBindingState::Unavailable {
             reason: ClipUnavailableReason::NormalizedClipUnavailable,
         };

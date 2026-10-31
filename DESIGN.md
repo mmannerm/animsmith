@@ -3261,7 +3261,7 @@ the existing multi-file spelling of `lint` collection-aware.
 AnimSmith provides two independently versioned contracts:
 
 - `urn:animsmith:schema:collection-manifest:1`, a strict TOML declaration; and
-- `urn:animsmith:schema:collection-output:5`, deterministic JSON evidence.
+- `urn:animsmith:schema:collection-output:12`, deterministic JSON evidence.
 
 The historical `urn:animsmith:schema:collection-output:1` and
 `urn:animsmith:schema:collection-output:2` contracts remain immutable. V2
@@ -3271,7 +3271,7 @@ historical `urn:animsmith:schema:collection-output:3` derives from V2 and adds o
 bounded `dependency_closure` state to every source. A complete state retains the
 loader's exact `DependencyClosureIdentityV1`; partial and unavailable states
 retain a nonempty, sorted, unique sequence from the seven closed
-`DependencyClosureCoverageReasonV1` values. The current `collection-output:11`
+`DependencyClosureCoverageReasonV1` values. The current `collection-output:12`
 embeds the current output-v19 lint envelope with measurements-v18 while
 preserving collection-output-v8 and its nested output-v16, and
 collection-output-v4 with its nested output-v12/measurements-v15, as immutable
@@ -3288,7 +3288,7 @@ animsmith collection lint COLLECTION.toml --format json
 
 The command name, input identity, and output identity are distinct from
 ordinary `animsmith lint FILE...`. Existing lint and measure invocations remain
-document-local and continue to emit output-v13 with measurements-v16. A file
+document-local and continue to emit output-v19 with measurements-v18. A file
 extension, the presence of multiple inputs, or repeated embedded take names
 never switches commands implicitly.
 
@@ -3316,14 +3316,14 @@ the CLI protocol.
 The repository-owned structured evaluation model is a separate skill-level
 authority. `animation-pack-evaluation:1` remains frozen to independently
 validated `collection-output:2`. Current evaluations use the additive
-`animation-pack-evaluation:2` contract and bind the exact raw
-`collection-output:11` digest and byte count plus its manifest identity. V2
+`animation-pack-evaluation:3` contract and bind the exact raw
+`collection-output:12` digest and byte count plus its manifest identity. V3
 retains every scrubbed source state, including complete dependency-closure
 identity or the full typed partial/unavailable reason set, and proves exact
-clip source/take and ordered runtime-set relationships against that V11 input.
-The V2 validation boundary requires the explicitly selected checkout-matched
+clip source/take and ordered runtime-set relationships against that V12 input.
+The V3 validation boundary requires the explicitly selected checkout-matched
 AnimSmith binary and invokes a hidden validation-only collection subcommand
-that calls the one authoritative V11 strict reader before any projection.
+that calls the one authoritative V12 strict reader before any projection.
 Schema validity plus a matching raw digest is not sufficient, and there is no
 second Python semantic mirror.
 Clip duration and speed preserve exact measured, unavailable, or not-applicable
@@ -3331,8 +3331,12 @@ availability rather than collapsing the latter two categories.
 Unavailable rows are mandatory typed soft failures, not grounds to shrink the
 model to surviving records. A separate projection sidecar was rejected because
 it would duplicate clip/set authority and create a third versioned contract;
-V2 is the single report authority, while the exact hashed V11 document remains
-the mechanical evidence binding. Neither model is accepted as a CLI protocol.
+V3 is the single report authority, while the exact hashed V12 document remains
+the mechanical evidence binding. No evaluation model is accepted as a CLI
+protocol.
+
+Historical evaluation-model V2 remains bound to exact collection-output V11;
+neither historical contract is relabelled by the current workflow.
 
 ### F.2 Logical and physical clip identity
 
@@ -3585,12 +3589,14 @@ ordinary `lint` operator-error rule. The exception is scoped to a manifest that
 has already passed all control-plane validation:
 
 - exit `2` with no collection envelope for an unreadable or malformed manifest,
-  unsupported schema identity, budget violation, duplicate/unsafe declaration,
-  existing non-regular source target, missing/unreadable/malformed selected
-  config, serialization failure, or other control/tool error;
+  unsupported schema identity, control-plane budget violation, duplicate/unsafe
+  declaration, existing non-regular source target, missing/unreadable/malformed selected
+  config, serialization failure, actual allocation failure, or other
+  control/tool error;
 - exit `1` with a schema-complete collection envelope when a lexically safe declared
   source is missing or unreadable, when readable bytes are unsupported or
-  malformed, when a digest/take binding mismatches, or when another required
+  malformed, when loaded analysis exceeds deterministic sampling admission,
+  when a digest/take binding mismatches, or when another required
   collection member cannot be established; and
 - otherwise apply the existing lint severity and required-unavailable rules to
   available nested/check evidence, with exit `0` only when none requires `1`.
@@ -4672,20 +4678,20 @@ findings emit the result and exit 1; only a complete passing policy exits 0.
 There is no filesystem publication, controller generation, retiming, stride
 rewriting, or universal speed rule.
 
-### Collection sampling-refusal reader preparation
+### Collection sampling-refusal evidence
 
-The strict CLI-local reader supports collection-output:12 in addition to the
-current collection-output:11 writer and historical revisions. V12 introduces a
-post-load `sampling_limit_exceeded` document state, retaining input/config/closure
-and observed-take authority; its logical clips and runtime members cannot claim
-established measurements. Historical V11 forbids the new state. The source
-refusal precedes oversized nested-name availability. Logical clips retain
-independently witnessed selector/digest/closure errors; the sampling refusal
-applies only after those binding prerequisites resolve.
+The current collection-output:12 writer retains a post-load
+`sampling_limit_exceeded` document state with input/config/closure and observed-take
+authority. Its logical clips and runtime members cannot claim established
+measurements. Historical V11 forbids the new state. The source refusal precedes
+oversized nested-name availability. Logical clips retain independently witnessed
+selector/digest/closure errors; the sampling refusal applies only after those
+binding prerequisites resolve. Other sources remain evaluated, and the partial
+envelope exits 1. Allocation failure remains an environment error with exit 2
+and no envelope.
 
-Evaluation-model V3 binds exact V12 bytes and source states. V2 remains frozen on
-V11. Both use one bounded captured buffer, the revision-specific Rust validation
-handshake, and shared relationship/canonical owners. The current workflow remains
-V2 until the producer cutover. Dashboard V2 preserves a source-result projection
-and refused physical inventory; V11 input continues to produce immutable V1.
-These reader/consumer additions do not change sampling limits or the writer.
+Current evaluation-model V3 binds exact V12 bytes and source states. V2 remains
+frozen on V11. Both use one bounded captured buffer, the revision-specific Rust
+validation handshake, and shared relationship/canonical owners. Dashboard V2
+preserves source results and refused physical inventory; historical V11 input
+continues to produce immutable dashboard V1.

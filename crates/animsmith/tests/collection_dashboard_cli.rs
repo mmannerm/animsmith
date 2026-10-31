@@ -8,7 +8,7 @@ use animsmith_core::InputIdentity;
 use serde_json::{Value, json};
 
 const DASHBOARD_SCHEMA: &str =
-    include_str!("../../../docs/schemas/collection-dashboard-v1.schema.json");
+    include_str!("../../../docs/schemas/collection-dashboard-v2.schema.json");
 
 fn spike_path(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -298,7 +298,7 @@ fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
     let value: Value = serde_json::from_slice(&fs::read(&authority).unwrap()).unwrap();
     assert_eq!(
         value["schema"],
-        "urn:animsmith:schema:collection-dashboard:1"
+        "urn:animsmith:schema:collection-dashboard:2"
     );
     let schema: Value = serde_json::from_str(DASHBOARD_SCHEMA).unwrap();
     let validator = jsonschema::validator_for(&schema).unwrap();
@@ -740,7 +740,7 @@ fn dashboard_keeps_current_unavailable_collection_rows_visible() {
     let current: Value = serde_json::from_slice(&evidence.stdout).unwrap();
     assert_eq!(
         current["schema"],
-        "urn:animsmith:schema:collection-output:11"
+        "urn:animsmith:schema:collection-output:12"
     );
     assert_eq!(current["sources"][0]["key"], "missing");
     assert_eq!(current["clips"].as_array().unwrap().len(), 1);

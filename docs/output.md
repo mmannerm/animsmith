@@ -231,7 +231,8 @@ members may span documents but must have one exact normalized skeleton basis.
 ## Collection lint
 
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
-current `urn:animsmith:schema:collection-output:11` envelope. Historical
+current `urn:animsmith:schema:collection-output:12` envelope. Historical
+`urn:animsmith:schema:collection-output:11`,
 `urn:animsmith:schema:collection-output:9`,
 `urn:animsmith:schema:collection-output:8` (see
 [`collection-output-v8.schema.json`](schemas/collection-output-v8.schema.json)),
@@ -241,12 +242,13 @@ current `urn:animsmith:schema:collection-output:11` envelope. Historical
 `urn:animsmith:schema:collection-output:4` envelopes remain immutable.
 It binds the exact manifest bytes to canonically ordered source, logical clip,
 and runtime-set records while preserving each set's declared member order.
-Every available source embeds its ordinary one-file output-v19 lint result;
+A source with an available document result embeds its ordinary one-file
+output-v19 lint result;
 each established logical clip separately carries the existing
 `ClipMeasurements` value selected by raw source take index and exact authored
 take name, then mapped through the loader's observed normalized clip index.
 This duplicate-safe indexed projection does not revise the historical,
-immutable measurements-v15 name-keyed wire contract; collection-output-v11
+immutable measurements-v15 name-keyed wire contract; collection-output-v12
 embeds measurements-v18 in its nested output-v19 documents. The strict reader
 also preserves collection-output-v10 (`urn:animsmith:schema:collection-output:10`)
 with its exact nested output-v18 (`urn:animsmith:schema:output:18`) and
@@ -258,9 +260,9 @@ historical collection-output-v7 only to output-v15,
 historical collection-output-v6 only to output-v14, and historical
 collection-output-v5 only to output-v13.
 
-The strict reader also supports `urn:animsmith:schema:collection-output:12`
-([schema](schemas/collection-output-v12.schema.json)) in preparation for the
-sampling-admission producer. V12 retains output-v19/measurements-v18 and adds
+The current `urn:animsmith:schema:collection-output:12`
+([schema](schemas/collection-output-v12.schema.json)) retains
+output-v19/measurements-v18 and adds
 `sampling_limit_exceeded` to source document results, logical bindings, and
 runtime-set member resolutions. This is a post-load analysis refusal: input
 identity, digest, config, loader readiness, dependency closure and observed take
@@ -269,8 +271,13 @@ the refused source. The source refusal precedes nested-name size handling.
 Logical clips preserve independently witnessed selector, digest and dependency-
 closure errors; `sampling_limit_exceeded` applies only when those binding
 prerequisites resolve. Refused sources cannot claim established measurements.
-Other sources retain their evidence. V11 rejects this new state; its contract is unchanged.
-The current `collection lint` writer still emits V11 in this preparation step.
+Other sources retain their evidence. V11 rejects this new state; its contract
+is unchanged.
+Deterministic sampling refusal emits this partial envelope and exits 1. Actual
+allocation failure remains an environment error: exit 2 with no collection
+envelope. Ordinary `lint`, `measure`, `report` and source-input `diff` require
+their requested measurements and exit 2 on either sampling refusal or allocation
+failure.
 
 Evaluation consumers accept V11 and V12 through the same strict reader. The
 internal validation handshake names the revision actually validated. Evaluation

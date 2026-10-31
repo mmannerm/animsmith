@@ -199,12 +199,16 @@ def _v1_relation_ids(
     model: dict[str, Any], binding: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Losslessly alias slash-separated manifest IDs for frozen V1 relations."""
+    # The frozen validator checks canonical ID order. Hash aliases can reverse
+    # that order for valid inputs; sorting projected rows would instead hide an
+    # invalid original order. Order-preserving aliases retain both guarantees.
+    identifiers = sorted({
+        *[clip["id"] for clip in binding["clips"]],
+        *[runtime_set["id"] for runtime_set in binding["runtime_sets"]],
+    })
     aliases = {
-        identifier: "v2:" + hashlib.sha256(identifier.encode()).hexdigest()
-        for identifier in (
-            [clip["id"] for clip in binding["clips"]]
-            + [runtime_set["id"] for runtime_set in binding["runtime_sets"]]
-        )
+        identifier: f"v2:{index:016x}"
+        for index, identifier in enumerate(identifiers)
     }
     model = copy.deepcopy(model)
     binding = copy.deepcopy(binding)

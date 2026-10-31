@@ -1,4 +1,4 @@
-"""V2 current evaluation-model identity and canonical JSON authority."""
+"""V2 historical evaluation-model identity and canonical JSON authority."""
 
 from evaluation_model_v1 import *  # noqa: F403 - V2 deliberately retains V1 vocabulary.
 

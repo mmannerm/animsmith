@@ -1,5 +1,5 @@
-//! Internal producer and strict reader types for current collection-output V11,
-//! plus V12 reader support and immutable historical V10 through V5.
+//! Internal producer and strict reader types for current collection-output V12,
+//! and immutable historical V11 through V5.
 //!
 //! This is deliberately a CLI-local contract.  Core owns the validated
 //! collection declaration vocabulary; this module owns the command's evidence
@@ -53,8 +53,8 @@ pub(crate) const COLLECTION_OUTPUT_V11_SCHEMA_VERSION: u32 = 11;
 pub(crate) const COLLECTION_OUTPUT_V12_ID: &str = "urn:animsmith:schema:collection-output:12";
 pub(crate) const COLLECTION_OUTPUT_V12_SCHEMA_VERSION: u32 = 12;
 // The current writer is independent of the highest revision understood by readers.
-pub(crate) const COLLECTION_OUTPUT_CURRENT_ID: &str = COLLECTION_OUTPUT_V11_ID;
-const COLLECTION_OUTPUT_CURRENT_VERSION: u32 = COLLECTION_OUTPUT_V11_SCHEMA_VERSION;
+pub(crate) const COLLECTION_OUTPUT_CURRENT_ID: &str = COLLECTION_OUTPUT_V12_ID;
+const COLLECTION_OUTPUT_CURRENT_VERSION: u32 = COLLECTION_OUTPUT_V12_SCHEMA_VERSION;
 pub(crate) const COLLECTION_OUTPUT_BUDGET_V1_ID: &str = "urn:animsmith:collection-output-budget:1";
 pub(crate) const COLLECTION_OUTPUT_MAX_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) const COLLECTION_OUTPUT_MAX_AGGREGATE_SOURCE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
@@ -1482,18 +1482,12 @@ fn validate_producer(output: &CollectionOutput) -> Result<(), CollectionOutputEr
     }
     for source in &output.sources {
         validate_producer_dependency_closure_state(source)?;
-        if output.schema_version < COLLECTION_OUTPUT_V12_SCHEMA_VERSION
-            && matches!(
-                source.result,
-                DocumentResult::Unavailable {
-                    reason: DocumentUnavailableReason::SamplingLimit
-                }
-            )
-        {
-            return Err(CollectionOutputError::Contradictory(
-                "sampling refusal requires V12",
-            ));
-        }
+        let sampling_refused = matches!(
+            source.result,
+            DocumentResult::Unavailable {
+                reason: DocumentUnavailableReason::SamplingLimit
+            }
+        );
         if matches!(&source.input, SourceInputState::Available { input } if input.bytes() > COLLECTION_OUTPUT_MAX_SOURCE_BYTES)
             || matches!(&source.input, SourceInputState::Unavailable { inspected_bytes, .. } if *inspected_bytes > COLLECTION_OUTPUT_MAX_SOURCE_BYTES + 1)
         {
@@ -1514,7 +1508,7 @@ fn validate_producer(output: &CollectionOutput) -> Result<(), CollectionOutputEr
                 reason: DocumentUnavailableReason::NestedOutput
             }
         );
-        if has_oversized_normalized_name != nested_output_unavailable {
+        if !sampling_refused && has_oversized_normalized_name != nested_output_unavailable {
             return Err(CollectionOutputError::Contradictory(
                 "nested-output availability mismatch",
             ));
