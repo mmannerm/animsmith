@@ -92,8 +92,6 @@ mod transition_family;
 /// findings, 2 = operator error.
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;
-const COLLECTION_OUTPUT_V11_VALIDATION_HANDSHAKE: &[u8] =
-    b"animsmith-internal collection-output-valid urn:animsmith:schema:collection-output:11 11\n";
 
 #[derive(Parser)]
 #[command(
@@ -348,23 +346,23 @@ enum CollectionCmd {
         /// Strict collection-manifest V1 TOML input.
         #[arg(value_name = "COLLECTION.toml")]
         manifest: PathBuf,
-        /// Emit the collection-output V3 JSON contract.
+        /// Emit the current collection-output V11 JSON contract.
         #[arg(long, value_enum, default_value_t = CollectionFormat::Json)]
         format: CollectionFormat,
     },
     /// Render a bounded current-state dashboard from strict collection evidence.
     #[cfg(feature = "report")]
     #[command(
-        long_about = "Render one self-contained offline current-state collection dashboard from strict current collection-output V11 evidence. The separately written collection-dashboard V1 JSON authority binds the exact collection-output bytes and any supplied compatible transition-pose evaluation. Filters only select displayed rows; they never alter incomplete or unavailable evidence. This command does not load source assets, infer clip semantics, score quality, or establish engine, retargeting, contacts, visual/artistic, or gameplay acceptance."
+        long_about = "Render one self-contained offline current-state collection dashboard from strict collection-output V11 or V12 evidence. The separately written collection-dashboard V1 (for V11) or V2 (for V12) JSON authority binds the exact collection-output bytes and any supplied compatible transition-pose evaluation. Filters only select displayed rows; they never alter incomplete or unavailable evidence. This command does not load source assets, infer clip semantics, score quality, or establish engine, retargeting, contacts, visual/artistic, or gameplay acceptance."
     )]
     Dashboard {
-        /// Strict current collection-output V11 JSON input.
+        /// Strict collection-output V11 or V12 JSON input.
         #[arg(long, value_name = "COLLECTION-OUTPUT.json")]
         collection: PathBuf,
         /// Destination self-contained HTML dashboard.
         #[arg(short, long)]
         output: PathBuf,
-        /// Destination collection-dashboard V1 JSON authority.
+        /// Destination collection-dashboard V1 or V2 JSON authority, matching the input revision.
         #[arg(long)]
         authority: PathBuf,
         /// Optional compatible collection transition-pose evaluation V1 JSON.
@@ -392,15 +390,15 @@ enum CollectionCmd {
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
-    /// Evaluate one declared directional-speed policy against collection-output V3 evidence.
+    /// Evaluate one declared directional-speed policy against collection-output V5 through V12 evidence.
     #[command(
-        long_about = "Evaluate one strict manifest-bound directional-speed policy against one strict collection-output V3 document. The policy must declare every member of one directional-blend runtime set in manifest order; this command never infers members, filenames, controller behavior, or diagonal normalization. It writes only the immutable collection-directional-speed-evaluation V1 JSON result to stdout. Invalid, stale, wrong-kind, unreadable, malformed, or over-budget control inputs write no result and exit 2. Incomplete or not-evaluable evidence and declared-policy findings write a result and exit 1; only a complete passing policy exits 0."
+        long_about = "Evaluate one strict manifest-bound directional-speed policy against one strict collection-output V5 through V12 document. The policy must declare every member of one directional-blend runtime set in manifest order; this command never infers members, filenames, controller behavior, or diagonal normalization. It writes only the immutable collection-directional-speed-evaluation V1 JSON result to stdout. Invalid, stale, wrong-kind, unreadable, malformed, or over-budget control inputs write no result and exit 2. Incomplete or not-evaluable evidence and declared-policy findings write a result and exit 1; only a complete passing policy exits 0."
     )]
     EvaluateDirectionalSpeed {
         /// Strict collection-directional-speed-policy V1 TOML input.
         #[arg(long, value_name = "POLICY.toml")]
         policy: PathBuf,
-        /// Strict collection-output V3 JSON input.
+        /// Strict collection-output V5 through V12 JSON input.
         #[arg(long, value_name = "COLLECTION-OUTPUT.json")]
         evidence: PathBuf,
         /// Emit the immutable directional-speed evaluation JSON contract.
@@ -1902,10 +1900,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 ),
                 CollectionCmd::ValidateOutput => {
                     let stdin = std::io::stdin();
-                    collection_output::read_current_collection_output(stdin.lock()).map_err(
-                        |error| format!("invalid collection output from stdin: {error}"),
-                    )?;
-                    publish::emit_required_text(COLLECTION_OUTPUT_V11_VALIDATION_HANDSHAKE)?;
+                    let output = collection_output::read_evaluation_collection_output(stdin.lock())
+                        .map_err(|error| {
+                            format!("invalid collection output from stdin: {error}")
+                        })?;
+                    publish::emit_required_text(output.validation_handshake().as_bytes())?;
                     Ok(ExitCode::SUCCESS)
                 }
                 CollectionCmd::GenerateContactFragment {

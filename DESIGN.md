@@ -4705,3 +4705,21 @@ inputs exit 2 with no result. Incomplete/not-evaluable evidence and policy
 findings emit the result and exit 1; only a complete passing policy exits 0.
 There is no filesystem publication, controller generation, retiming, stride
 rewriting, or universal speed rule.
+
+### Collection sampling-refusal reader preparation
+
+The strict CLI-local reader supports collection-output:12 in addition to the
+current collection-output:11 writer and historical revisions. V12 introduces a
+post-load `sampling_limit_exceeded` document state, retaining input/config/closure
+and observed-take authority; its logical clips and runtime members cannot claim
+established measurements. Historical V11 forbids the new state. The source
+refusal precedes oversized nested-name availability. Logical clips retain
+independently witnessed selector/digest/closure errors; the sampling refusal
+applies only after those binding prerequisites resolve.
+
+Evaluation-model V3 binds exact V12 bytes and source states. V2 remains frozen on
+V11. Both use one bounded captured buffer, the revision-specific Rust validation
+handshake, and shared relationship/canonical owners. The current workflow remains
+V2 until the producer cutover. Dashboard V2 preserves a source-result projection
+and refused physical inventory; V11 input continues to produce immutable V1.
+These reader/consumer additions do not change sampling limits or the writer.

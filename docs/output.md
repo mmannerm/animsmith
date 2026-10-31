@@ -254,6 +254,25 @@ historical collection-output-v7 only to output-v15,
 historical collection-output-v6 only to output-v14, and historical
 collection-output-v5 only to output-v13.
 
+The strict reader also supports `urn:animsmith:schema:collection-output:12`
+([schema](schemas/collection-output-v12.schema.json)) in preparation for the
+sampling-admission producer. V12 retains output-v19/measurements-v18 and adds
+`sampling_limit_exceeded` to source document results, logical bindings, and
+runtime-set member resolutions. This is a post-load analysis refusal: input
+identity, digest, config, loader readiness, dependency closure and observed take
+inventory remain intact. No measurements or nested lint result are invented for
+the refused source. The source refusal precedes nested-name size handling.
+Logical clips preserve independently witnessed selector, digest and dependency-
+closure errors; `sampling_limit_exceeded` applies only when those binding
+prerequisites resolve. Refused sources cannot claim established measurements.
+Other sources retain their evidence. V11 rejects this new state; its contract is unchanged.
+The current `collection lint` writer still emits V11 in this preparation step.
+
+Evaluation consumers accept V11 and V12 through the same strict reader. The
+internal validation handshake names the revision actually validated. Evaluation
+model V2 remains pinned to V11; V3 is pinned to V12. A successful handshake for
+one revision cannot authorize the other.
+
 Source input, digest pin, config, loader, take inventory, and document-result
 states stay orthogonal. A readable digest mismatch can therefore retain its
 observed identity, loader result, and take drift without authorizing the clip
@@ -266,16 +285,24 @@ before source execution and reads sources sequentially.
 ## Collection dashboard
 
 `animsmith collection dashboard --collection COLLECTION-OUTPUT.json -o
-DASHBOARD.html --authority DASHBOARD.json` consumes only a strict current
-collection-output V11 document. It writes a self-contained offline HTML
-presentation and the separate
+DASHBOARD.html --authority DASHBOARD.json` consumes strict collection-output V11
+or V12. It writes a self-contained offline HTML presentation and the separate
 [`urn:animsmith:schema:collection-dashboard:1`](schemas/collection-dashboard-v1.schema.json)
-machine authority. That authority records the exact raw collection-output
+(for V11) or
+[`urn:animsmith:schema:collection-dashboard:2`](schemas/collection-dashboard-v2.schema.json)
+(for V12) machine authority. That authority records the exact raw collection-output
 identity, bounded source/take/logical-clip and ordered runtime-set projection,
 and optional compatible transition-pose evaluation input/result. The optional
 result must be transition-pose-evaluation V1 bound to the same manifest input;
 other evaluation contracts remain separate rather than being guessed into a
 per-member dashboard projection.
+
+Dashboard V2 adds a source `result` projection and `sampling_limit_exceeded`
+physical/logical availability. A refused source remains in the source table,
+with observed takes, even when no logical clip refers to it. Its physical rows
+have outcome `unavailable`. V1 is unchanged and its analysis result is explicitly
+shown as not recorded. The dashboard is a presentation projection; the exact
+collection-output identity remains the evidence authority.
 
 Every declared source has its own inventory row even when no logical clip
 binds to it. The row retains its safe locator, optional observed input identity,
@@ -320,8 +347,10 @@ licensed assets, and motion samples are never embedded.
 
 `animsmith collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` consumes only strict bounded
-`collection-directional-speed-policy:1` TOML and collection-output V7,
-historical V6, or historical V5 JSON.
+`collection-directional-speed-policy:1` TOML and collection-output V5 through V12
+JSON. Each revision keeps its exact nested output/measurement contract. A V12
+sampling-refused member stays in the declared set with unavailable root travel;
+the evaluator emits `incomplete_root_travel` and exits 1.
 It emits the JSON-only immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result
 described by

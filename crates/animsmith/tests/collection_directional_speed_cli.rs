@@ -206,6 +206,29 @@ fn assert_result(output: &Output, code: i32, reason: Option<&str>, findings: usi
 }
 
 #[test]
+fn v12_sampling_refusal_keeps_directional_members_and_emits_incomplete_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut evidence: Value = serde_json::from_slice(include_bytes!(
+        "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v12-sampling-refused.json"
+    )).unwrap();
+    evidence["runtime_sets"][0]["kind"] = "directional-blend".into();
+    stabilize_serialized_bytes(&mut evidence);
+    let output = evaluate(&temp, &uniform_policy(&evidence, 1.0), &evidence);
+    let result = assert_result(&output, 1, Some("incomplete_root_travel"), 0);
+    assert_eq!(result["members"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        result["members"][0]["evidence"]["id"],
+        evidence["clips"][0]["id"]
+    );
+    assert_eq!(
+        result["members"][1]["evidence"]["id"],
+        evidence["clips"][1]["id"]
+    );
+    assert_eq!(result["members"][0]["evidence"]["speed_mps"], 1.0);
+    assert!(result["members"][1]["evidence"]["speed_mps"].is_null());
+}
+
+#[test]
 fn subprocess_pass_and_finding_emit_only_the_immutable_result() {
     let temp = tempfile::tempdir().unwrap();
     let evidence = collection_output(

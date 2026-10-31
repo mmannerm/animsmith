@@ -1,8 +1,8 @@
 //! Current-state collection dashboard publication.
 //!
-//! The existing collection-output V11 reader remains the only authority for
+//! The shared collection-output V11/V12 reader remains the only authority for
 //! source, clip, and runtime-set facts. This module validates that input,
-//! projects a deliberately presentation-oriented V1 authority, and publishes
+//! projects a deliberately presentation-oriented V1/V2 authority, and publishes
 //! that JSON beside an offline HTML rendering of the same bytes.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,9 +15,12 @@ use animsmith_core::InputIdentity;
 use serde::{Deserialize, Serialize};
 
 use super::{collection_output, publish, render};
+use collection_output::{DashboardDocumentResult, DocumentUnavailableReason};
 
 const COLLECTION_DASHBOARD_V1_ID: &str = "urn:animsmith:schema:collection-dashboard:1";
 const COLLECTION_DASHBOARD_V1_VERSION: u32 = 1;
+const COLLECTION_DASHBOARD_V2_ID: &str = "urn:animsmith:schema:collection-dashboard:2";
+const COLLECTION_DASHBOARD_V2_VERSION: u32 = 2;
 const TRANSITION_POSE_V1_ID: &str = "urn:animsmith:schema:transition-pose-evaluation:1";
 const MAX_EVALUATION_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_DASHBOARD_BYTES: u64 = 16 * 1024 * 1024;
@@ -37,11 +40,11 @@ pub(crate) fn run(
         "collection output",
     )?;
     let collection =
-        collection_output::read_current_collection_output(Cursor::new(&collection_bytes))
-            .map_err(|error| format!("invalid current collection output: {error}"))?;
+        collection_output::read_evaluation_collection_output(Cursor::new(&collection_bytes))
+            .map_err(|error| format!("invalid collection output: {error}"))?;
     let collection = collection
         .dashboard_input()
-        .map_err(|error| format!("invalid current collection output: {error}"))?;
+        .map_err(|error| format!("invalid collection output: {error}"))?;
     let report_links = parse_report_links(report_links, &collection)?;
     let evaluation = match evaluation_path {
         Some(path) => Some(read_compatible_evaluation(path, &collection)?),
@@ -82,7 +85,7 @@ pub(crate) fn run(
 }
 
 fn serialize_authority_bounded(
-    authority: &CollectionDashboardAuthorityV1,
+    authority: &CollectionDashboardAuthority,
 ) -> Result<Vec<u8>, String> {
     let mut counter = BoundedWriter::new(MAX_DASHBOARD_BYTES);
     serde_json::to_writer(&mut counter, authority)
@@ -91,8 +94,8 @@ fn serialize_authority_bounded(
 }
 
 fn validate_authority_readback(bytes: &[u8]) -> Result<(), String> {
-    let readback = serde_json::from_slice::<CollectionDashboardAuthorityV1>(bytes)
-        .map_err(|_| "dashboard authority fails typed V1 readback".to_owned())?;
+    let readback = serde_json::from_slice::<CollectionDashboardAuthority>(bytes)
+        .map_err(|_| "dashboard authority fails typed readback".to_owned())?;
     readback.validate_semantics()?;
     Ok(())
 }
@@ -380,8 +383,8 @@ fn reconciled_established_physical_take<'a>(
     take_index: u64,
     take_name: &str,
     availability: &str,
-    sources: &'a [CollectionDashboardSourceV1],
-) -> Result<Option<&'a CollectionDashboardPhysicalTakeV1>, String> {
+    sources: &'a [CollectionDashboardSource],
+) -> Result<Option<&'a CollectionDashboardPhysicalTake>, String> {
     if availability != "established" {
         return Ok(None);
     }
@@ -409,7 +412,8 @@ fn build_authority(
     collection: &collection_output::CollectionDashboardInput,
     evaluation: Option<EvaluationAuthorityV1>,
     report_links: BTreeMap<String, String>,
-) -> Result<CollectionDashboardAuthorityV1, String> {
+) -> Result<CollectionDashboardAuthority, String> {
+    let v2 = collection.schema_version == collection_output::COLLECTION_OUTPUT_V12_SCHEMA_VERSION;
     let source_by_key = collection
         .sources
         .iter()
@@ -436,12 +440,13 @@ fn build_authority(
             {
                 *normalized_name_counts.entry(name).or_default() += 1;
             }
-            CollectionDashboardSourceV1 {
+            CollectionDashboardSource {
                 key: source.key.clone(),
                 locator: source.locator.clone(),
                 input: source.input.as_ref().map(IdentityWire::from_input_identity),
                 availability: source.availability.to_owned(),
                 loader: source.loader.to_owned(),
+                result: v2.then_some(source.result),
                 dependency_closure: source.dependency_closure.to_owned(),
                 takes: source
                     .takes
@@ -451,18 +456,22 @@ fn build_authority(
                             .normalized_clip
                             .as_ref()
                             .and_then(|(_, name)| source.evidence.get(name));
-                        let availability = match (&take.take_name, &take.normalized_clip) {
-                            (_, Some((_, name)))
-                                if normalized_name_counts.get(name.as_str()) != Some(&1) =>
-                            {
-                                "duplicate_normalized_clip_name"
+                        let availability = if source.result.sampling_refused() {
+                            "sampling_limit_exceeded"
+                        } else {
+                            match (&take.take_name, &take.normalized_clip) {
+                                (_, Some((_, name)))
+                                    if normalized_name_counts.get(name.as_str()) != Some(&1) =>
+                                {
+                                    "duplicate_normalized_clip_name"
+                                }
+                                (Some(_), Some(_)) => "established",
+                                (None, _) => "take_name_unavailable",
+                                (Some(_), None) => "normalized_clip_unavailable",
                             }
-                            (Some(_), Some(_)) => "established",
-                            (None, _) => "take_name_unavailable",
-                            (Some(_), None) => "normalized_clip_unavailable",
                         };
                         let evidence = project_evidence(facts, availability);
-                        CollectionDashboardPhysicalTakeV1 {
+                        CollectionDashboardPhysicalTake {
                             source_take_index: u64::from(take.source_take_index),
                             take_name: take.take_name.clone(),
                             normalized_clip_index: take
@@ -511,7 +520,7 @@ fn build_authority(
                 Some(take) => project_physical_evidence(take),
                 None => project_evidence(None, clip.availability),
             };
-            Ok(CollectionDashboardClipV1 {
+            Ok(CollectionDashboardClip {
                 id: clip.id.clone(),
                 source: clip.source.clone(),
                 take_index: u64::from(clip.take_index),
@@ -542,13 +551,22 @@ fn build_authority(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok(CollectionDashboardAuthorityV1 {
-        schema: COLLECTION_DASHBOARD_V1_ID.to_owned(),
-        schema_version: COLLECTION_DASHBOARD_V1_VERSION,
+    Ok(CollectionDashboardAuthority {
+        schema: if v2 {
+            COLLECTION_DASHBOARD_V2_ID
+        } else {
+            COLLECTION_DASHBOARD_V1_ID
+        }
+        .to_owned(),
+        schema_version: if v2 {
+            COLLECTION_DASHBOARD_V2_VERSION
+        } else {
+            COLLECTION_DASHBOARD_V1_VERSION
+        },
         collection_output: IdentityWire::from_input_identity(&collection_output),
         evaluation,
         summary: DashboardSummaryV1::from_rows(&sources, &clips, &collection.runtime_sets),
-        view: CollectionDashboardViewV1 {
+        view: CollectionDashboardView {
             sources,
             clips,
             runtime_sets,
@@ -558,7 +576,7 @@ fn build_authority(
 
 fn derive_runtime_set_state(
     members: &[String],
-    clips: &[CollectionDashboardClipV1],
+    clips: &[CollectionDashboardClip],
 ) -> Result<(&'static str, Vec<String>), String> {
     let clips_by_id = clips
         .iter()
@@ -593,7 +611,7 @@ struct DashboardEvidenceProjection {
 }
 
 fn project_physical_evidence(
-    take: &CollectionDashboardPhysicalTakeV1,
+    take: &CollectionDashboardPhysicalTake,
 ) -> DashboardEvidenceProjection {
     DashboardEvidenceProjection {
         outcome: take.outcome.clone(),
@@ -654,14 +672,14 @@ fn derive_evidence_outcome(
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CollectionDashboardAuthorityV1 {
+struct CollectionDashboardAuthority {
     schema: String,
     schema_version: u32,
     collection_output: IdentityWire,
     #[serde(skip_serializing_if = "Option::is_none")]
     evaluation: Option<EvaluationAuthorityV1>,
     summary: DashboardSummaryV1,
-    view: CollectionDashboardViewV1,
+    view: CollectionDashboardView,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -685,8 +703,8 @@ struct DashboardSummaryV1 {
 }
 impl DashboardSummaryV1 {
     fn from_rows(
-        sources: &[CollectionDashboardSourceV1],
-        clips: &[CollectionDashboardClipV1],
+        sources: &[CollectionDashboardSource],
+        clips: &[CollectionDashboardClip],
         sets: &[collection_output::CollectionDashboardRuntimeSetInput],
     ) -> Self {
         let unscoped_findings = sources
@@ -736,32 +754,46 @@ impl DashboardSummaryV1 {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CollectionDashboardViewV1 {
-    sources: Vec<CollectionDashboardSourceV1>,
-    clips: Vec<CollectionDashboardClipV1>,
+struct CollectionDashboardView {
+    sources: Vec<CollectionDashboardSource>,
+    clips: Vec<CollectionDashboardClip>,
     runtime_sets: Vec<CollectionDashboardRuntimeSetV1>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CollectionDashboardSourceV1 {
+struct CollectionDashboardSource {
     key: String,
     locator: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     input: Option<IdentityWire>,
     availability: String,
     loader: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_document_result",
+        skip_serializing_if = "Option::is_none"
+    )]
+    result: Option<DashboardDocumentResult>,
     dependency_closure: String,
-    takes: Vec<CollectionDashboardPhysicalTakeV1>,
+    takes: Vec<CollectionDashboardPhysicalTake>,
     unscoped_findings: usize,
     unscoped_severities: Vec<String>,
     unscoped_prediction_unavailable: usize,
     unscoped_prediction_reasons: Vec<String>,
 }
 
+// Absence belongs to historical V1; explicit null is not a valid field in
+// either schema and must not sneak through Option's usual null handling.
+fn deserialize_document_result<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<DashboardDocumentResult>, D::Error> {
+    DashboardDocumentResult::deserialize(deserializer).map(Some)
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CollectionDashboardPhysicalTakeV1 {
+struct CollectionDashboardPhysicalTake {
     source_take_index: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     take_name: Option<String>,
@@ -780,7 +812,7 @@ struct CollectionDashboardPhysicalTakeV1 {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CollectionDashboardClipV1 {
+struct CollectionDashboardClip {
     id: String,
     source: String,
     take_index: u64,
@@ -816,16 +848,19 @@ struct CollectionDashboardRuntimeSetV1 {
     gaps: Vec<String>,
 }
 
-impl CollectionDashboardAuthorityV1 {
+impl CollectionDashboardAuthority {
     fn validate_semantics(&self) -> Result<(), String> {
-        if self.schema != COLLECTION_DASHBOARD_V1_ID
-            || self.schema_version != COLLECTION_DASHBOARD_V1_VERSION
-            || !self.collection_output.valid(None)
+        let v2 = match (self.schema.as_str(), self.schema_version) {
+            (COLLECTION_DASHBOARD_V1_ID, COLLECTION_DASHBOARD_V1_VERSION) => false,
+            (COLLECTION_DASHBOARD_V2_ID, COLLECTION_DASHBOARD_V2_VERSION) => true,
+            _ => return Err("dashboard authority has the wrong version identity".to_owned()),
+        };
+        if !self.collection_output.valid(None)
             || self.view.sources.len() > 4096
             || self.view.clips.len() > 4096
             || self.view.runtime_sets.len() > 4096
         {
-            return Err("dashboard authority has the wrong V1 identity".to_owned());
+            return Err("dashboard authority has invalid identity or row counts".to_owned());
         }
         if let Some(evaluation) = &self.evaluation {
             evaluation.validate()?;
@@ -857,7 +892,8 @@ impl CollectionDashboardAuthorityV1 {
             return Err("dashboard authority duplicates a logical clip".to_owned());
         }
         for clip in &self.view.clips {
-            if clip.id.chars().count() > 4096
+            if (!v2 && clip.availability == "sampling_limit_exceeded")
+                || clip.id.chars().count() > 4096
                 || clip.source.chars().count() > 4096
                 || clip.take_name.chars().count() > 4096
                 || !matches!(
@@ -870,6 +906,7 @@ impl CollectionDashboardAuthorityV1 {
                         | "loader_unavailable"
                         | "dependency_closure_incomplete"
                         | "document_unavailable"
+                        | "sampling_limit_exceeded"
                         | "take_inventory_unavailable"
                         | "take_index_missing"
                         | "take_name_unavailable"
@@ -920,7 +957,32 @@ impl CollectionDashboardAuthorityV1 {
             return Err("dashboard authority duplicates a source key".to_owned());
         }
         for source in &self.view.sources {
-            if source.key.chars().count() > 4096
+            let sampling_refused = source
+                .result
+                .is_some_and(DashboardDocumentResult::sampling_refused);
+            let valid_result = match source.result {
+                None => !v2,
+                Some(result) if v2 => match result {
+                    DashboardDocumentResult::Available
+                    | DashboardDocumentResult::Unavailable {
+                        reason:
+                            DocumentUnavailableReason::NestedOutput
+                            | DocumentUnavailableReason::SamplingLimit,
+                    } => source.input.is_some() && source.loader == "ready",
+                    DashboardDocumentResult::Unavailable {
+                        reason: DocumentUnavailableReason::Source,
+                    } => source.input.is_none() && source.loader == "unavailable",
+                    DashboardDocumentResult::Unavailable {
+                        reason: DocumentUnavailableReason::Loader,
+                    } => source.input.is_some() && source.loader == "unavailable",
+                },
+                Some(_) => false,
+            };
+            if !valid_result
+                || (sampling_refused
+                    && (source.unscoped_findings != 0
+                        || source.unscoped_prediction_unavailable != 0))
+                || source.key.chars().count() > 4096
                 || source.locator.chars().count() > 4096
                 || source
                     .input
@@ -976,7 +1038,13 @@ impl CollectionDashboardAuthorityV1 {
             for take in &source.takes {
                 let normalized_identity_present =
                     take.normalized_clip_index.is_some() && take.normalized_clip_name.is_some();
-                if !source_take_indices.insert(take.source_take_index)
+                if sampling_refused != (take.availability == "sampling_limit_exceeded")
+                    || sampling_refused
+                        && (take.findings != 0
+                            || take.coverage_gaps != 0
+                            || take.prediction_unavailable != 0
+                            || take.coverage != DashboardCoverageV1::default())
+                    || !source_take_indices.insert(take.source_take_index)
                     || take
                         .take_name
                         .as_ref()
@@ -986,12 +1054,13 @@ impl CollectionDashboardAuthorityV1 {
                         .as_ref()
                         .is_some_and(|name| name.is_empty() || name.chars().count() > 4101)
                     || take.normalized_clip_index.is_some() != take.normalized_clip_name.is_some()
-                    || take.normalized_clip_name.as_ref().is_some_and(|name| {
-                        let duplicate = normalized_name_counts
-                            .get(name.as_str())
-                            .is_some_and(|count| *count > 1);
-                        (take.availability == "duplicate_normalized_clip_name") != duplicate
-                    })
+                    || !sampling_refused
+                        && take.normalized_clip_name.as_ref().is_some_and(|name| {
+                            let duplicate = normalized_name_counts
+                                .get(name.as_str())
+                                .is_some_and(|count| *count > 1);
+                            (take.availability == "duplicate_normalized_clip_name") != duplicate
+                        })
                     || take
                         .normalized_clip_index
                         .is_some_and(|index| !normalized_clip_indices.insert(index))
@@ -1001,7 +1070,8 @@ impl CollectionDashboardAuthorityV1 {
                             take.take_name.is_some(),
                             normalized_identity_present
                         ),
-                        ("established", true, true)
+                        ("sampling_limit_exceeded", _, _)
+                            | ("established", true, true)
                             | ("duplicate_normalized_clip_name", true, true)
                             | ("duplicate_normalized_clip_name", false, true)
                             | ("take_name_unavailable", false, false)
@@ -1069,6 +1139,23 @@ impl CollectionDashboardAuthorityV1 {
             return Err("dashboard clip references an unknown source".to_owned());
         }
         for clip in &self.view.clips {
+            let sampling_refused = self
+                .view
+                .sources
+                .iter()
+                .find(|source| source.key == clip.source)
+                .and_then(|source| source.result)
+                .is_some_and(DashboardDocumentResult::sampling_refused);
+            if (clip.availability == "sampling_limit_exceeded" && !sampling_refused)
+                || (sampling_refused && clip.availability == "established")
+                || sampling_refused
+                    && (clip.findings != 0
+                        || clip.coverage_gaps != 0
+                        || clip.prediction_unavailable != 0
+                        || clip.coverage != DashboardCoverageV1::default())
+            {
+                return Err("dashboard logical clip contradicts source sampling refusal".to_owned());
+            }
             if let Some(take) = reconciled_established_physical_take(
                 &clip.source,
                 clip.take_index,
@@ -1803,7 +1890,7 @@ mod tests {
         assert!(validate_authority_readback(&serde_json::to_vec(&unknown).unwrap()).is_err());
     }
 
-    fn rich_authority() -> super::CollectionDashboardAuthorityV1 {
+    fn rich_authority() -> super::CollectionDashboardAuthority {
         let identity = serde_json::json!({"sha256": "0".repeat(64), "bytes": 0});
         serde_json::from_value(serde_json::json!({
             "schema":"urn:animsmith:schema:collection-dashboard:1", "schema_version":1,
@@ -1828,7 +1915,7 @@ mod tests {
         .unwrap()
     }
 
-    fn make_runtime_set_member_unavailable(authority: &mut super::CollectionDashboardAuthorityV1) {
+    fn make_runtime_set_member_unavailable(authority: &mut super::CollectionDashboardAuthority) {
         let clip = &mut authority.view.clips[1];
         clip.availability = "source_unavailable".to_owned();
         clip.outcome = "unavailable".to_owned();
@@ -1838,11 +1925,66 @@ mod tests {
     }
 
     #[test]
+    fn readback_rejects_sampling_refusal_on_a_successfully_analyzed_source() {
+        let bytes = include_bytes!(
+            "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v12-sampling-refused.json"
+        );
+        let collection = super::collection_output::read_evaluation_collection_output(&bytes[..])
+            .unwrap()
+            .dashboard_input()
+            .unwrap();
+        let mut authority = super::build_authority(
+            animsmith_core::InputIdentity::from_bytes(bytes),
+            &collection,
+            None,
+            std::collections::BTreeMap::new(),
+        )
+        .unwrap();
+        assert!(authority.validate_semantics().is_ok());
+        // Forge only the logical claim and its partition counts. The source
+        // and physical evidence still correctly describe successful analysis.
+        let clip = &mut authority.view.clips[0];
+        clip.availability = "sampling_limit_exceeded".to_owned();
+        clip.outcome = "unavailable".to_owned();
+        clip.coverage_gaps = 0;
+        clip.coverage = super::DashboardCoverageV1::default();
+        authority.summary.evaluated = 0;
+        authority.summary.unavailable = 2;
+        let error = validate_authority_readback(&serde_json::to_vec(&authority).unwrap())
+            .expect_err("logical refusal needs the same source refusal");
+        assert!(error.contains("logical clip contradicts source sampling refusal"));
+    }
+
+    #[test]
+    fn source_result_is_required_in_v2_and_forbidden_in_v1() {
+        let mut value = serde_json::to_value(rich_authority()).unwrap();
+        assert!(validate_authority_readback(&serde_json::to_vec(&value).unwrap()).is_ok());
+        value["view"]["sources"][0]["result"] = serde_json::json!(null);
+        assert!(validate_authority_readback(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["view"]["sources"][0]["result"] = serde_json::json!({"state":"available"});
+        assert!(validate_authority_readback(&serde_json::to_vec(&value).unwrap()).is_err());
+        value["schema"] = super::COLLECTION_DASHBOARD_V2_ID.into();
+        value["schema_version"] = 2.into();
+        assert!(validate_authority_readback(&serde_json::to_vec(&value).unwrap()).is_ok());
+        value["view"]["sources"][0]["result"] =
+            serde_json::json!({"state":"unavailable","reason":"sampling_limit_exceeded"});
+        assert!(
+            validate_authority_readback(&serde_json::to_vec(&value).unwrap()).is_err(),
+            "refused analysis cannot retain evaluated rows"
+        );
+        value["view"]["sources"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("result");
+        assert!(validate_authority_readback(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+
+    #[test]
     fn authority_readback_reconciles_every_outcome_and_relationship() {
         let authority = rich_authority();
         let bytes = serde_json::to_vec(&authority).unwrap();
         assert!(validate_authority_readback(&bytes).is_ok());
-        let parsed: super::CollectionDashboardAuthorityV1 = serde_json::from_slice(&bytes).unwrap();
+        let parsed: super::CollectionDashboardAuthority = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(serde_json::to_vec(&parsed).unwrap(), bytes);
 
         let mut unknown_source = rich_authority();
@@ -2035,7 +2177,7 @@ mod tests {
             .is_err()
         );
 
-        type RuntimeSetMutation = (&'static str, fn(&mut super::CollectionDashboardAuthorityV1));
+        type RuntimeSetMutation = (&'static str, fn(&mut super::CollectionDashboardAuthority));
         let runtime_set_mutations: [RuntimeSetMutation; 5] = [
             ("forged-gap-with-established-members", |authority| {
                 authority.view.runtime_sets[0]

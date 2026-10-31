@@ -27,8 +27,10 @@ import validate_evaluation_manifest as manifest_validator
 import validate_report as report_validator
 import evaluation_model_v1 as model_contract
 import evaluation_model_v2 as model_contract_v2
+import evaluation_model_v3 as model_contract_v3
 import validate_evaluation_model as model_validator
 import validate_evaluation_model_v2 as model_validator_v2
+import validate_evaluation_model_v3 as model_validator_v3
 import render_evaluation_model as model_renderer
 
 
@@ -4256,6 +4258,49 @@ print(json.dumps({
         with self.assertRaisesRegex(ValueError, "rejected collection-output V11"):
             model_validator_v2.validate_with_animsmith(self.animsmith, raw)
 
+    def test_v3_partial_collection_retains_refused_source_through_validator_and_renderer(self) -> None:
+        raw = (Path(__file__).parents[1] / "fixtures" / "collection-output-v12-sampling-refused.json").read_bytes()
+        binding = json.loads(raw)
+        model = valid_evaluation_model_v2(binding, raw)
+        model["schema"] = model_contract_v3.SCHEMA
+        model["schema_version"] = 3
+        model_validator_v3.validate_with_animsmith(self.animsmith, raw)
+        self.assertEqual(model_validator_v3.validate_model(model, binding, raw), [])
+        self.assertEqual(model["clips"][0]["duration_s"], {"state": "available", "value": 1.0})
+        self.assertEqual(model["clips"][0]["root_motion_speed_mps"], {"state": "available", "value": 1.0})
+        self.assertEqual(model["clips"][1]["duration_s"], {"state": "unavailable"})
+        self.assertEqual(model["binding"]["sources"][1]["result"], {"state": "unavailable", "reason": "sampling_limit_exceeded"})
+        with self.assertRaisesRegex(ValueError, "exact internal.*V11"):
+            model_validator_v2.validate_with_animsmith(self.animsmith, raw)
+        forged = copy.deepcopy(model)
+        forged["binding"]["sources"][1]["result"] = {"state": "available"}
+        self.assertTrue(any("retain every typed V12 source state" in error for error in model_validator_v3.validate_model(forged, binding, raw)))
+        forged = copy.deepcopy(model)
+        forged["clips"][1]["duration_s"] = {"state": "available", "value": 1.0}
+        self.assertTrue(any("preserve unavailable V12 measurement" in error for error in model_validator_v3.validate_model(forged, binding, raw)))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model_path, binding_path = directory / "model.json", directory / "binding.json"
+            report_path, appendix_path = directory / "report.md", directory / "report-evidence.md"
+            model_path.write_bytes(model_contract_v3.canonical_json(model))
+            binding_path.write_bytes(raw)
+            common = [str(model_path), "--binding", str(binding_path), "--animsmith", str(self.animsmith)]
+            validated = subprocess.run([str(Path(__file__).with_name("validate_evaluation_model_v3.py")), *common, "--check-canonical"], check=False, text=True, capture_output=True)
+            self.assertEqual(validated.returncode, 0, validated.stderr)
+            command = [str(Path(__file__).with_name("render_evaluation_model.py")), *common, "--report", str(report_path), "--appendix", str(appendix_path)]
+            rendered = subprocess.run(command, check=False, text=True, capture_output=True)
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            checked = subprocess.run([*command, "--check"], check=False, text=True, capture_output=True)
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            report_checked = subprocess.run([str(Path(__file__).with_name("validate_report.py")), str(report_path), "--appendix", str(appendix_path), "--evaluation-model-v3", "--report-format", "2"], check=False, text=True, capture_output=True)
+            self.assertEqual(report_checked.returncode, 0, report_checked.stderr)
+            self.assertIn("sampling_limit_exceeded", appendix_path.read_text())
+            self.assertIn("renderer: `5`", appendix_path.read_text())
+            self.assertIn("dependency_closure", appendix_path.read_text())
+            self.assertIn(hashlib.sha256(raw).hexdigest(), appendix_path.read_text())
+            self.assertIn(binding["clips"][1]["id"], appendix_path.read_text())
+
     def test_synthetic_fixture_covers_pair_refusal_unknown_and_artist_work(self) -> None:
         self.assertEqual(model_validator.validate_model(valid_evaluation_model(), valid_collection_output_projection()), [])
 
@@ -4409,7 +4454,7 @@ print(json.dumps({
 
     def test_offline_registry_is_current_v11_with_frozen_v1_output10(self) -> None:
         self.assertEqual(
-            tuple(document["$id"] for document in model_validator_v2._DOCUMENTS),
+            tuple(document["$id"] for document in model_validator_v2.validator.documents),
             (
                 model_contract_v2.SCHEMA,
                 model_contract.SCHEMA,
@@ -4605,7 +4650,7 @@ print(json.dumps({
                 authoritative(animsmith, raw)
 
             with mock.patch.object(
-                model_validator_v2,
+                model_validator_v2.validator,
                 "validate_with_animsmith",
                 side_effect=swap_after_read,
             ):

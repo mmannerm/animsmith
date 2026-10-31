@@ -763,3 +763,10 @@ collection` for grouped navigation. Keep verdict, confidence, date, and evaluato
 in the report header rather than maintaining a second full report list. The
 repository checks that the catalog covers the maintained pairs and that the
 collection map covers the catalog.
+
+
+Reader preparation also provides [evaluation model V3](references/evaluation-model-v3.md)
+(`urn:animsmith:skill:animation-pack-evaluation:3`) for exact collection-output:12
+artifacts. The current collection writer and new-evaluation workflow remain
+V11/V2 until their coordinated cutover. Never relabel V11 bytes or a V2 model as
+V12/V3: each validator pins its own schema and exact Rust handshake.
