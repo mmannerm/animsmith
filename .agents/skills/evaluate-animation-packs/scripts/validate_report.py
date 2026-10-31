@@ -32,6 +32,7 @@ from evaluation_contract_v1 import (
     VARIANTS,
 )
 import evaluation_model_v2 as model_contract_v2
+import evaluation_model_v3 as model_contract_v3
 
 
 PRIMARY_HEADINGS = (
@@ -160,7 +161,7 @@ def _set_types(evaluation_schema: str) -> set[str]:
     """Retain legacy report vocabulary while adding canonical V2 kinds."""
     return SET_TYPES | (
         set(model_contract_v2.SET_TYPES)
-        if evaluation_schema == model_contract_v2.SCHEMA else set()
+        if evaluation_schema in (model_contract_v2.SCHEMA, model_contract_v3.SCHEMA) else set()
     )
 
 
@@ -184,7 +185,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--appendix", type=Path)
     model = parser.add_mutually_exclusive_group()
     model.add_argument("--evaluation-model-v1", action="store_true", help="validate the fixed V1 renderer projection")
-    model.add_argument("--evaluation-model-v2", action="store_true", help="validate the current V2 renderer projection")
+    model.add_argument("--evaluation-model-v2", action="store_true", help="validate the V2 renderer projection")
+    model.add_argument("--evaluation-model-v3", action="store_true", help="validate the V3 renderer projection")
     parser.add_argument("--report-format", choices=("1", "2", "3"), help="override the report-view format independently of the evidence schema")
     return parser.parse_args()
 
@@ -202,6 +204,7 @@ def _parser_binary() -> Path:
         [
             "cargo", "build", "-p", "animsmith", "--example",
             "animation_pack_markdown_ast", "--no-default-features",
+            "--target-dir", "target/no-default-features",
             "--message-format=json-render-diagnostics",
         ],
         cwd=root,
@@ -1248,7 +1251,9 @@ def main() -> int:
     try:
         report_text = args.report.read_text(encoding="utf-8")
         appendix_text = appendix.read_text(encoding="utf-8")
-        if args.evaluation_model_v2:
+        if args.evaluation_model_v3:
+            evaluation_schema = model_contract_v3.SCHEMA
+        elif args.evaluation_model_v2:
             evaluation_schema = model_contract_v2.SCHEMA
         elif args.evaluation_model_v1:
             evaluation_schema = "urn:animsmith:skill:animation-pack-evaluation:1"

@@ -36,3 +36,10 @@ The schema-id gate covers these repository-owned surfaces:
 Commercial reports and retained external evaluation workspaces are not schema
 fixtures. They remain outside source and CI, and #574 stays input-blocked until
 authorized exact authority exists.
+
+Reader preparation additionally supports collection-output:12 with explicit
+sampling refusals, evaluation-model V3 and dashboard V2. The current writer and
+workflow remain V11/V2 until coordinated cutover. Both model versions use the
+shared bounded capture/validator with distinct immutable schema/handshake pins.
+The V12 contract vector is manually constructed synthetic reader evidence;
+actual mixed-source producer evidence belongs to the sampling cutover in #739.

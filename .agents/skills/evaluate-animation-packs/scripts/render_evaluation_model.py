@@ -19,13 +19,16 @@ from typing import Any
 import evaluation_contract_v1 as contract
 import evaluation_model_v1 as model_contract
 import evaluation_model_v2 as model_contract_v2
+import evaluation_model_v3 as model_contract_v3
 import validate_evaluation_model as model_validator
 import validate_evaluation_model_v2 as model_validator_v2
+import validate_evaluation_model_v3 as model_validator_v3
 import validate_report as report_validator
 
 
 RENDERER_VERSION = "3"
 RENDERER_VERSION_V2 = "4"
+RENDERER_VERSION_V3 = "5"
 READINESS_LADDER = "../game-ready-clips.md#the-readiness-ladder"
 RECIPE_SLOTS = (
     ("topology", "Members/topology", "topology"),
@@ -41,7 +44,7 @@ CROSS_PACK_DECISION_HEADER = (
 
 @dataclass(frozen=True)
 class RenderedViews:
-    """The only two fixed V1 Markdown projections."""
+    """The fixed report and evidence appendix projections."""
 
     report: str
     appendix: str
@@ -57,6 +60,8 @@ def _text(value: Any) -> str:
 
 
 def _renderer_version(model: dict[str, Any]) -> str:
+    if model.get("schema") == model_contract_v3.SCHEMA:
+        return RENDERER_VERSION_V3
     return RENDERER_VERSION_V2 if model.get("schema") == model_contract_v2.SCHEMA else RENDERER_VERSION
 
 
@@ -166,9 +171,9 @@ def _public_binding_projection(binding: dict[str, Any], binding_bytes: bytes | N
     identities, and manifest relations needed to audit model derivation.
     """
     manifest = binding["manifest"]
-    current = binding.get("schema") == model_contract_v2.COLLECTION_OUTPUT_SCHEMA
+    current = binding.get("schema") in (model_contract_v2.COLLECTION_OUTPUT_SCHEMA, model_contract_v3.COLLECTION_OUTPUT_SCHEMA)
     if current and binding_bytes is None:
-        raise ValueError("evaluation model V2 rendering requires exact collection-output bytes")
+        raise ValueError("versioned collection rendering requires exact collection-output bytes")
     def result(value: Any) -> dict[str, Any]:
         return _binding_status(value)
     def config(value: Any) -> dict[str, Any]:
@@ -253,7 +258,7 @@ def _recipe_projection(model: dict[str, Any]) -> list[str]:
     """Render every accepted step once under its fixed action slot.
 
     Integration-step arrays are ID ordered and may omit or repeat actions under
-    the frozen V1/V2 contract.  The fixed report recipe is action ordered, so a
+    the frozen model contract.  The fixed report recipe is action ordered, so a
     positional zip can silently put a valid step under the wrong label.
     """
     by_action: dict[str, list[dict[str, Any]]] = {
@@ -347,7 +352,7 @@ def _ledger_sections(model: dict[str, Any], binding: dict[str, Any], binding_byt
     exactly with the already validated in-memory model/binding.
     """
     binding = _public_binding_projection(binding, binding_bytes)
-    current = model.get("schema") == model_contract_v2.SCHEMA
+    current = model.get("schema") in (model_contract_v2.SCHEMA, model_contract_v3.SCHEMA)
     collection_totals = {
         "constituents": len(model["collection"]["constituents"]),
         "logical_clips": sum(len(record["clip_ids"]) for record in model["collection"]["constituents"]),
@@ -429,10 +434,11 @@ def _authority_ledger(model: dict[str, Any], binding: dict[str, Any], binding_by
 
 
 def _validate_model(model: dict[str, Any], binding: dict[str, Any], binding_bytes: bytes | None) -> list[str]:
-    if model.get("schema") == model_contract_v2.SCHEMA:
-        if binding_bytes is None:
-            return ["evaluation model V2 requires exact collection-output bytes"]
-        return model_validator_v2.validate_model(model, binding, binding_bytes)
+    for contract, validator in ((model_contract_v2, model_validator_v2), (model_contract_v3, model_validator_v3)):
+        if model.get("schema") == contract.SCHEMA:
+            if binding_bytes is None:
+                return [f"evaluation model V{contract.SCHEMA_VERSION} requires exact collection-output bytes"]
+            return validator.validate_model(model, binding, binding_bytes)
     return model_validator.validate_model(model, binding)
 
 
@@ -1169,10 +1175,11 @@ def _load_binding(
     model: dict[str, Any], path: Path, animsmith: Path | None
 ) -> tuple[Any, bytes]:
     """Use the immutable input budget selected by the explicit model URN."""
-    if model.get("schema") == model_contract_v2.SCHEMA:
-        if animsmith is None:
-            raise ValueError("evaluation model V2 requires --animsmith PATH")
-        return model_validator_v2.load_authoritative_collection_output(animsmith, path)
+    for contract, validator in ((model_contract_v2, model_validator_v2), (model_contract_v3, model_validator_v3)):
+        if model.get("schema") == contract.SCHEMA:
+            if animsmith is None:
+                raise ValueError(f"evaluation model V{contract.SCHEMA_VERSION} requires --animsmith PATH")
+            return validator.load_authoritative_collection_output(animsmith, path)
     return model_validator.load_json(path)
 
 

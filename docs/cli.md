@@ -299,10 +299,13 @@ defaults when none is declared; it never discovers an ambient
 output-path option: its policy and evidence inputs fully declare its boundary.
 
 `collection dashboard` is an offline current-state view, not a second
-collection ledger. It accepts only the strict current collection-output V11
-contract, writes a self-contained HTML file and the separately versioned
-[`urn:animsmith:schema:collection-dashboard:1`](schemas/collection-dashboard-v1.schema.json)
-authority that binds the exact input bytes, and never reloads source assets.
+collection ledger. It accepts strict collection-output V11 and V12, writes a
+self-contained HTML file and a separate authority that binds the exact input
+bytes, and never reloads source assets. V11 input produces
+[`urn:animsmith:schema:collection-dashboard:1`](schemas/collection-dashboard-v1.schema.json);
+V12 input produces
+[`urn:animsmith:schema:collection-dashboard:2`](schemas/collection-dashboard-v2.schema.json)
+with source analysis results and explicit sampling-refused physical/logical rows.
 Its optional transition-pose evaluation must bind the same manifest bytes.
 `--asset-report` names an exact logical clip and a safe relative HTML reference;
 the dashboard links it but never embeds source assets or samples. Its `role`
@@ -1181,7 +1184,7 @@ threshold semantics. See
 `collection evaluate-directional-speed --policy POLICY.toml --evidence
 COLLECTION-OUTPUT.json --format json` strictly reads a bounded
 `collection-directional-speed-policy:1` declaration and a bounded
-collection-output V7, historical V6, or historical V5 document, then writes the separate immutable
+collection-output V5 through V12 document, then writes the separate immutable
 `urn:animsmith:schema:collection-directional-speed-evaluation:1` result. The
 result binds the exact raw TOML and JSON byte identities and preserves every
 declared member in manifest order. Invalid, stale, wrong-kind, unreadable,
@@ -1368,3 +1371,11 @@ Markdown is presentation-only and carries **no stability guarantees** —
 gate automation on `--format json` (see [output.md](output.md)), and
 treat the Markdown as display text that may be re-laid-out between
 releases.
+
+### Versioned collection-reader preparation
+
+`collection lint` currently emits `urn:animsmith:schema:collection-output:11`.
+Readers additionally accept `urn:animsmith:schema:collection-output:12`, whose
+explicit `sampling_limit_exceeded` state retains the readable source identity,
+loader result and observed inventory while refusing analysis. The current writer
+is unchanged by reader preparation. See [collection output](output.md#collection-lint).
