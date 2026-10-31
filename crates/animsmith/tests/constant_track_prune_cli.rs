@@ -264,6 +264,164 @@ fn assert_pose_grid_equal(before: &Document, after: &Document, clip_name: &str) 
 }
 
 #[test]
+fn finite_rotation_magnitudes_classify_without_unsafe_pruning() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("magnitudes.glb");
+    let output = dir.path().join("pruned.glb");
+    let large = Quat::from_xyzw(1e20, 1e20, 1e20, 1e20);
+    let tiny = Quat::from_xyzw(1e-30, 1e-30, 1e-30, 1e-30);
+    let unit = Quat::from_xyzw(0.5, 0.5, 0.5, 0.5);
+    let cubic_first = Quat::from_xyzw(2e34, 0.0, 0.0, 1e38);
+    let cubic_near = Quat::from_xyzw(-2e34, 0.0, 0.0, 1e38);
+    let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    // Changing the last three signs gives normalized dot -1/2: 120 degrees.
+    let turn = |q: Quat| Quat::from_xyzw(q.x, -q.y, -q.z, -q.w);
+    let clips = [
+        ("large-moving", Interpolation::Linear, [large, turn(large)]),
+        (
+            "large-equivalent",
+            Interpolation::Linear,
+            [large, large * 0.5],
+        ),
+        ("large-antipodal", Interpolation::Linear, [large, -large]),
+        ("tiny-moving", Interpolation::Linear, [tiny, turn(tiny)]),
+        ("tiny-equivalent", Interpolation::Linear, [tiny, tiny * 0.5]),
+        ("tiny-antipodal", Interpolation::Step, [tiny, -tiny]),
+        ("ordinary-moving", Interpolation::Linear, [unit, turn(unit)]),
+        (
+            "ordinary-constant",
+            Interpolation::Linear,
+            [Quat::IDENTITY, -Quat::IDENTITY],
+        ),
+        (
+            "cubic-large-near",
+            Interpolation::CubicSpline,
+            [cubic_first, cubic_near],
+        ),
+        (
+            "cubic-large-opposite",
+            Interpolation::CubicSpline,
+            [cubic_first, -cubic_near],
+        ),
+    ]
+    .into_iter()
+    .map(|(name, interpolation, keys)| Clip {
+        name: name.into(),
+        duration_s: 1.0,
+        tracks: vec![
+            Track {
+                bone: 0,
+                property: Property::Rotation,
+                interpolation,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Quats(if interpolation == Interpolation::CubicSpline {
+                    keys.into_iter().flat_map(|key| [zero, key, zero]).collect()
+                } else {
+                    keys.to_vec()
+                }),
+            },
+            Track {
+                bone: 0,
+                property: Property::Translation,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X]),
+            },
+        ],
+    })
+    .collect();
+    let document = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "joint".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips,
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&document, &input).unwrap();
+    let source_bytes = std::fs::read(&input).unwrap();
+    let source = animsmith_gltf::load(&input).unwrap();
+    let lint = run(&[
+        "lint".as_ref(),
+        input.as_os_str(),
+        "--select".as_ref(),
+        "constant-track".as_ref(),
+        "--format".as_ref(),
+        "json".as_ref(),
+    ]);
+    assert_eq!(lint.status.code(), Some(0), "{}", error_text(&lint));
+    let report: serde_json::Value = serde_json::from_slice(&lint.stdout).unwrap();
+    let check = report["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check_id"] == "constant-track")
+        .unwrap();
+    assert_eq!(check["evaluation"], "complete");
+    let findings = check["findings"].as_array().unwrap();
+    let noted: std::collections::BTreeSet<_> = findings
+        .iter()
+        .map(|finding| {
+            assert_eq!(finding["bone"], "joint");
+            assert_eq!(finding["severity"], "note");
+            finding["clip"].as_str().unwrap()
+        })
+        .collect();
+    assert_eq!(
+        noted,
+        std::collections::BTreeSet::from([
+            "large-equivalent",
+            "large-antipodal",
+            "tiny-equivalent",
+            "tiny-antipodal",
+            "ordinary-constant",
+            "cubic-large-near",
+        ])
+    );
+
+    let pruned = run(&[
+        "transform".as_ref(),
+        input.as_os_str(),
+        "--prune-constant-tracks".as_ref(),
+        "--output".as_ref(),
+        output.as_os_str(),
+    ]);
+    assert_eq!(pruned.status.code(), Some(0), "{}", error_text(&pruned));
+    let after = animsmith_gltf::load(&output).unwrap();
+    for name in ["large-equivalent", "tiny-equivalent"] {
+        assert!(
+            output_text(&pruned)
+                .lines()
+                .any(|line| line.contains(&format!("retained '{name}'"))
+                    && line.ends_with("the original or trial clip cannot be sampled safely")),
+            "{}",
+            output_text(&pruned)
+        );
+    }
+    for (name, original) in track_snapshot(&source) {
+        let actual = track_snapshot(&after)
+            .into_iter()
+            .find(|(clip, _)| clip == &name)
+            .unwrap()
+            .1;
+        if name == "ordinary-constant" {
+            assert!(!has_track(find_clip(&after, &name), 0, Property::Rotation));
+            assert_eq!(actual.as_slice(), &original[1..]);
+        } else {
+            assert_eq!(
+                actual, original,
+                "{name}: unsafe or moving source values must survive"
+            );
+        }
+    }
+    assert_eq!(std::fs::read(&input).unwrap(), source_bytes);
+}
+
+#[test]
 fn pruning_preserves_cubic_hemisphere_crossing_motion_after_reload() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let input = dir.path().join("cubic.glb");

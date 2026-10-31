@@ -212,7 +212,10 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Measurement and finding: reports multi-key translation, rotation, or scale
   tracks that never materially move. Cubic rotation keys must share one
   hemisphere and have zero tangents; STEP and LINEAR rotations can use
-  equivalent quaternion signs.
+  equivalent quaternion signs. Angular comparisons are independent of key
+  magnitude for finite nonzero rotations; zero or nonfinite values are not
+  constant evidence. Non-unit keys still belong to `quat-norm`, even when
+  their orientations agree.
 - Prerequisites and applicability: none. This is generic file-ready coverage.
 - Config, defaults, and units: `[checks.constant-track] severity` only.
 - Inactive, not-applicable, and coverage gaps: never `not_applicable` and no
