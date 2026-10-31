@@ -13514,11 +13514,26 @@ fn fix_ownership_preserves_external_aliases_and_repairs_distinct_resources() {
                 let result = command.output().unwrap();
                 assert_eq!(
                     result.status.code(),
-                    Some(if write || alias { 0 } else { 1 }),
+                    Some(match (write, alias) {
+                        (true, true) => 2,
+                        (false, false) => 1,
+                        _ => 0,
+                    }),
                     "{}",
                     stderr(&result)
                 );
-                if alias {
+                if write && alias {
+                    assert!(stdout(&result).is_empty(), "{}", stdout(&result));
+                    let error = stderr(&result);
+                    assert!(error.contains("output buffer 0"), "{error}");
+                    assert!(error.contains("aliases output buffer 1"), "{error}");
+                    for name in ["scene.gltf", "data.bin", "separate.bin"] {
+                        assert!(
+                            !output_dir.join(name).exists(),
+                            "refusal must remove the new {name} reservation"
+                        );
+                    }
+                } else if alias {
                     assert!(
                         stdout(&result).contains(
                             "ownership unavailable: /buffers/1/uri aliases /buffers/0/uri"
@@ -13534,22 +13549,32 @@ fn fix_ownership_preserves_external_aliases_and_repairs_distinct_resources() {
                 }
             }
             assert_eq!(std::fs::read(&input).unwrap(), json);
+            if alias {
+                let source_bytes = std::fs::read(dir.path().join("data.bin")).unwrap();
+                assert_eq!(source_bytes, blob);
+                let xs: [f32; 3] = std::array::from_fn(|vertex| {
+                    f32::from_le_bytes(
+                        source_bytes[24 + vertex * 12..28 + vertex * 12]
+                            .try_into()
+                            .unwrap(),
+                    )
+                });
+                assert_eq!(xs, [0.6, -0.8, 0.0]);
+                continue;
+            }
             assert_eq!(std::fs::read(output_dir.join("scene.gltf")).unwrap(), json);
             for (index, name) in ["data.bin", "separate.bin"].into_iter().enumerate() {
-                if alias && index == 1 {
-                    continue;
-                }
                 assert_eq!(std::fs::read(dir.path().join(name)).unwrap(), blob);
                 let after = std::fs::read(output_dir.join(name)).unwrap();
                 let mut expected = blob.clone();
-                if !alias && index == rotation_buffer {
+                if index == rotation_buffer {
                     for (component, value) in [-0.6f32, -0.0, -0.0, 0.8].into_iter().enumerate() {
                         expected[24 + component * 4..28 + component * 4]
                             .copy_from_slice(&value.to_le_bytes());
                     }
                 }
                 assert_eq!(after, expected, "{uri}, rotation buffer {rotation_buffer}");
-                if alias || index != rotation_buffer {
+                if index != rotation_buffer {
                     let xs: [f32; 3] = std::array::from_fn(|vertex| {
                         f32::from_le_bytes(
                             after[24 + vertex * 12..28 + vertex * 12]
