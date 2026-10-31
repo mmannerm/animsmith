@@ -3,8 +3,8 @@
 `urn:animsmith:skill:animation-pack-evaluation:3` is the immutable evaluation
 contract for `urn:animsmith:schema:collection-output:12`, with output-v19 and
 measurements-v18 nested evidence. It retains the V2 vocabulary, canonical JSON
-owner and relationship checks. V2 remains bound to V11; the current writer and
-workflow remain V11/V2 during this reader-preparation step.
+owner and relationship checks. This is the current evaluation workflow.
+Historical V2 remains bound to V11.
 
 V12 explicitly retains a source whose analysis exceeded sampling admission as
 `result: {"state":"unavailable","reason":"sampling_limit_exceeded"}`. Its input,

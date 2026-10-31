@@ -176,6 +176,152 @@ fn required_measurement_commands_refuse_the_small_on_disk_pose_grid_bomb() {
     }
 }
 
+fn mixed_manifest(dir: &Path, bomb_first: bool, wrong_digest: bool) -> PathBuf {
+    let mut manifest = String::from(
+        "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.sampling\"\ninput_root = \"source\"\n",
+    );
+    for (key, file) in if bomb_first {
+        [("first", "bomb"), ("second", "small")]
+    } else {
+        [("first", "small"), ("second", "bomb")]
+    } {
+        manifest.push_str(&format!(
+            "\n[[sources]]\nkey = \"{key}\"\npath = \"{file}.gltf\"\nconfig = \"fixture.toml\"\n"
+        ));
+        if file == "bomb" && wrong_digest {
+            manifest.push_str(&format!("expected_sha256 = \"{}\"\n", "0".repeat(64)));
+        }
+        manifest.push_str(&format!(
+            "\n[[clips]]\nid = \"com.example.sampling/{file}\"\nsource = \"{key}\"\ntake_index = 0\ntake_name = \"clip_0\"\n"
+        ));
+    }
+    manifest.push_str("\n[[runtime_sets]]\nid = \"com.example.sampling/pair\"\nkind = \"gait-group\"\nmembers = [\"com.example.sampling/small\", \"com.example.sampling/bomb\"]\n");
+    let path = dir.join("collection.toml");
+    std::fs::write(&path, manifest).unwrap();
+    path
+}
+
+#[test]
+fn collection_keeps_successful_assets_and_exact_refused_source_facts_in_both_orders() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    let bomb = fixture(&source, "bomb", 2048, 4096, 1);
+    fixture(&source, "small", 1, 3, 1);
+    let config = b"[rig]\nroles = { root = \"bone_0\" }\n";
+    std::fs::write(dir.path().join("fixture.toml"), config).unwrap();
+    let bomb_bytes = std::fs::read(&bomb).unwrap();
+    let loaded = animsmith_gltf::load_source(&bomb).unwrap();
+    let closure = serde_json::to_value(loaded.dependency_closure().identity().unwrap()).unwrap();
+    for (bomb_first, wrong_digest) in [(false, false), (true, false), (true, true)] {
+        let manifest = mixed_manifest(dir.path(), bomb_first, wrong_digest);
+        let result = run(&[
+            "collection",
+            "lint",
+            manifest.to_str().unwrap(),
+            "--format",
+            "json",
+        ]);
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let output: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(
+            output["schema"],
+            "urn:animsmith:schema:collection-output:12"
+        );
+        assert_eq!(output["work"]["serialized_bytes"], result.stdout.len());
+        let sources = output["sources"].as_array().unwrap();
+        assert_eq!(sources.len(), 2);
+        let refused = &sources[usize::from(!bomb_first)];
+        let good = &sources[usize::from(bomb_first)];
+        assert_eq!(
+            refused["input"]["input"],
+            serde_json::to_value(animsmith_core::InputIdentity::from_bytes(&bomb_bytes)).unwrap()
+        );
+        assert_eq!(
+            refused["config"]["input"],
+            serde_json::to_value(animsmith_core::InputIdentity::from_bytes(config)).unwrap()
+        );
+        assert_eq!(refused["loader"]["state"], "ready");
+        assert_eq!(
+            refused["dependency_closure"],
+            json!({"state":"complete","identity":closure})
+        );
+        assert_eq!(
+            refused["result"],
+            json!({"state":"unavailable","reason":"sampling_limit_exceeded"})
+        );
+        assert_eq!(refused["observed_takes"].as_array().unwrap().len(), 1);
+        assert_eq!(refused["observed_takes"][0]["source_take_index"], 0);
+        assert_eq!(refused["observed_takes"][0]["name"]["value"], "clip_0");
+        assert_eq!(refused["observed_takes"][0]["normalized"]["index"], 0);
+        assert_eq!(refused["observed_takes"][0]["normalized"]["name"], "clip_0");
+        assert_eq!(good["result"]["state"], "available");
+        let clips = output["clips"].as_array().unwrap();
+        assert_eq!(clips.len(), 2);
+        let reason = if wrong_digest {
+            "digest_mismatched"
+        } else {
+            "sampling_limit_exceeded"
+        };
+        assert_eq!(clips[0]["id"], "com.example.sampling/bomb");
+        assert_eq!(
+            clips[0]["binding"],
+            json!({"state":"unavailable","reason":reason})
+        );
+        assert_eq!(clips[1]["binding"]["state"], "established");
+        assert_eq!(clips[1]["binding"]["measurements"]["duration_s"], 1.0);
+        assert_eq!(
+            clips[1]["binding"]["measurements"]["root_trajectory"]["translation"]["horizontal_displacement_x_m"],
+            1.0
+        );
+        assert_eq!(clips[1]["binding"]["measurements"]["speed_mps"], 1.0);
+        assert_eq!(output["summary"]["incomplete"], true);
+        let set = &output["runtime_sets"][0];
+        assert_eq!(set["lifecycle"], "incomplete");
+        assert_eq!(set["members"].as_array().unwrap().len(), 2);
+        assert_eq!(set["members"][0]["id"], "com.example.sampling/small");
+        assert_eq!(
+            set["members"][1]["resolution"],
+            json!({"state":"unavailable","reason":reason})
+        );
+        assert_eq!(std::fs::read(&bomb).unwrap(), bomb_bytes);
+    }
+}
+
+#[test]
+fn collection_allocation_failure_remains_a_command_error_without_partial_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    fixture(&source, "bomb", 512, 4096, 1);
+    fixture(&source, "small", 1, 3, 1);
+    std::fs::write(dir.path().join("fixture.toml"), "").unwrap();
+    let manifest = mixed_manifest(dir.path(), false, false);
+    let result = run_with_memory(
+        &[
+            "collection",
+            "lint",
+            manifest.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+        "204800",
+    );
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("sampling could not allocate"));
+}
+
 #[test]
 fn individually_affordable_clips_cannot_accumulate_unbounded_cached_work() {
     let dir = tempfile::tempdir().unwrap();

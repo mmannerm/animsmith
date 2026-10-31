@@ -6,7 +6,7 @@ the historical `animation-pack-evaluation-manifest:1`: the latter remains the
 legacy report-input contract until the migration slice has landed.
 
 V1 is frozen to its independently validated `collection-output:2` input. New
-current evaluations use [evaluation model V2](evaluation-model-v2.md); neither
+current evaluations use [evaluation model V3](evaluation-model-v3.md); neither
 the V1 validator nor renderer accepts current collection output through shared
 fields.
 

@@ -243,21 +243,28 @@ test -n "$collection_output_current" || fail 'could not discover current collect
 collection_output_version="${collection_output_current##*:}"
 for file in \
   .agents/skills/evaluate-animation-packs/SKILL.md \
-  .agents/skills/evaluate-animation-packs/references/evaluation-model-v2.md \
+  .agents/skills/evaluate-animation-packs/references/evaluation-model-v3.md \
   .agents/skills/evaluate-animation-packs/references/schema-impact-audit.md \
   DESIGN.md; do
   grep -Fq "collection-output:$collection_output_version" "$file" \
     || fail "collection-output schema-impact audit is stale in $file"
 done
-grep -Fq "$collection_output_current" .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
-  || fail 'current evaluation-model contract is stale against the producer identity'
-grep -Fq 'urn:animsmith:schema:output:19' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
-  || fail 'current evaluation-model contract is stale against output:19'
-grep -Fq 'urn:animsmith:schema:measurements:18' .agents/skills/evaluate-animation-packs/scripts/evaluation_model_v2.py \
-  || fail 'current evaluation-model contract is stale against measurements:18'
-grep -Fq 'evaluation_model_v2' .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
+PYTHONDONTWRITEBYTECODE=1 python3 - "$collection_output_current" <<'PY_CONTRACT'
+import sys
+sys.path.insert(0, '.agents/skills/evaluate-animation-packs/scripts')
+import evaluation_model_v3 as contract
+expected = {
+    'COLLECTION_OUTPUT_SCHEMA': sys.argv[1],
+    'OUTPUT_SCHEMA': 'urn:animsmith:schema:output:19',
+    'MEASUREMENTS_SCHEMA': 'urn:animsmith:schema:measurements:18',
+}
+for field, identity in expected.items():
+    if getattr(contract, field) != identity:
+        raise SystemExit(f'schema-id: current evaluation model has stale {field}')
+PY_CONTRACT
+grep -Fq 'evaluation_model_v3' .agents/skills/evaluate-animation-packs/scripts/render_evaluation_model.py \
   || fail 'renderer is not discovered through the current evaluation-model contract'
-grep -Fq 'evaluation_model_v2 as contract' .agents/skills/evaluate-animation-packs/scripts/collection_evaluation.py \
+grep -Fq 'evaluation_model_v3 as v3_contract' .agents/skills/evaluate-animation-packs/scripts/collection_evaluation.py \
   || fail 'current evaluator validator is not pinned through the current model contract'
 grep -Fq '../../../.agents/skills/evaluate-animation-packs/SKILL.md' .claude/skills/evaluate-animation-packs/SKILL.md \
   || fail 'Claude discovery adapter no longer routes to the audited canonical skill'

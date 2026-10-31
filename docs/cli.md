@@ -138,8 +138,12 @@ the longest authored channel rather than a configured playback rate.
 `measure`, `lint`, `report` (including comparisons and `--evidence-only`) and
 asset-based `diff` exit 2 if a required grid is refused. They emit no partial
 result and do not replace a report file on that refusal. Lint selection and
-severity allowances do not suppress its required measurement failure. Collection
-lint preserves its existing per-source failure mapping. JSON-report `diff`,
+severity allowances do not suppress its required measurement failure. Report
+`--clip` selection and `--evidence-only` do not reduce sampling admission: shared
+analysis still covers every clip in the input. Collection
+lint retains a sampling-refused source and all successful peers in its V12
+envelope, then exits 1. Actual allocation failure exits 2 with no envelope.
+JSON-report `diff`,
 `inspect` and declaration-only addressability generation do not request grids.
 
 Unity V1 `generate import-advice` emits a typed `measurement_unavailable`
@@ -1326,7 +1330,8 @@ measurements-v9 pairing remain immutable historical contracts. Output-v10 and
 earlier reports require regeneration from the original asset.
 
 `collection lint COLLECTION.toml --format json` emits the separate current
-`urn:animsmith:schema:collection-output:11` contract. Historical
+`urn:animsmith:schema:collection-output:12` contract. Historical
+`urn:animsmith:schema:collection-output:11`,
 `urn:animsmith:schema:collection-output:9`,
 `urn:animsmith:schema:collection-output:8`,
 `urn:animsmith:schema:collection-output:7`,
@@ -1560,10 +1565,11 @@ gate automation on `--format json` (see [output.md](output.md)), and
 treat the Markdown as display text that may be re-laid-out between
 releases.
 
-### Versioned collection-reader preparation
+### Collection sampling refusal
 
-`collection lint` currently emits `urn:animsmith:schema:collection-output:11`.
-Readers additionally accept `urn:animsmith:schema:collection-output:12`, whose
-explicit `sampling_limit_exceeded` state retains the readable source identity,
-loader result and observed inventory while refusing analysis. The current writer
-is unchanged by reader preparation. See [collection output](output.md#collection-lint).
+`collection lint` emits `urn:animsmith:schema:collection-output:12`.
+This version adds an explicit `sampling_limit_exceeded` state that retains the
+readable source identity, loader result and observed inventory while refusing
+analysis. Successful peers
+retain their measurements; the partial collection exits 1. Actual allocation
+failure exits 2 without an envelope. See [collection output](output.md#collection-lint).
