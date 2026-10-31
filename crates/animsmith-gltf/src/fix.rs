@@ -128,7 +128,7 @@ impl FixSession {
         // time, not assumed to be index 0). External and data-URI buffers
         // are loaded, patched, and written back to where they came from.
         let buffers = resolve_buffers(&gltf, input.parent())?;
-        let origin = publication::Origin::capture(input, &gltf)?;
+        let origin = publication::Origin::capture(input, &gltf, !original.starts_with(b"glTF"))?;
 
         Ok(Self {
             original,
@@ -380,8 +380,8 @@ impl FixSession {
     /// The primary must be writable even when its JSON is unchanged. Later I/O
     /// failure or interruption can leave an incomplete primary or sidecar;
     /// neither rollback nor concurrent namespace transactions are guaranteed.
-    /// On Unix, new primary files inherit captured source access permissions;
-    /// existing destination permissions are unchanged.
+    /// On Unix, distinct JSON copies inherit captured source access permissions.
+    /// In-place primary, GLB and sidecar permission behavior is unchanged.
     ///
     /// # Errors
     ///

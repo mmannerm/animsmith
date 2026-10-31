@@ -802,9 +802,12 @@ even if a later dependency is missing. Write permission is required during
 preflight. In-place `.gltf` repair also republishes the captured JSON, so the
 primary must be writable even when its JSON is unchanged. After admission, an
 I/O failure or interruption can leave an incomplete primary or sidecar; rollback
-and concurrent directory/name transactions are not guaranteed. On Unix, new
-primary files inherit captured source access permissions; existing destination
-permissions are unchanged.
+and concurrent directory/name transactions are not guaranteed. On Unix,
+distinct JSON copies inherit captured source access permissions. New
+reservations are no broader than those permissions; existing copies are
+restricted before writing and receive the exact source mode only after a
+successful overwrite. In-place primary, GLB and sidecar permission behavior
+is unchanged.
 
 ## Engine profiles and importer settings
 

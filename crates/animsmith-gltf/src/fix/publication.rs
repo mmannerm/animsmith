@@ -39,7 +39,7 @@ struct Source {
 pub(super) struct Origin {
     sources: Vec<Source>,
     #[cfg(unix)]
-    primary_mode: io::Result<u32>,
+    primary_mode: Option<io::Result<u32>>,
 }
 
 #[derive(Default)]
@@ -53,6 +53,8 @@ struct Destination {
     file: fs::File,
     id: FileId,
     reserved: bool,
+    #[cfg(unix)]
+    copy_mode: Option<u32>,
 }
 
 impl Destination {
@@ -80,11 +82,25 @@ impl Destination {
         self.verify_identity()?;
         let mut file = &self.file;
         let mut write = || -> io::Result<()> {
+            #[cfg(unix)]
+            if let Some(mode) = self.copy_mode {
+                use std::os::unix::fs::PermissionsExt;
+                // Tighten before publishing private bytes, but never expose a
+                // prior private destination before its overwrite succeeds.
+                let current = file.metadata()?.permissions().mode();
+                file.set_permissions(fs::Permissions::from_mode(current & mode))?;
+            }
             file.seek(SeekFrom::Start(0))?;
             // Write before shortening so a refused write need not truncate an
             // unchanged in-place JSON snapshot.
             file.write_all(bytes)?;
-            file.set_len(bytes.len() as u64)
+            file.set_len(bytes.len() as u64)?;
+            #[cfg(unix)]
+            if let Some(mode) = self.copy_mode {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(mode))?;
+            }
+            Ok(())
         };
         write().map_err(|source| {
             WriteError::Io {
@@ -170,7 +186,11 @@ enum Identity {
 }
 
 impl Origin {
-    pub(super) fn capture(input: &Path, gltf: &gltf::Gltf) -> Result<Self, LoadError> {
+    pub(super) fn capture(
+        input: &Path,
+        gltf: &gltf::Gltf,
+        json_primary: bool,
+    ) -> Result<Self, LoadError> {
         let input = std::path::absolute(input).map_err(|source| LoadError::Io {
             path: input.display().to_string(),
             source,
@@ -178,8 +198,12 @@ impl Origin {
         #[cfg(unix)]
         let primary_mode = {
             use std::os::unix::fs::PermissionsExt;
-            fs::metadata(&input).map(|metadata| metadata.permissions().mode() & 0o7777)
+            json_primary.then(|| {
+                fs::metadata(&input).map(|metadata| metadata.permissions().mode() & 0o7777)
+            })
         };
+        #[cfg(not(unix))]
+        let _ = json_primary;
         let root = parent(&input);
         let mut paths = vec![(Role::Primary, input.clone())];
         for buffer in gltf.buffers() {
@@ -258,6 +282,18 @@ impl Origin {
     }
 
     fn admit(&self, entries: &[Entry], destinations: &mut Destinations) -> Result<(), FixError> {
+        #[cfg(unix)]
+        let primary_mode = self
+            .primary_mode
+            .as_ref()
+            .map(|mode| {
+                mode.as_ref().copied().map_err(|error| {
+                    WriteError::RepairPublication(format!(
+                        "cannot read captured source permissions: {error}"
+                    ))
+                })
+            })
+            .transpose()?;
         let mut groups = BTreeMap::<FileId, Vec<&Entry>>::new();
         for (source, entry) in self
             .sources
@@ -280,20 +316,14 @@ impl Origin {
             {
                 let mut options = destination_options(true);
                 #[cfg(unix)]
-                let primary_mode = if entry.role == Role::Primary {
+                if entry.role == Role::Primary
+                    && let Some(mode) = primary_mode
+                {
                     use std::os::unix::fs::OpenOptionsExt;
-                    let mode = *self.primary_mode.as_ref().map_err(|error| {
-                        WriteError::RepairPublication(format!(
-                            "cannot read captured source permissions: {error}"
-                        ))
-                    })?;
                     // Creation must never expose a private source under broader
                     // default permissions, even before admission finishes.
                     options.mode(mode);
-                    Some(mode)
-                } else {
-                    None
-                };
+                }
                 match options.create_new(true).open(&path) {
                     Ok(file) => {
                         let id = match handle_id(&file) {
@@ -317,20 +347,9 @@ impl Origin {
                             file,
                             id,
                             reserved: true,
+                            #[cfg(unix)]
+                            copy_mode: None,
                         });
-                        #[cfg(unix)]
-                        if let Some(mode) = primary_mode {
-                            use std::os::unix::fs::PermissionsExt;
-                            // Restore source bits removed by umask, through the
-                            // owned handle. Existing destinations are untouched.
-                            destinations
-                                .files
-                                .last()
-                                .expect("just retained the reservation")
-                                .file
-                                .set_permissions(fs::Permissions::from_mode(mode))
-                                .map_err(|error| inspect_error(&entry.path, &error))?;
-                        }
                     }
                     // A prior reservation may have created this alias. Resolve
                     // every entry again below, after ALL prospective names exist.
@@ -414,7 +433,17 @@ impl Origin {
                 file,
                 id,
                 reserved: false,
+                #[cfg(unix)]
+                copy_mode: None,
             });
+        }
+        #[cfg(unix)]
+        if !in_place {
+            for destination in &mut destinations.files {
+                if destination.role == Role::Primary {
+                    destination.copy_mode = primary_mode;
+                }
+            }
         }
         Ok(())
     }
@@ -640,7 +669,7 @@ mod tests {
         let bytes = br#"{"asset":{"version":"2.0"}}"#;
         fs::write(&input, bytes).unwrap();
         let gltf = gltf::Gltf::from_slice(bytes).unwrap();
-        Origin::capture(&input, &gltf)
+        Origin::capture(&input, &gltf, true)
             .unwrap()
             .preflight(&dir.join("output.gltf"), &gltf)
             .unwrap()
@@ -657,7 +686,7 @@ mod tests {
         fs::set_permissions(&input, fs::Permissions::from_mode(0o600)).unwrap();
         let gltf = gltf::Gltf::from_slice(bytes).unwrap();
         let output = dir.path().join("output.gltf");
-        let destinations = Origin::capture(&input, &gltf)
+        let destinations = Origin::capture(&input, &gltf, true)
             .unwrap()
             .preflight(&output, &gltf)
             .unwrap();
