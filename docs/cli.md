@@ -799,7 +799,11 @@ and holds writable file handles through publication. This detects filesystem
 aliases such as Windows short names without truncating existing files. A normal
 refusal removes the reservations; interruption can leave empty placeholders,
 even if a later dependency is missing. Write permission is required during
-preflight. Concurrent directory/name edits are not a multi-file transaction.
+preflight. In-place `.gltf` repair also republishes the captured JSON, so the
+primary must be writable even when its JSON is unchanged. After admission, an
+I/O failure or interruption can leave an incomplete primary or sidecar; rollback
+and concurrent directory/name transactions are not guaranteed. New files use
+creation permissions rather than copied source permissions.
 
 ## Engine profiles and importer settings
 

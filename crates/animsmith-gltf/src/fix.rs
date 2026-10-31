@@ -376,8 +376,11 @@ impl FixSession {
     /// directories, then every protected source path is checked again. Ordinary
     /// refusals remove reservations; interruption can leave empty placeholders,
     /// even if a later dependency is missing. Publication uses retained writable
-    /// handles and the captured JSON bytes. Later I/O failure is not a multi-file
-    /// rollback guarantee, and concurrent namespace edits are not transactional.
+    /// handles and the captured JSON bytes, including for in-place `.gltf` writes.
+    /// The primary must be writable even when its JSON is unchanged. Later I/O
+    /// failure or interruption can leave an incomplete primary or sidecar;
+    /// neither rollback nor concurrent namespace transactions are guaranteed.
+    /// New files use creation permissions, not copied source permissions.
     ///
     /// # Errors
     ///

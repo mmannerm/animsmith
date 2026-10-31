@@ -237,8 +237,11 @@ short names, are checked against the real namespace. Normal refusal removes
 reservations; interruption can leave empty placeholders, even when a later
 dependency is missing. Files are opened without truncation during preflight and
 published through retained handles, so write permission is required before
-admission. Later I/O errors and concurrent namespace edits are not a multi-file
-transaction or rollback guarantee.
+admission. In-place `.gltf` repair also republishes the captured JSON, so its
+primary file must be writable even when the JSON is unchanged. Later I/O errors
+or interruption can leave an incomplete primary or sidecar; rollback and
+concurrent namespace transactions are not guaranteed. New files use creation
+permissions rather than copied source permissions.
 
 ## Feature Flags
 
