@@ -303,7 +303,9 @@ only after an explicit `note`, `warn`, or `error` severity.
 
 - Default findings: `error`.
 - Measurement and finding: checks whether each declared animated bone rotates
-  beyond the configured floor across the clip.
+  beyond the configured floor, using the maximum keyed orientation deviation
+  from its first rotation key. Finite nonzero quaternion magnitudes do not
+  change the measured orientation range.
 - Prerequisites and applicability: active only on clips that declare
   `animates_bones`. The bone must exist and carry at least one keyed track.
 - Config, defaults, and units: `[checks.frozen-bone] severity`,

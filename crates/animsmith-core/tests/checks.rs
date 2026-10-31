@@ -1269,3 +1269,60 @@ fn measurements_report_rotation_range() {
         "expected ~{expected}, got {range}"
     );
 }
+
+#[test]
+fn rotation_range_uses_orientation_across_finite_key_magnitudes() {
+    use animsmith_core::metrics::rotation_range_deg;
+
+    for scale in [1.0, 1e20, 1e-30, f32::from_bits(1), f32::MAX] {
+        let identity = Quat::from_xyzw(0.0, 0.0, 0.0, scale);
+        // [0, 1, 0, 1] is a quarter turn around Y, at any nonzero scale.
+        let quarter_turn = Quat::from_xyzw(0.0, scale, 0.0, scale);
+        for interpolation in [Interpolation::Linear, Interpolation::Step] {
+            let mut track = Track {
+                bone: 0,
+                property: Property::Rotation,
+                interpolation,
+                times: vec![0.0, 0.5, 1.0],
+                values: TrackValues::Quats(vec![identity, -identity, identity]),
+            };
+            assert_eq!(rotation_range_deg(&track), Some(0.0), "hold at {scale}");
+
+            // The endpoints agree, so the range must include the interior key.
+            track.values = TrackValues::Quats(vec![identity, quarter_turn, -identity]);
+            let range = rotation_range_deg(&track).expect("finite nonzero keys");
+            assert!((range - 90.0).abs() < 1e-4, "turn at {scale}: {range}");
+        }
+    }
+}
+
+#[test]
+fn rotation_range_keeps_invalid_key_exclusion() {
+    use animsmith_core::metrics::rotation_range_deg;
+
+    let mut track = Track {
+        bone: 0,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: vec![0.0, 1.0],
+        values: TrackValues::Quats(Vec::new()),
+    };
+    // Bad authored quaternions belong to the source-data checks. An unusable
+    // first key cannot define a range; unusable later keys do not contribute.
+    for invalid in [
+        Quat::from_xyzw(0.0, 0.0, 0.0, 0.0),
+        Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0),
+        Quat::from_xyzw(0.0, f32::INFINITY, 0.0, 1.0),
+    ] {
+        track.values = TrackValues::Quats(vec![invalid, Quat::IDENTITY]);
+        assert_eq!(rotation_range_deg(&track), None);
+        track.times = vec![0.0, 0.5, 1.0];
+        track.values = TrackValues::Quats(vec![
+            Quat::IDENTITY,
+            invalid,
+            Quat::from_xyzw(0.0, 1.0, 0.0, 1.0),
+        ]);
+        assert_eq!(rotation_range_deg(&track), Some(90.0));
+        track.times = vec![0.0, 1.0];
+    }
+}
