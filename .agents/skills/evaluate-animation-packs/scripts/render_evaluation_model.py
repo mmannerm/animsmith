@@ -774,8 +774,17 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
         )
         if allowed_positions != set(range(len(paragraphs))) or unexpected_blocks:
             errors.append("model-to-view integration recipe contains unexpected content")
-    assert_projection_links(report_ast, report_validator.RUNTIME_SET_HEADER, model["runtime_sets"], 1, ("evidence_refs",), "primary runtime-set")
-    assert_projection_links(report_ast, report_validator.ISSUE_HEADER, model["issues"], 6, ("evidence_refs",), "issue")
+    # These optional projections have explicit prose for empty authorities.
+    # Their prose validators still run above; invented tables remain invalid.
+    for document, header, records, cell, label in (
+        (report_ast, report_validator.RUNTIME_SET_HEADER, model["runtime_sets"], 1, "primary runtime-set"),
+        (appendix_ast, report_validator.APPENDIX_RUNTIME_HEADER, model["runtime_sets"], 3, "runtime-set"),
+        (report_ast, report_validator.ISSUE_HEADER, model["issues"], 6, "issue"),
+    ):
+        if records:
+            assert_projection_links(document, header, records, cell, ("evidence_refs",), label)
+        elif any(tuple(item["text"] for item in table["header"]) == header for table in document["tables"]):
+            errors.append(f"model-to-view {label} table contradicts empty authority")
     assert_projection_links(report_ast, report_validator.ENGINE_HEADER, [next(record for record in model["engine_evidence"] if record["runtime"] == runtime) for runtime in report_validator.ENGINE_LABELS], 2, ("evidence_refs",), "primary engine")
     primary_cross_pack = model["collection"]["cross_pack_records"]
     matching = [
@@ -790,7 +799,6 @@ def validate_views(model: dict[str, Any], binding: dict[str, Any], views: Render
                     errors.append(f"model-to-view primary cross-pack row {index} differs from authority")
     elif matching:
         errors.append("model-to-view primary cross-pack table contradicts empty authority")
-    assert_projection_links(appendix_ast, report_validator.APPENDIX_RUNTIME_HEADER, model["runtime_sets"], 3, ("evidence_refs",), "runtime-set")
     assert_projection_links(appendix_ast, report_validator.PIPELINE_HEADER, model["pipeline_stages"], 2, ("evidence_refs",), "pipeline")
     assert_projection_links(appendix_ast, ("Role or runtime set", "File-ready / clip-ready", "Set-ready / rig-use", "Runtime / acceptance boundary"), model["readiness"], 3, ("evidence_refs",), "readiness")
     assert_projection_links(appendix_ast, report_validator.PROFILE_HEADER, model["profiles"], 2, ("evidence_refs",), "profile")

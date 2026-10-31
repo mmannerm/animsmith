@@ -5908,6 +5908,100 @@ class EvaluationModelTests(unittest.TestCase):
         binding["runtime_sets"] = []
         self.assertEqual(model_validator.validate_model(model, binding), [])
 
+    def test_empty_optional_projections_render_and_validate_for_each_model_version(self) -> None:
+        for version in (1, 2, 3):
+            for empty_fields in (("runtime_sets",), ("issues",), ("runtime_sets", "issues")):
+                with self.subTest(version=version, empty=empty_fields), tempfile.TemporaryDirectory() as temporary:
+                    if version == 1:
+                        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+                        if "runtime_sets" in empty_fields:
+                            model["runtime_sets"] = []
+                            binding["runtime_sets"] = []
+                        raw = model_contract.canonical_json(binding)
+                    else:
+                        fixture = (
+                            "collection-output-v11-complete.json" if version == 2
+                            else "collection-output-v12-sampling-refused.json"
+                        )
+                        binding = json.loads((Path(__file__).parents[1] / "fixtures" / fixture).read_bytes())
+                        if "runtime_sets" in empty_fields:
+                            binding["runtime_sets"] = []
+                            binding["summary"].update(runtime_sets=0, complete_runtime_sets=0)
+                            # Two sources and two clips remain after removing
+                            # the fixture's single two-member runtime set.
+                            binding["work"].update(manifest_rows=4, runtime_set_members=0, aggregate_work=4)
+                        model, binding, raw = self.synchronized(binding)
+                        if version == 3:
+                            model["schema"] = model_contract_v3.SCHEMA
+                            model["schema_version"] = 3
+                    if "issues" in empty_fields:
+                        model["issues"] = []
+                    directory = Path(temporary)
+                    model_path, binding_path = directory / "model.json", directory / "binding.json"
+                    report_path, appendix_path = directory / "report.md", directory / "report-evidence.md"
+                    model_path.write_bytes(model_contract.canonical_json(model))
+                    binding_path.write_bytes(raw)
+                    command = [
+                        str(Path(__file__).with_name("render_evaluation_model.py")),
+                        str(model_path), "--binding", str(binding_path), "--animsmith", str(self.animsmith),
+                        "--report", str(report_path), "--appendix", str(appendix_path),
+                    ]
+                    rendered = subprocess.run(command, check=False, text=True, capture_output=True)
+                    self.assertEqual(rendered.returncode, 0, rendered.stderr)
+                    if "runtime_sets" in empty_fields:
+                        self.assertIn("\nNo important runtime sets were identified.\n", report_path.read_text())
+                        self.assertIn("\nNo runtime sets were identified.\n", appendix_path.read_text())
+                    if "issues" in empty_fields:
+                        self.assertIn("\nNo material technical issues were found at the stated scope.\n", report_path.read_text())
+                    checked = subprocess.run([*command, "--check"], check=False, text=True, capture_output=True)
+                    self.assertEqual(checked.returncode, 0, checked.stderr)
+                    validated = subprocess.run([
+                        str(Path(__file__).with_name("validate_report.py")), str(report_path),
+                        "--appendix", str(appendix_path), f"--evaluation-model-v{version}", "--report-format", "2",
+                    ], check=False, text=True, capture_output=True)
+                    self.assertEqual(validated.returncode, 0, validated.stderr)
+
+    def test_empty_authorities_reject_fabricated_tables_in_either_view(self) -> None:
+        model, binding = valid_evaluation_model(), valid_collection_output_projection()
+        populated = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+        model["runtime_sets"] = []
+        model["issues"] = []
+        binding["runtime_sets"] = []
+        views = model_renderer.render_views(model, binding, report_name="fixture.md", appendix_name="fixture-evidence.md")
+        self.assertEqual(model_renderer.validate_views(model, binding, views, report_name="fixture.md", appendix_name="fixture-evidence.md"), [])
+        documents = {"report": views.report, "appendix": views.appendix}
+        for field, start, end, sentinel in (
+            ("report", "## Runtime sets and authored motion\n", "## Integration recipe", "No important runtime sets were identified."),
+            ("appendix", "### Runtime-set inventory\n", "### Pipeline-stage coverage", "No runtime sets were identified."),
+            ("report", "## Technical issue register\n", "## Engine status", "No material technical issues were found at the stated scope."),
+        ):
+            table = getattr(populated, field).split(start, 1)[1].split(end, 1)[0].strip()
+            documents[field] = documents[field].replace(sentinel, table)
+        forged = model_renderer.RenderedViews(**documents)
+        # This internally consistent pair passes ordinary report validation;
+        # only comparison with its empty authority can reject the invented records.
+        self.assertEqual(report_validator.validate(forged.report, evaluation_schema=model["schema"], report_format="2"), [])
+        self.assertEqual(report_validator.validate_appendix(forged.appendix, evaluation_schema=model["schema"], report_format="2"), [])
+        self.assertEqual(report_validator.validate_pair(forged.report, forged.appendix, "fixture.md", "fixture-evidence.md"), [])
+        self.assertCountEqual(model_renderer.validate_views(model, binding, forged, report_name="fixture.md", appendix_name="fixture-evidence.md"), [
+            "model-to-view primary runtime-set table contradicts empty authority",
+            "model-to-view runtime-set table contradicts empty authority",
+            "model-to-view issue table contradicts empty authority",
+        ])
+        for field, header, label in (
+            ("report", report_validator.RUNTIME_SET_HEADER, "primary runtime-set"),
+            ("appendix", report_validator.APPENDIX_RUNTIME_HEADER, "runtime-set"),
+            ("report", report_validator.ISSUE_HEADER, "issue"),
+        ):
+            with self.subTest(view=field):
+                # Even a header-only table outside the inventory contradicts
+                # the authority; section-local prose checks alone miss this.
+                table = "\n".join("| " + " | ".join(row) + " |" for row in (header, ["---"] * len(header)))
+                documents = {"report": views.report, "appendix": views.appendix}
+                documents[field] += "\n" + table + "\n"
+                errors = model_renderer.validate_views(model, binding, model_renderer.RenderedViews(**documents), report_name="fixture.md", appendix_name="fixture-evidence.md")
+                self.assertEqual(errors, [f"model-to-view {label} table contradicts empty authority"])
+
     def test_rejects_unknown_dangling_duplicate_and_stale_identity(self) -> None:
         model, binding = valid_evaluation_model(), valid_collection_output_projection()
         model["unknown"] = "no"
