@@ -226,6 +226,24 @@ members may span documents but must have one exact normalized skeleton basis.
 
 ## Collection lint
 
+The strict reader also supports `urn:animsmith:schema:collection-output:12`
+([schema](schemas/collection-output-v12.schema.json)) in preparation for the
+sampling-admission producer. V12 retains output-v19/measurements-v18 and adds
+`sampling_limit_exceeded` to source document results, logical bindings, and
+runtime-set member resolutions. This is a post-load analysis refusal: input
+identity, digest, config, loader readiness, dependency closure and observed take
+inventory remain intact. No measurements or nested lint result are invented for
+the refused source. Refusal precedes take binding and nested-name size handling;
+all logical clips from that source carry the same explicit reason. Other sources
+retain their evidence. V11 rejects this new state; its contract is unchanged.
+The current `collection lint` writer still emits V11 in this preparation step.
+
+Evaluation consumers accept V11 and V12 through the same strict reader. The
+internal validation handshake names the revision actually validated. Evaluation
+model V2 remains pinned to V11; V3 is pinned to V12. A successful handshake for
+one revision cannot authorize the other.
+
+
 `animsmith collection lint COLLECTION.toml --format json` emits the separate
 current `urn:animsmith:schema:collection-output:11` envelope. Historical
 `urn:animsmith:schema:collection-output:9`,
@@ -264,6 +282,17 @@ exit 2 with no envelope. The frontend preflights the complete control plane
 before source execution and reads sources sequentially.
 
 ## Collection dashboard
+
+V11 input continues to produce dashboard V1. V12 input produces
+`urn:animsmith:schema:collection-dashboard:2`
+([schema](schemas/collection-dashboard-v2.schema.json)), which adds a source
+`result` projection and `sampling_limit_exceeded` physical/logical availability.
+A refused source remains in the source table, with its observed takes, even when
+no logical clip refers to it. The physical row's outcome is `unavailable`, not
+clean or evaluated. Dashboard V1 is unchanged; its source result is explicitly
+shown as not recorded. The dashboard is a presentation projection; the exact
+collection-output identity remains the evidence authority.
+
 
 `animsmith collection dashboard --collection COLLECTION-OUTPUT.json -o
 DASHBOARD.html --authority DASHBOARD.json` consumes only a strict current

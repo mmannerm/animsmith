@@ -1368,3 +1368,15 @@ Markdown is presentation-only and carries **no stability guarantees** —
 gate automation on `--format json` (see [output.md](output.md)), and
 treat the Markdown as display text that may be re-laid-out between
 releases.
+
+### Versioned collection-reader preparation
+
+`collection lint` currently emits `urn:animsmith:schema:collection-output:11`.
+Readers additionally accept `urn:animsmith:schema:collection-output:12`, whose
+explicit `sampling_limit_exceeded` state retains the readable source identity,
+loader result and observed inventory while refusing analysis. The current writer
+is unchanged by reader preparation. See [collection output](output.md#collection-lint).
+
+`collection dashboard` accepts both revisions. V11 input retains dashboard V1;
+V12 input emits `urn:animsmith:schema:collection-dashboard:2` and displays the
+refused source and physical takes even without logical clip declarations.

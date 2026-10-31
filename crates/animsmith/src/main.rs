@@ -91,8 +91,6 @@ mod transition_family;
 /// findings, 2 = operator error.
 const EXIT_FINDINGS: u8 = 1;
 const EXIT_OPERATOR: u8 = 2;
-const COLLECTION_OUTPUT_V11_VALIDATION_HANDSHAKE: &[u8] =
-    b"animsmith-internal collection-output-valid urn:animsmith:schema:collection-output:11 11\n";
 
 #[derive(Parser)]
 #[command(
@@ -1900,10 +1898,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 ),
                 CollectionCmd::ValidateOutput => {
                     let stdin = std::io::stdin();
-                    collection_output::read_current_collection_output(stdin.lock()).map_err(
-                        |error| format!("invalid collection output from stdin: {error}"),
-                    )?;
-                    publish::emit_required_text(COLLECTION_OUTPUT_V11_VALIDATION_HANDSHAKE)?;
+                    let output = collection_output::read_evaluation_collection_output(stdin.lock())
+                        .map_err(|error| {
+                            format!("invalid collection output from stdin: {error}")
+                        })?;
+                    publish::emit_required_text(output.validation_handshake().as_bytes())?;
                     Ok(ExitCode::SUCCESS)
                 }
                 CollectionCmd::GenerateContactFragment {

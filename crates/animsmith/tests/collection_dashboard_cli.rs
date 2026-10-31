@@ -143,6 +143,90 @@ console.log(JSON.stringify({count:element('count').textContent,groups:element('g
 }
 
 #[test]
+fn v12_sampling_refusal_remains_visible_without_a_logical_clip_declaration() {
+    let fixture: Value = serde_json::from_slice(include_bytes!(
+        "../../../.agents/skills/evaluate-animation-packs/fixtures/collection-output-v12-sampling-refused.json"
+    )).unwrap();
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../docs/schemas/collection-dashboard-v2.schema.json"
+    ))
+    .unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    for declare_refused_clip in [true, false] {
+        let mut evidence = fixture.clone();
+        if !declare_refused_clip {
+            evidence["clips"].as_array_mut().unwrap().pop();
+            evidence["runtime_sets"] = json!([]);
+            evidence["summary"]["clips"] = json!(1);
+            evidence["summary"]["runtime_sets"] = json!(0);
+            evidence["work"]["manifest_rows"] = json!(3);
+            evidence["work"]["runtime_set_members"] = json!(0);
+            evidence["work"]["aggregate_work"] = json!(3);
+        }
+        stabilize_collection_serialized_bytes(&mut evidence);
+        let temp = tempfile::tempdir().unwrap();
+        let input = temp.path().join("collection.json");
+        let html = temp.path().join("dashboard.html");
+        let authority = temp.path().join("dashboard.json");
+        fs::write(&input, serde_json::to_vec(&evidence).unwrap()).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_animsmith"))
+            .args(["collection", "dashboard", "--collection"])
+            .arg(&input)
+            .arg("--output")
+            .arg(&html)
+            .arg("--authority")
+            .arg(&authority)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let view: Value = serde_json::from_slice(&fs::read(authority).unwrap()).unwrap();
+        assert!(validator.is_valid(&view));
+        assert_eq!(view["schema_version"], 2);
+        let refused = &view["view"]["sources"][1];
+        assert_eq!(refused["input"], evidence["sources"][1]["input"]["input"]);
+        assert_eq!(refused["loader"], "ready");
+        assert_eq!(
+            refused["result"],
+            json!({"state":"unavailable","reason":"sampling_limit_exceeded"})
+        );
+        assert_eq!(refused["takes"][0]["source_take_index"], 0);
+        assert_eq!(
+            refused["takes"][0]["availability"],
+            "sampling_limit_exceeded"
+        );
+        assert_eq!(refused["takes"][0]["outcome"], "unavailable");
+        assert_eq!(refused["takes"][0]["findings"], 0);
+        assert_eq!(
+            view["view"]["sources"][0]["result"],
+            json!({"state":"available"})
+        );
+        assert_eq!(view["summary"]["physical_takes"], 2);
+        let rendered = rendered_dashboard_state(&html, &json!({}));
+        assert!(
+            rendered["sources"]
+                .as_str()
+                .unwrap()
+                .contains("sampling_limit_exceeded")
+        );
+        assert!(
+            rendered["takes"]
+                .as_str()
+                .unwrap()
+                .contains("sampling_limit_exceeded")
+        );
+        assert_eq!(
+            view["summary"]["unavailable"],
+            usize::from(declare_refused_clip)
+        );
+    }
+}
+
+#[test]
 fn dashboard_binds_current_evidence_and_keeps_duplicate_takes_and_order() {
     let evidence = collection(&spike_path("collection.toml"));
     assert_eq!(evidence.status.code(), Some(0));
