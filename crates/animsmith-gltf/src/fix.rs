@@ -398,6 +398,9 @@ impl FixSession {
     /// neither rollback nor concurrent namespace transactions are guaranteed.
     /// On Unix, distinct JSON copies inherit captured source access permissions.
     /// In-place primary, GLB and sidecar permission behavior is unchanged.
+    /// Windows JSON copies preserve the captured read-only attribute; encrypted
+    /// JSON sources are refused for distinct copies to avoid plaintext output.
+    /// Other Windows metadata and alternate data streams are not copied.
     ///
     /// # Errors
     ///

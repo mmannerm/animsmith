@@ -40,6 +40,8 @@ pub(super) struct Origin {
     sources: Vec<Source>,
     #[cfg(unix)]
     primary_mode: Option<io::Result<u32>>,
+    #[cfg(windows)]
+    primary_attributes: Option<io::Result<u32>>,
 }
 
 #[derive(Default)]
@@ -55,6 +57,8 @@ struct Destination {
     reserved: bool,
     #[cfg(unix)]
     copy_mode: Option<u32>,
+    #[cfg(windows)]
+    copy_readonly: Option<bool>,
 }
 
 impl Destination {
@@ -99,6 +103,12 @@ impl Destination {
             if let Some(mode) = self.copy_mode {
                 use std::os::unix::fs::PermissionsExt;
                 file.set_permissions(fs::Permissions::from_mode(mode))?;
+            }
+            #[cfg(windows)]
+            if let Some(readonly) = self.copy_readonly {
+                let mut permissions = file.metadata()?.permissions();
+                permissions.set_readonly(readonly);
+                file.set_permissions(permissions)?;
             }
             Ok(())
         };
@@ -202,7 +212,14 @@ impl Origin {
                 fs::metadata(&input).map(|metadata| metadata.permissions().mode() & 0o7777)
             })
         };
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        let primary_attributes = json_primary.then(|| {
+            use std::os::windows::fs::MetadataExt;
+            metadata_handle(&input)
+                .and_then(|file| file.metadata())
+                .map(|metadata| metadata.file_attributes())
+        });
+        #[cfg(not(any(unix, windows)))]
         let _ = json_primary;
         let root = parent(&input);
         let mut paths = vec![(Role::Primary, input.clone())];
@@ -245,6 +262,8 @@ impl Origin {
             sources,
             #[cfg(unix)]
             primary_mode,
+            #[cfg(windows)]
+            primary_attributes,
         })
     }
 
@@ -349,6 +368,8 @@ impl Origin {
                             reserved: true,
                             #[cfg(unix)]
                             copy_mode: None,
+                            #[cfg(windows)]
+                            copy_readonly: None,
                         });
                     }
                     // A prior reservation may have created this alias. Resolve
@@ -388,6 +409,30 @@ impl Origin {
                     .iter()
                     .any(|entry| !entry.output && entry.role == Role::Primary)
         });
+        #[cfg(windows)]
+        let copy_readonly = if !in_place {
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_ATTRIBUTE_ENCRYPTED, FILE_ATTRIBUTE_READONLY,
+            };
+            self.primary_attributes
+                .as_ref()
+                .map(|attributes| {
+                    let attributes = attributes.as_ref().map_err(|error| {
+                        WriteError::RepairPublication(format!(
+                            "cannot read captured source attributes: {error}"
+                        ))
+                    })?;
+                    if attributes & FILE_ATTRIBUTE_ENCRYPTED != 0 {
+                        return Err(WriteError::RepairPublication(
+                            "encrypted JSON source cannot be copied by repair; use an EFS-aware copy workflow or repair the original in place".into(),
+                        ));
+                    }
+                    Ok(attributes & FILE_ATTRIBUTE_READONLY != 0)
+                })
+                .transpose()?
+        } else {
+            None
+        };
         for group in groups.values() {
             let mut outputs = group.iter().filter(|entry| entry.output);
             let Some(first) = outputs.next() else {
@@ -435,6 +480,8 @@ impl Origin {
                 reserved: false,
                 #[cfg(unix)]
                 copy_mode: None,
+                #[cfg(windows)]
+                copy_readonly: None,
             });
         }
         #[cfg(unix)]
@@ -443,6 +490,12 @@ impl Origin {
                 if destination.role == Role::Primary {
                     destination.copy_mode = primary_mode;
                 }
+            }
+        }
+        #[cfg(windows)]
+        for destination in &mut destinations.files {
+            if destination.role == Role::Primary {
+                destination.copy_readonly = copy_readonly;
             }
         }
         Ok(())
@@ -716,6 +769,30 @@ mod tests {
             assert_eq!(fs::read(&output).unwrap(), b"unrelated replacement");
             assert_eq!(fs::read(&moved).unwrap(), b"");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn captured_encryption_flag_refuses_json_copies_before_publication() {
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_ENCRYPTED;
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("source.gltf");
+        let bytes = br#"{"asset":{"version":"2.0"}}"#;
+        fs::write(&input, bytes).unwrap();
+        let gltf = gltf::Gltf::from_slice(bytes).unwrap();
+        let mut origin = Origin::capture(&input, &gltf, true).unwrap();
+        // Supply the documented OS metadata bit without creating EFS keys in
+        // a developer's account. This tests admission, not EFS encryption I/O.
+        origin.primary_attributes = Some(Ok(FILE_ATTRIBUTE_ENCRYPTED));
+        let output = dir.path().join("output.gltf");
+        let error = origin.preflight(&output, &gltf).err().unwrap();
+        assert!(error.to_string().contains("encrypted JSON source"));
+        assert!(!output.exists());
+        fs::write(&output, b"previous output").unwrap();
+        assert!(origin.preflight(&output, &gltf).is_err());
+        assert_eq!(fs::read(&output).unwrap(), b"previous output");
+        assert_eq!(fs::read(&input).unwrap(), bytes);
+        assert!(origin.preflight(&input, &gltf).is_ok());
     }
 
     #[cfg(windows)]

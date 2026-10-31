@@ -828,6 +828,11 @@ restricted before writing and receive the exact source mode only after a
 successful overwrite. In-place primary, GLB and sidecar permission behavior
 is unchanged.
 
+Windows JSON copies preserve the captured read-only attribute. Distinct copies
+of encrypted JSON sources are refused to avoid emitting plaintext; use an
+EFS-aware copy workflow or repair the original in place. Other Windows metadata
+and alternate data streams are not copied.
+
 ## Engine profiles and importer settings
 
 An optional `[engine]` section selects one exact, versioned importer contract.

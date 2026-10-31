@@ -540,6 +540,40 @@ fn readonly_source_with_missing_images_needs_no_source_directory_probe() {
     assert_eq!(fs::read_dir(&src).unwrap().count(), 2);
 }
 
+#[cfg(windows)]
+#[test]
+fn json_copies_preserve_captured_readonly_attribute() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = source(dir.path(), false, 0);
+    let original = fs::read(&input).unwrap();
+    let mut permissions = fs::metadata(&input).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&input, permissions.clone()).unwrap();
+    let session = session(&input);
+    permissions.set_readonly(false);
+    fs::set_permissions(&input, permissions.clone()).unwrap();
+    let out = dir.path().join("out");
+    fs::create_dir(&out).unwrap();
+    let output = out.join("fixed.gltf");
+    for existing in [false, true] {
+        if existing {
+            fs::set_permissions(&output, permissions.clone()).unwrap();
+            fs::write(&output, b"previous output").unwrap();
+        }
+        session.write(&input, &output).unwrap();
+        assert!(fs::metadata(&output).unwrap().permissions().readonly());
+        assert_eq!(fs::read(&output).unwrap(), original);
+        assert_eq!(fs::read(out.join("first.bin")).unwrap(), repaired_payload());
+        assert_eq!(fs::read(&input).unwrap(), original);
+        assert_eq!(fs::read(dir.path().join("first.bin")).unwrap(), payload());
+    }
+    // In-place repair keeps the current file's attribute, rather than applying
+    // a distinct copy's captured metadata policy to the source.
+    session.write(&input, &input).unwrap();
+    assert!(!fs::metadata(&input).unwrap().permissions().readonly());
+    fs::set_permissions(&output, permissions).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn existing_in_place_files_need_no_parent_creation_permission() {
