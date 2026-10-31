@@ -50,7 +50,14 @@ fn evaluate(
     floor: f64,
     current: bool,
 ) -> Result<animsmith_core::CheckEvaluation, EvaluationError> {
-    let document = document(track);
+    evaluate_document(document(track), floor, current)
+}
+
+fn evaluate_document(
+    document: Document,
+    floor: f64,
+    current: bool,
+) -> Result<animsmith_core::CheckEvaluation, EvaluationError> {
     let config: Config = serde_json::from_value(serde_json::json!({
         "clips": {"curve": {"animates_bones": ["joint"]}},
         "checks": {"frozen-bone": {"min_rotation_deg": floor}}
@@ -179,4 +186,46 @@ fn malformed_cubic_cannot_be_proven_flat_and_inactive_check_does_not_refuse() {
     .unwrap();
     let ctx = CheckCtx::new(&grids, &roles, &config);
     assert!(evaluate_checks_v2(&ctx, &all_checks(), CheckSelection::All).is_ok());
+}
+
+#[test]
+fn conclusive_keys_survive_a_separate_nonfinite_tangent() {
+    let mut track = cubic(0.0, 0.0);
+    if let TrackValues::Quats(values) = &mut track.values {
+        values[4] = Quat::from_xyzw(0.0, 0.0, 1.0, 1.0); // exactly 90 degrees
+        values[0].z = f32::NAN; // unused incoming tangent, owned by nan
+    }
+    for current in [false, true] {
+        let result = evaluate(track.clone(), 1.0, current).unwrap();
+        assert_eq!(
+            result.evaluation(),
+            animsmith_core::EvaluationState::Complete
+        );
+        assert!(result.findings().is_empty());
+    }
+}
+
+#[test]
+fn another_tracks_motion_witness_prevents_an_inconclusive_bone_decision() {
+    let unknown = cubic(4.0, 4.0);
+    let moving = Track {
+        interpolation: Interpolation::Linear,
+        values: TrackValues::Quats(vec![Quat::IDENTITY, Quat::from_xyzw(0.0, 0.0, 1.0, 1.0)]),
+        ..unknown.clone()
+    };
+    for current in [false, true] {
+        for tracks in [
+            vec![unknown.clone(), moving.clone()],
+            vec![moving.clone(), unknown.clone()],
+        ] {
+            let mut document = document(unknown.clone());
+            document.clips[0].tracks = tracks;
+            let result = evaluate_document(document, 1.0, current).unwrap();
+            assert_eq!(
+                result.evaluation(),
+                animsmith_core::EvaluationState::Complete
+            );
+            assert!(result.findings().is_empty());
+        }
+    }
 }

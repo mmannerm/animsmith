@@ -316,7 +316,10 @@ only after an explicit `note`, `warn`, or `error` severity.
   bones themselves belong to `missing-bones`. Inconclusive cubic evidence
   returns an evaluation error (CLI exit 2), with the clip and bone identified,
   rather than a complete, clean or frozen result. Lint/collection output is
-  withheld and prior report files remain unchanged.
+  withheld and prior report files remain unchanged. To run the remaining
+  checks, explicitly select them or set `[checks.frozen-bone] severity = "off"`;
+  that omits this requirement rather than establishing motion. `--allow` only
+  suppresses findings and does not suppress evaluation errors.
 - Remediation and boundary: correct the source clip, wrong slice, or masked-out
   track in the DCC/export pipeline.
 - Runtime and references: the visible symptom is a limb that stays pinned,

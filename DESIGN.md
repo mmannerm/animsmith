@@ -141,7 +141,7 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   may remain), `1` at least one error-severity finding, any
   `required_prediction_unavailable` facet, pending repairs under
   `fix --dry-run`, or any producer refusal established as a fact about source
-  asset bytes, `2` operator/tool error (unreadable declared file, bad config or
+  asset bytes, `2` operator/tool error (inconclusive check evaluation, unreadable declared file, bad config or
   recipe syntax, unsafe/unwritable path, or publication failure).
   `--deny-warnings` promotes warnings to errors; severity and `--allow` do not
   suppress an emitted required-unavailable facet.
@@ -3585,7 +3585,8 @@ has already passed all control-plane validation:
 - exit `2` with no collection envelope for an unreadable or malformed manifest,
   unsupported schema identity, budget violation, duplicate/unsafe declaration,
   existing non-regular source target, missing/unreadable/malformed selected
-  config, serialization failure, or other control/tool error;
+  config, serialization failure, an inconclusive check evaluation (see §5),
+  or other control/tool error;
 - exit `1` with a schema-complete collection envelope when a lexically safe declared
   source is missing or unreadable, when readable bytes are unsupported or
   malformed, when a digest/take binding mismatches, or when another required

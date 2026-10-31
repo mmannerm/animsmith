@@ -221,3 +221,61 @@ fn inconclusive_report_checks_preserve_prior_single_and_comparison_output() {
     assert_eq!(std::fs::read(input).unwrap(), originals[0]);
     assert_eq!(std::fs::read(good).unwrap(), originals[1]);
 }
+
+#[test]
+fn keyed_cubic_motion_keeps_the_existing_nan_diagnostic() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("animsmith.toml");
+    std::fs::write(&config, "[clips.curve]\nanimates_bones = [\"joint\"]\n").unwrap();
+    let input = dir.path().join("moving-nan.glb");
+    source(&input, 0.0, 0.0);
+    // Mutate the actual GLB payload, bypassing the writer's finite-output
+    // admission. The output accessor's second key is exactly 90 degrees;
+    // its first (unused) incoming tangent independently contains NaN.
+    let mut raw = std::fs::read(&input).unwrap();
+    let json_len = u32::from_le_bytes(raw[12..16].try_into().unwrap()) as usize;
+    let json: Value = serde_json::from_slice(&raw[20..20 + json_len]).unwrap();
+    let output_accessor = json["animations"][0]["samplers"][0]["output"]
+        .as_u64()
+        .unwrap() as usize;
+    let accessor = &json["accessors"][output_accessor];
+    assert_eq!(accessor["count"], 6);
+    let view = accessor["bufferView"].as_u64().unwrap() as usize;
+    let values = 28
+        + json_len
+        + json["bufferViews"][view]["byteOffset"]
+            .as_u64()
+            .unwrap_or(0) as usize
+        + accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+    raw[values + 4 * 16 + 8..values + 4 * 16 + 12].copy_from_slice(&1.0f32.to_le_bytes());
+    raw[values + 8..values + 12].copy_from_slice(&f32::NAN.to_le_bytes());
+    std::fs::write(&input, &raw).unwrap();
+    let output = command(&config)
+        .arg("lint")
+        .arg(&input)
+        .args(["--select", "nan,frozen-bone", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let checks = json["files"][0]["checks"].as_array().unwrap();
+    let frozen = checks
+        .iter()
+        .find(|check| check["check_id"] == "frozen-bone")
+        .unwrap();
+    assert_eq!(frozen["evaluation"], "complete");
+    assert!(frozen["findings"].as_array().unwrap().is_empty());
+    let nan = checks
+        .iter()
+        .find(|check| check["check_id"] == "nan")
+        .unwrap();
+    assert_eq!(nan["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(nan["findings"][0]["clip"], "curve");
+    assert_eq!(nan["findings"][0]["bone"], "joint");
+    assert_eq!(std::fs::read(input).unwrap(), raw);
+}

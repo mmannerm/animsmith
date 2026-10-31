@@ -110,6 +110,13 @@ fn rotation_evidence(track: &Track, floor: f64) -> Result<Option<f64>, &'static 
     if track.property != Property::Rotation || track.interpolation != Interpolation::CubicSpline {
         return Ok(rotation_range_deg(track));
     }
+    // A usable authored key is already conclusive, even when a separate
+    // source defect belongs to nan/time-monotonic/quat-norm. Only a flat or
+    // interior-curve proof needs the complete cubic representation below.
+    let keyed = rotation_range_deg(track);
+    if keyed.is_some_and(|degrees| degrees >= floor) {
+        return Ok(keyed);
+    }
     let TrackValues::Quats(values) = &track.values else {
         return Err("cubic rotation has no quaternion values");
     };
@@ -132,10 +139,6 @@ fn rotation_evidence(track: &Track, floor: f64) -> Result<Option<f64>, &'static 
         .any(|[_, value, _]| quaternion_angular_delta(*value, *value).is_none())
     {
         return Err("cubic rotation has an undefined zero quaternion key");
-    }
-    let keyed = rotation_range_deg(track).ok_or("cubic rotation has no usable anchor")?;
-    if keyed >= floor {
-        return Ok(Some(keyed));
     }
     let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
     // Equal nonzero raw values and zero participating tangents give exactly
