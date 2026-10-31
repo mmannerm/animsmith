@@ -11317,7 +11317,6 @@ fn report_runs_the_production_bevy_addressability_check() {
         .arg(&input)
         .args(["--output"])
         .arg(&report)
-        .args(["--clip", "missing-normalized-clip"])
         .output()
         .expect("renders Bevy addressability report");
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
@@ -12847,5 +12846,327 @@ fn fix_ownership_preserves_external_aliases_and_repairs_distinct_resources() {
                 }
             }
         }
+    }
+}
+
+#[cfg(feature = "report")]
+mod report_current_engine {
+    use super::*;
+    use std::path::Path;
+
+    fn payload(html: &str, id: &str) -> Value {
+        let marker = format!("id=\"{id}\">");
+        let body = html
+            .split_once(&marker)
+            .unwrap()
+            .1
+            .split_once("</script>")
+            .unwrap()
+            .0;
+        serde_json::from_str(body).unwrap()
+    }
+
+    fn lint(input: &Path, config: &Path) -> Value {
+        let output = animsmith()
+            .arg("--config")
+            .arg(config)
+            .args(["lint", "--format", "json"])
+            .arg(input)
+            .output()
+            .unwrap();
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "{}",
+            stderr(&output)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["files"][0].clone()
+    }
+
+    fn report(input: &Path, config: &Path, args: &[&str]) -> Value {
+        let directory = unique_temp_dir("current-report-engine");
+        let path = directory.path().join("report.html");
+        let output = animsmith()
+            .arg("--config")
+            .arg(config)
+            .arg("report")
+            .arg(input)
+            .arg("-o")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let html = std::fs::read_to_string(path).unwrap();
+        assert!(html.contains("Whole-input engine evidence"));
+        payload(&html, "report-data")
+    }
+
+    fn assert_exact(lint: &Value, engine: &Value) {
+        let expected: Vec<_> = lint["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|check| check["check_id"].as_str().unwrap().starts_with("engine-"))
+            .cloned()
+            .collect();
+        assert_eq!(engine["checks"], json!(expected));
+        assert_eq!(engine["provenance"], lint["prediction_provenance"]);
+        assert_eq!(engine["projection"]["kind"], "animsmith-engine-display-v1");
+        assert_eq!(engine["projection"]["scope"], "whole_input");
+    }
+
+    fn facets<'a>(data: &'a Value, id: &str) -> Vec<&'a Value> {
+        data["engine_evidence"]["projection"]["facets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|facet| facet["check_id"] == id)
+            .collect()
+    }
+
+    #[test]
+    fn current_v3_source_only_and_partial_settings_survive_without_a_clip_selector() {
+        let dir = unique_temp_dir("current-report-v3");
+        let input = dir.path().join("source-only.gltf");
+        let config = write_bevy_config(dir.path(), "source-only");
+        write_source_animation_inventory_gltf(&input, &[Some("walk")]);
+        let data = report(&input, &config, &[]);
+        assert!(data["clips"].as_array().unwrap().is_empty());
+        assert_exact(&lint(&input, &config), &data["engine_evidence"]);
+        let rows = facets(&data, "engine-addressability");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["state"], "available");
+        assert_eq!(rows[0]["scope"]["subject"], "Animation0");
+        assert_eq!(
+            data["engine_evidence"]["provenance"]["schema"],
+            "urn:animsmith:prediction-provenance:3"
+        );
+        assert_eq!(
+            report(&input, &config, &["--evidence-only"])["engine_evidence"],
+            data["engine_evidence"]
+        );
+
+        write_source_animation_inventory_gltf(&input, &vec![None; 4097]);
+        let data = report(&input, &config, &[]);
+        assert_exact(&lint(&input, &config), &data["engine_evidence"]);
+        assert_eq!(
+            data["engine_evidence"]["provenance"]["settings"]["clip_coverage"]["reason"],
+            "actual_clip_rows_exceeded"
+        );
+        assert_eq!(
+            facets(&data, "engine-addressability")[0]["reasons"],
+            json!(["raw_source_incomplete", "resolved_settings_overflow"])
+        );
+    }
+
+    #[test]
+    fn selecting_a_valid_ordinary_clip_keeps_other_clip_engine_evidence() {
+        let dir = unique_temp_dir("current-report-selected-clip");
+        let input = dir.path().join("two-clips.gltf");
+        let mut source: Value =
+            serde_json::from_slice(&std::fs::read(fixture("rig.gltf")).unwrap()).unwrap();
+        let mut other = source["animations"][0].clone();
+        other["name"] = json!("other");
+        source["animations"].as_array_mut().unwrap().push(other);
+        write_json(&input, &source);
+        let config = write_bevy_config(dir.path(), "selected-clip");
+        let all = report(&input, &config, &[]);
+        let selected = report(&input, &config, &["--clip", "walk"]);
+        assert_eq!(all["clips"].as_array().unwrap().len(), 2);
+        assert_eq!(selected["clips"].as_array().unwrap().len(), 1);
+        assert_eq!(selected["clips"][0]["name"], "walk");
+        assert_exact(&lint(&input, &config), &selected["engine_evidence"]);
+        assert_eq!(selected["engine_evidence"], all["engine_evidence"]);
+        let subjects: Vec<_> = facets(&selected, "engine-addressability")
+            .iter()
+            .map(|row| row["scope"]["subject"].as_str().unwrap())
+            .collect();
+        assert_eq!(subjects, ["Animation0", "Animation1"]);
+    }
+
+    #[test]
+    fn current_v5_machine_results_and_comparison_keep_each_side_exact() {
+        let dir = unique_temp_dir("current-report-v5");
+        let input = dir.path().join("source.glb");
+        write_clean_glb(&input);
+        let config = write_bevy_v2_config(dir.path(), "unit");
+        let data = report(&input, &config, &[]);
+        assert_exact(&lint(&input, &config), &data["engine_evidence"]);
+        let units = facets(&data, "engine-unit-scale");
+        let file = units
+            .iter()
+            .find(|row| row["scope"]["code"] == "engine-unit-scale:file-unit")
+            .unwrap();
+        assert_eq!(file["result"]["kind"], "unit_mapping");
+        assert_eq!(
+            file["result"]["result"]["exact_target_units_per_source_unit"],
+            json!({"numerator":1,"denominator":1})
+        );
+        assert_eq!(
+            data["engine_evidence"]["provenance"]["schema"],
+            "urn:animsmith:prediction-provenance:5"
+        );
+
+        let input = dir.path().join("channels.gltf");
+        write_track_support_gltf(&input, &[1]);
+        let config = write_bevy_v3_track_config(dir.path(), "drop", false, None);
+        let data = report(&input, &config, &[]);
+        assert_exact(&lint(&input, &config), &data["engine_evidence"]);
+        let rows = facets(&data, "engine-track-support");
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(row["result"]["result"]["disposition"], "dropped");
+            assert_eq!(
+                row["result"]["result"]["controlling_gate"],
+                "bevy_animation_feature"
+            );
+        }
+
+        let enabled = write_bevy_v3_track_config(dir.path(), "enabled", true, Some(true));
+        let data = report(&input, &enabled, &[]);
+        assert_exact(&lint(&input, &enabled), &data["engine_evidence"]);
+        for row in facets(&data, "engine-track-support") {
+            assert_eq!(row["state"], "required_prediction_unavailable");
+            assert_eq!(
+                row["reasons"],
+                json!(["runtime_animation_survival_unavailable"])
+            );
+        }
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets");
+        let before = root.join("report-comparison-before.glb");
+        let after = root.join("report-comparison-after.glb");
+        let path = dir.path().join("comparison.html");
+        let mut previous = None;
+        for evidence_only in [false, true] {
+            let mut command = animsmith();
+            command
+                .arg("--config")
+                .arg(&config)
+                .arg("report")
+                .arg(&before)
+                .arg("--compare-after")
+                .arg(&after)
+                .args([
+                    "--before-clip",
+                    "acceptance-matrix",
+                    "--after-clip",
+                    "acceptance-matrix",
+                ])
+                .arg("-o")
+                .arg(&path);
+            if evidence_only {
+                command.arg("--evidence-only");
+            }
+            let output = command.output().unwrap();
+            assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+            let data = payload(
+                &std::fs::read_to_string(&path).unwrap(),
+                "comparison-report-data",
+            );
+            assert_eq!(data["kind"], "animsmith-comparison-v2");
+            for (side, input) in [("before", &before), ("after", &after)] {
+                assert_exact(&lint(input, &config), &data[side]["engine_evidence"]);
+            }
+            let engines = json!([
+                data["before"]["engine_evidence"],
+                data["after"]["engine_evidence"]
+            ]);
+            if let Some(previous) = previous {
+                assert_eq!(engines, previous);
+            }
+            previous = Some(engines);
+        }
+    }
+
+    #[cfg(feature = "fbx")]
+    #[test]
+    fn unreal_required_unavailable_and_unity_v6_routing_are_not_silently_empty() {
+        let dir = unique_temp_dir("current-report-fbx");
+        let input = dir.path().join("take.fbx");
+        std::fs::write(&input, RIGGED_TRIANGLE_FBX).unwrap();
+        let config = write_config(
+            dir.path(),
+            "unreal.toml",
+            "[engine]\nprofile = \"unreal\"\nprofile_revision = 1\nengine_version = \"5.8\"\nimporter = \"fbx-importer\"\n",
+        );
+        let data = report(&input, &config, &[]);
+        assert_exact(&lint(&input, &config), &data["engine_evidence"]);
+        let rows = facets(&data, "engine-clip-boundary");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["state"], "required_prediction_unavailable");
+        assert_eq!(
+            rows[0]["reasons"],
+            json!(["animsmith:source_declared_time_mode_unavailable"])
+        );
+
+        let config = write_config(
+            dir.path(),
+            "unity.toml",
+            r#"
+[rig.roles]
+root = "root"
+[engine]
+profile = "unity-generic"
+profile_revision = 2
+engine_version = "6000.3"
+importer = "fbx-model-importer"
+[engine.settings]
+animation_type = "generic"
+avatar_setup = "create_from_this_model"
+import_animation = true
+root_motion_source = "root"
+[clips."*"]
+movement_owner_xz = "animation"
+[clips."*".engine_settings]
+root_rotation = "bake"
+root_position_y = "bake"
+root_position_xz = "extract"
+"#,
+        );
+        let data = report(&input, &config, &[]);
+        assert_exact(&lint(&input, &config), &data["engine_evidence"]);
+        assert_eq!(
+            data["engine_evidence"]["provenance"]["schema"],
+            "urn:animsmith:prediction-provenance:6"
+        );
+        let rows = facets(&data, "engine-root-motion");
+        assert_eq!(rows.len(), 1, "{data:#}");
+        assert_eq!(rows[0]["state"], "available", "{rows:#?}");
+        assert_eq!(rows[0]["result"]["kind"], "root_motion_routing");
+        assert_eq!(rows[0]["result"]["result"]["compatibility"], "compatible");
+        assert_eq!(
+            rows[0]["result"]["result"]["importer_disposition"],
+            "stored_as_root_motion"
+        );
+        let missing_root = write_config(
+            dir.path(),
+            "unity-missing-root.toml",
+            &std::fs::read_to_string(&config).unwrap().replace(
+                "root_motion_source = \"root\"",
+                "root_motion_source = \"absent\"",
+            ),
+        );
+        let unavailable = report(&input, &missing_root, &[]);
+        assert_exact(
+            &lint(&input, &missing_root),
+            &unavailable["engine_evidence"],
+        );
+        let rows = facets(&unavailable, "engine-root-motion");
+        assert_eq!(rows[0]["state"], "required_prediction_unavailable");
+        assert_eq!(rows[0]["reasons"], json!(["source_selector_no_match"]));
+        let data = report(&fixture("rig.gltf"), &config, &[]);
+        assert_exact(
+            &lint(&fixture("rig.gltf"), &config),
+            &data["engine_evidence"],
+        );
+        let check = data["engine_evidence"]["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|check| check["check_id"] == "engine-root-motion")
+            .unwrap();
+        assert_eq!(check["applicability"], "not_applicable");
+        assert!(check.get("prediction").is_none());
     }
 }

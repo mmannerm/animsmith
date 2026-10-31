@@ -1,6 +1,6 @@
 //! [`render`] turns [`animsmith_core::MetricGrids`],
-//! [`animsmith_core::ResolvedRoles`], typed check evaluations, and optional
-//! engine-prediction provenance into a self-contained HTML report.
+//! [`animsmith_core::ResolvedRoles`], a [`LoadedSource`], and validated
+//! current [`LintFileReportV19`] evidence into a self-contained HTML report.
 //! The viewer is driven by the same [`animsmith_core::PoseGrid`] samples
 //! the checks judged.
 //!
@@ -14,15 +14,16 @@
 //!
 //! ```no_run
 //! fn write_report(
-//! doc: &animsmith_core::Document,
+//! source: &animsmith_core::LoadedSource,
 //! roles: &animsmith_core::ResolvedRoles,
-//! checks: &[animsmith_core::CheckEvaluation],
+//! evidence: &animsmith_core::LintFileReportV19,
 //! config: &animsmith_core::Config,
-//! ) -> std::io::Result<()> {
-//! let grids = animsmith_core::MetricGrids::new(doc);
-//! let inputs = animsmith_report::ReportInputs::new(&grids, roles, checks, config);
-//! let html = animsmith_report::render(inputs);
-//! std::fs::write("report.html", html)
+//! ) -> Result<(), Box<dyn std::error::Error>> {
+//! let grids = animsmith_core::MetricGrids::new(source.document());
+//! let inputs = animsmith_report::ReportInputs::new(&grids, roles, source, evidence, config);
+//! let html = animsmith_report::render(inputs)?;
+//! std::fs::write("report.html", html)?;
+//! Ok(())
 //! }
 //! ```
 //!
@@ -149,9 +150,15 @@ use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::sample::PoseGrid;
 use animsmith_core::stance_support::{StanceSideV1, resolve_stance_support_v1};
 use animsmith_core::{
-    CheckEvaluation, Config, GaitGroup, LoadedSource, PredictionProvenanceV1,
-    SourceObservationStateV1, SourceSetCoverageStateV1,
+    CheckEvaluation, Config, GaitGroup, LintFileReportV19, LoadedSource, SourceObservationStateV1,
+    SourceSetCoverageStateV1,
 };
+#[cfg(test)]
+mod test_support;
+
+mod engine_evidence;
+use engine_evidence::EngineEvidence;
+
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -185,7 +192,6 @@ const MAX_COMPARISON_JSON_BYTES: usize = 48 * 1024 * 1024;
 const MAX_COMPARISON_INPUT_TEXT_BYTES: usize = 1024 * 1024;
 const MAX_COMPARISON_FINDINGS_PER_SIDE: usize = 4096;
 const MAX_COMPARISON_GAPS_PER_SIDE: usize = 4096;
-const MAX_COMPARISON_PREDICTION_FACETS_PER_SIDE: usize = 4096;
 const MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE: usize = 8192;
 const MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE: usize = 4 * 1024 * 1024;
 // Four f64 spellings, their keys and JSON punctuation fit well below this
@@ -251,22 +257,20 @@ pub struct ComparisonSide<'a> {
     pub grids: &'a MetricGrids<'a>,
     /// Resolved roles for this side.
     pub roles: &'a ResolvedRoles,
-    /// Typed check evaluations for this side.
-    pub checks: &'a [CheckEvaluation],
-    /// Exact configuration used to produce `checks`.
+    /// Validated current evidence from the analysis of this source.
+    pub evidence: &'a LintFileReportV19,
+    /// Exact configuration used to produce the evidence.
     ///
     /// The comparison reuses its effective `foot-slide` contact threshold
     /// when projecting typed stance scopes into sampled support runs.
     pub config: &'a Config,
-    /// Optional engine-prediction provenance for this side.
-    pub prediction_provenance: Option<&'a PredictionProvenanceV1>,
     /// Exact, caller-declared clip name to compare.
     pub clip: &'a str,
 }
 
-/// Refusal returned before a comparison report is published.
+/// Refusal returned before report HTML is produced.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum ComparisonError {
+pub enum ReportError {
     /// The declared clip was absent from one input.
     #[error("{side} clip {clip:?} was not found")]
     ClipNotFound {
@@ -372,7 +376,7 @@ pub enum ComparisonError {
     },
     /// One selected side exceeded a fixed report row budget before report
     /// values were allocated.
-    #[error("{side} comparison {kind} requires {found} rows, above the {limit}-row limit")]
+    #[error("{side} report {kind} requires {found} rows, above the {limit}-row limit")]
     ReportRowsExceeded {
         /// Input side exceeding the bound.
         side: &'static str,
@@ -384,15 +388,15 @@ pub enum ComparisonError {
         limit: usize,
     },
     /// One selected side exceeded the fixed aggregate report-text budget.
-    #[error("{side} comparison report text exceeds the {limit}-byte limit")]
+    #[error("{side} report text exceeds the {limit}-byte limit")]
     ReportTextWorkExceeded {
         /// Input side exceeding the bound.
         side: &'static str,
         /// Fixed aggregate text limit.
         limit: usize,
     },
-    /// Prediction evidence was not bound to the exact side authority supplied
-    /// to the public comparison boundary.
+    /// Evidence was not bound to the exact source authority supplied
+    /// to the public report boundary.
     #[error("{side} prediction authority is invalid: {detail}")]
     PredictionAuthorityMismatch {
         /// Input side whose prediction evidence was inconsistent.
@@ -413,20 +417,19 @@ pub fn preflight_comparison(
     after: &animsmith_core::Document,
     after_clip_name: &str,
     options: ReportOptions,
-) -> Result<ComparisonPreflight, ComparisonError> {
+) -> Result<ComparisonPreflight, ReportError> {
     validate_skeletons(before, after)?;
     input_text_bytes(before, "before")?;
     input_text_bytes(after, "after")?;
     let before_clip = select_clip(before, before_clip_name, "before")?;
     let after_clip = select_clip(after, after_clip_name, "after")?;
-    let before_frames = metric_frame_count(before_clip.1).ok_or_else(|| {
-        ComparisonError::UnavailableSampleGrid {
+    let before_frames =
+        metric_frame_count(before_clip.1).ok_or_else(|| ReportError::UnavailableSampleGrid {
             side: "before",
             clip: before_clip_name.to_owned(),
-        }
-    })?;
+        })?;
     let after_frames =
-        metric_frame_count(after_clip.1).ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+        metric_frame_count(after_clip.1).ok_or_else(|| ReportError::UnavailableSampleGrid {
             side: "after",
             clip: after_clip_name.to_owned(),
         })?;
@@ -457,7 +460,7 @@ pub fn preflight_comparison_sources(
     after: &LoadedSource,
     after_clip_name: &str,
     options: ReportOptions,
-) -> Result<ComparisonPreflight, ComparisonError> {
+) -> Result<ComparisonPreflight, ReportError> {
     let preflight = preflight_comparison(
         before.document(),
         before_clip_name,
@@ -468,7 +471,7 @@ pub fn preflight_comparison_sources(
     let before_identity = complete_source_closure_identity(before, "before")?;
     let after_identity = complete_source_closure_identity(after, "after")?;
     if before_identity == after_identity {
-        return Err(ComparisonError::IdenticalAuthorities);
+        return Err(ReportError::IdenticalAuthorities);
     }
     validate_source_authored_clip_name(before, preflight.before_clip_index, "before")?;
     validate_source_authored_clip_name(after, preflight.after_clip_index, "after")?;
@@ -494,7 +497,7 @@ pub fn render_comparison(
     before: ComparisonSide<'_>,
     after: ComparisonSide<'_>,
     options: ReportOptions,
-) -> Result<String, ComparisonError> {
+) -> Result<String, ReportError> {
     let before_doc = before.grids.document();
     let after_doc = after.grids.document();
     validate_side_authority(before, "before")?;
@@ -521,14 +524,14 @@ pub fn render_comparison(
     let before_grid = before
         .grids
         .grid(preflight.before_clip_index)
-        .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+        .ok_or_else(|| ReportError::UnavailableSampleGrid {
             side: "before",
             clip: before.clip.to_owned(),
         })?;
     let after_grid = after
         .grids
         .grid(preflight.after_clip_index)
-        .ok_or_else(|| ComparisonError::UnavailableSampleGrid {
+        .ok_or_else(|| ReportError::UnavailableSampleGrid {
             side: "after",
             clip: after.clip.to_owned(),
         })?;
@@ -551,7 +554,7 @@ pub fn render_comparison(
         options,
     )?;
     let data = json!({
-        "kind": "animsmith-comparison-v1",
+        "kind": "animsmith-comparison-v2",
         "correspondence": {
             "kind": "explicit_clip_names",
             "before_clip": before.clip,
@@ -617,8 +620,8 @@ pub fn render_comparison(
          <main><section class=\"side\" id=\"before-panel\"><span id=\"before-{before_clip_anchor}\"></span><h2 id=\"clip-before\">Before</h2><p id=\"before-identity\"></p><h3>Judged pose at the shared phase</h3>{before_pose}<p id=\"before-pose-context\" class=\"context-label\"></p></section>\n\
          <section class=\"side\" id=\"after-panel\"><span id=\"after-{after_clip_anchor}\"></span><h2 id=\"clip-after\">After</h2><p id=\"after-identity\"></p><h3>Judged pose at the shared phase</h3>{after_pose}<p id=\"after-pose-context\" class=\"context-label\"></p></section>\n\
          <section class=\"side shared-chart\" id=\"root-panel\"><h2 id=\"root-panel-title\">Root path, before over after</h2>{shared_pose}</section>\n\
-         <section class=\"side\" id=\"before-evidence\"><h2>Before evidence</h2><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"before-predictions\"></pre></section>\n\
-         <section class=\"side\" id=\"after-evidence\"><h2>After evidence</h2><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Prediction provenance</h3><pre id=\"after-predictions\"></pre></section></main>\n\
+         <section class=\"side\" id=\"before-evidence\"><h2>Before evidence</h2><h3>Role trajectories</h3>{before_trails}<h3>Gait and sampled stance</h3>{before_gait}<h3>Acceptance context</h3><ul id=\"before-contexts\"></ul><h3>Findings</h3><ul id=\"before-findings\"></ul><h3>Coverage gaps</h3><ul id=\"before-gaps\"></ul><h3>Whole-input engine evidence</h3><pre id=\"before-predictions\"></pre></section>\n\
+         <section class=\"side\" id=\"after-evidence\"><h2>After evidence</h2><h3>Role trajectories</h3>{after_trails}<h3>Gait and sampled stance</h3>{after_gait}<h3>Acceptance context</h3><ul id=\"after-contexts\"></ul><h3>Findings</h3><ul id=\"after-findings\"></ul><h3>Coverage gaps</h3><ul id=\"after-gaps\"></ul><h3>Whole-input engine evidence</h3><pre id=\"after-predictions\"></pre></section></main>\n\
          <script>{shared_js}</script><script type=\"application/json\" id=\"comparison-report-data\">{data}</script><script>{COMPARISON_VIEWER_JS}</script></body></html>\n"
     ))
 }
@@ -627,20 +630,20 @@ fn select_clip<'a>(
     doc: &'a animsmith_core::Document,
     name: &str,
     side: &'static str,
-) -> Result<(usize, &'a animsmith_core::Clip), ComparisonError> {
+) -> Result<(usize, &'a animsmith_core::Clip), ReportError> {
     let mut matches = doc
         .clips
         .iter()
         .enumerate()
         .filter(|(_, clip)| clip.name == name);
     let Some(found) = matches.next() else {
-        return Err(ComparisonError::ClipNotFound {
+        return Err(ReportError::ClipNotFound {
             side,
             clip: name.to_owned(),
         });
     };
     if matches.next().is_some() {
-        return Err(ComparisonError::AmbiguousClip {
+        return Err(ReportError::AmbiguousClip {
             side,
             clip: name.to_owned(),
         });
@@ -651,35 +654,32 @@ fn select_clip<'a>(
 fn validate_side_authority(
     side: ComparisonSide<'_>,
     side_name: &'static str,
-) -> Result<(), ComparisonError> {
-    if !std::ptr::eq(side.source.document(), side.grids.document()) {
-        return Err(ComparisonError::AuthorityDocumentMismatch { side: side_name });
-    }
-    Ok(())
+) -> Result<(), ReportError> {
+    engine_evidence::validate(side.source, side.grids, side.evidence, side_name)
 }
 
 fn complete_source_closure_identity<'a>(
     source: &'a LoadedSource,
     side_name: &'static str,
-) -> Result<&'a animsmith_core::DependencyClosureIdentityV1, ComparisonError> {
+) -> Result<&'a animsmith_core::DependencyClosureIdentityV1, ReportError> {
     let closure = source.dependency_closure();
     if !closure.coverage().is_complete() {
-        return Err(ComparisonError::IncompleteDependencyClosure { side: side_name });
+        return Err(ReportError::IncompleteDependencyClosure { side: side_name });
     }
     closure
         .identity()
-        .ok_or(ComparisonError::IncompleteDependencyClosure { side: side_name })
+        .ok_or(ReportError::IncompleteDependencyClosure { side: side_name })
 }
 
 fn validate_source_authored_clip_name(
     source: &LoadedSource,
     normalized_clip_index: usize,
     side_name: &'static str,
-) -> Result<(), ComparisonError> {
+) -> Result<(), ReportError> {
     let facts = source.source_facts();
     let clips = facts.clips();
     if clips.coverage().state() != SourceSetCoverageStateV1::Complete {
-        return Err(ComparisonError::IncompleteAuthoredClipInventory { side: side_name });
+        return Err(ReportError::IncompleteAuthoredClipInventory { side: side_name });
     }
     let selected = clips.rows().iter().find(|row| {
         matches!(
@@ -706,7 +706,7 @@ fn validate_source_authored_clip_name(
         .take(2)
         .count();
     if matches > 1 {
-        return Err(ComparisonError::AmbiguousAuthoredClip {
+        return Err(ReportError::AmbiguousAuthoredClip {
             side: side_name,
             clip: selected_name.as_str().to_owned(),
         });
@@ -728,13 +728,13 @@ fn bounded_row_count<I>(
     side: &'static str,
     kind: &'static str,
     limit: usize,
-) -> Result<usize, ComparisonError>
+) -> Result<usize, ReportError>
 where
     I: IntoIterator,
 {
     let found = rows.into_iter().take(limit.saturating_add(1)).count();
     if found > limit {
-        return Err(ComparisonError::ReportRowsExceeded {
+        return Err(ReportError::ReportRowsExceeded {
             side,
             kind,
             found,
@@ -753,9 +753,9 @@ impl Write for ReportTextCounter {
         self.bytes = self
             .bytes
             .checked_add(data.len())
-            .ok_or_else(|| io::Error::other("comparison report text limit"))?;
+            .ok_or_else(|| io::Error::other("report text limit"))?;
         if self.bytes > MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE {
-            return Err(io::Error::other("comparison report text limit"));
+            return Err(io::Error::other("report text limit"));
         }
         Ok(data.len())
     }
@@ -769,10 +769,10 @@ fn preflight_side_report_work(
     side: ComparisonSide<'_>,
     clip_name: &str,
     side_name: &'static str,
-) -> Result<SideReportPreflight, ComparisonError> {
-    validate_prediction_authority(side, side_name)?;
+) -> Result<SideReportPreflight, ReportError> {
     let selected_findings = side
-        .checks
+        .evidence
+        .checks()
         .iter()
         .flat_map(CheckEvaluation::findings)
         .filter(|finding| finding.clip.as_deref().is_none_or(|clip| clip == clip_name));
@@ -782,7 +782,7 @@ fn preflight_side_report_work(
         "findings",
         MAX_COMPARISON_FINDINGS_PER_SIDE,
     )?;
-    let selected_gaps = side.checks.iter().flat_map(|check| {
+    let selected_gaps = side.evidence.checks().iter().flat_map(|check| {
         check
             .gaps()
             .iter()
@@ -794,18 +794,7 @@ fn preflight_side_report_work(
         "coverage gaps",
         MAX_COMPARISON_GAPS_PER_SIDE,
     )?;
-    let selected_facets = side
-        .checks
-        .iter()
-        .filter_map(CheckEvaluation::engine_prediction)
-        .flat_map(|prediction| prediction.facets())
-        .filter(|facet| scope_applies(Some(facet.scope()), clip_name));
-    bounded_row_count(
-        selected_facets.clone(),
-        side_name,
-        "prediction facets",
-        MAX_COMPARISON_PREDICTION_FACETS_PER_SIDE,
-    )?;
+    let engine = EngineEvidence::new(side.evidence);
 
     let clip_index = select_clip(side.grids.document(), clip_name, side_name)?.0;
     let frames = metric_frame_count(&side.grids.document().clips[clip_index]).unwrap_or(0);
@@ -824,7 +813,7 @@ fn preflight_side_report_work(
             )
         })
         .count();
-    let has_stance_context = side.checks.iter().any(|check| {
+    let has_stance_context = side.evidence.checks().iter().any(|check| {
         check.check_id() == "foot-slide"
             && check.evaluated_scopes().iter().any(|scope| {
                 matches!(
@@ -848,7 +837,7 @@ fn preflight_side_report_work(
         .saturating_add(finding_contexts)
         .saturating_add(usize::from(has_gait_context));
     if context_upper_bound > MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE {
-        return Err(ComparisonError::ReportRowsExceeded {
+        return Err(ReportError::ReportRowsExceeded {
             side: side_name,
             kind: "diagnostic contexts",
             found: MAX_COMPARISON_CONTEXT_ROWS_PER_SIDE.saturating_add(1),
@@ -860,7 +849,7 @@ fn preflight_side_report_work(
     macro_rules! count_wire {
         ($value:expr) => {
             serde_json::to_writer(&mut counter, $value).map_err(|_| {
-                ComparisonError::ReportTextWorkExceeded {
+                ReportError::ReportTextWorkExceeded {
                     side: side_name,
                     limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
                 }
@@ -876,7 +865,7 @@ fn preflight_side_report_work(
         count_wire!(finding);
         count_wire!(finding);
     }
-    for check in side.checks {
+    for check in side.evidence.checks() {
         for gap in check
             .gaps()
             .iter()
@@ -885,19 +874,10 @@ fn preflight_side_report_work(
             count_wire!(&check.check_id());
             count_wire!(gap);
         }
-        if let Some(prediction) = check.engine_prediction()
-            && prediction
-                .facets()
-                .iter()
-                .any(|facet| scope_applies(Some(facet.scope()), clip_name))
-        {
-            // Count the whole attachment rather than just selected facets:
-            // this includes every repeated check id, identity, basis string,
-            // unavailable reason and provenance-shaped field conservatively.
-            count_wire!(&check.check_id());
-            count_wire!(prediction);
-        }
     }
+    // Count originals and every display copy before allocating a JSON tree.
+    count_wire!(&engine);
+
     // The selected names are repeated in correspondence, side headers,
     // anchors, selected scopes, and contextual rows. This intentionally
     // overcounts rather than allocating the final wire tree to discover the
@@ -905,49 +885,10 @@ fn preflight_side_report_work(
     for _ in 0..16 {
         count_wire!(&clip_name);
     }
-    if let Some(provenance) = side.prediction_provenance {
-        count_wire!(provenance);
-    }
     Ok(SideReportPreflight {
         text_bytes: counter.bytes,
         context_rows: context_upper_bound,
     })
-}
-
-fn validate_prediction_authority(
-    side: ComparisonSide<'_>,
-    side_name: &'static str,
-) -> Result<(), ComparisonError> {
-    let predictions = side
-        .checks
-        .iter()
-        .filter_map(CheckEvaluation::engine_prediction)
-        .collect::<Vec<_>>();
-    let Some(provenance) = side.prediction_provenance else {
-        if predictions.is_empty() {
-            return Ok(());
-        }
-        return Err(ComparisonError::PredictionAuthorityMismatch {
-            side: side_name,
-            detail: "prediction attachment has no supplied provenance",
-        });
-    };
-    if provenance.dependency_closure() != side.source.dependency_closure() {
-        return Err(ComparisonError::PredictionAuthorityMismatch {
-            side: side_name,
-            detail: "provenance dependency closure differs from the loaded source",
-        });
-    }
-    if predictions
-        .iter()
-        .any(|prediction| prediction.provenance_identity() != provenance.identity())
-    {
-        return Err(ComparisonError::PredictionAuthorityMismatch {
-            side: side_name,
-            detail: "prediction attachment identity differs from supplied provenance",
-        });
-    }
-    Ok(())
 }
 
 fn preflight_report_allocation(
@@ -957,7 +898,7 @@ fn preflight_report_allocation(
     before_report: SideReportPreflight,
     after_report: SideReportPreflight,
     options: ReportOptions,
-) -> Result<(), ComparisonError> {
+) -> Result<(), ReportError> {
     // The pose budget and the base64 it would occupy in the JSON both bound
     // an embedded grid. An evidence-only document embeds none, so neither
     // applies to it; every other allowance below still does.
@@ -1008,9 +949,9 @@ fn preflight_report_allocation(
     require_report_estimate(estimate)
 }
 
-fn require_report_estimate(estimate: u128) -> Result<(), ComparisonError> {
+fn require_report_estimate(estimate: u128) -> Result<(), ReportError> {
     if estimate > MAX_COMPARISON_JSON_BYTES as u128 {
-        return Err(ComparisonError::ReportWorkExceeded {
+        return Err(ReportError::ReportWorkExceeded {
             limit: MAX_COMPARISON_JSON_BYTES,
         });
     }
@@ -1020,22 +961,22 @@ fn require_report_estimate(estimate: u128) -> Result<(), ComparisonError> {
 fn validate_skeletons(
     before: &animsmith_core::Document,
     after: &animsmith_core::Document,
-) -> Result<(), ComparisonError> {
+) -> Result<(), ReportError> {
     let before_names = skeleton_names(&before.skeleton, "before")?;
     let after_names = skeleton_names(&after.skeleton, "after")?;
     if before_names.is_empty() {
-        return Err(ComparisonError::IncompatibleSkeleton {
+        return Err(ReportError::IncompatibleSkeleton {
             detail: "skeleton has no bones".into(),
         });
     }
     if before_names.len() != after_names.len() {
-        return Err(ComparisonError::IncompatibleSkeleton {
+        return Err(ReportError::IncompatibleSkeleton {
             detail: "bone counts differ".into(),
         });
     }
     for (name, before_index) in &before_names {
         let Some(after_index) = after_names.get(name) else {
-            return Err(ComparisonError::IncompatibleSkeleton {
+            return Err(ReportError::IncompatibleSkeleton {
                 detail: format!("bone {name:?} is absent after"),
             });
         };
@@ -1044,7 +985,7 @@ fn validate_skeletons(
         // before bone's label when two otherwise equivalent hierarchies were
         // serialized in different orders.
         if before_index != after_index {
-            return Err(ComparisonError::IncompatibleSkeleton {
+            return Err(ReportError::IncompatibleSkeleton {
                 detail: format!("bone {name:?} has a different index"),
             });
         }
@@ -1055,7 +996,7 @@ fn validate_skeletons(
             .parent
             .map(|p| after.skeleton.bones[p].name.as_str());
         if before_parent != after_parent {
-            return Err(ComparisonError::IncompatibleSkeleton {
+            return Err(ReportError::IncompatibleSkeleton {
                 detail: format!("bone {name:?} has a different parent"),
             });
         }
@@ -1066,17 +1007,17 @@ fn validate_skeletons(
 fn skeleton_names<'a>(
     skeleton: &'a animsmith_core::Skeleton,
     side: &'static str,
-) -> Result<BTreeMap<&'a str, usize>, ComparisonError> {
+) -> Result<BTreeMap<&'a str, usize>, ReportError> {
     let mut names = BTreeMap::new();
     for (index, bone) in skeleton.bones.iter().enumerate() {
         if bone.parent.is_some_and(|parent| parent >= index) {
-            return Err(ComparisonError::InvalidHierarchy {
+            return Err(ReportError::InvalidHierarchy {
                 side,
                 bone: bone.name.clone(),
             });
         }
         if names.insert(bone.name.as_str(), index).is_some() {
-            return Err(ComparisonError::DuplicateBoneName {
+            return Err(ReportError::DuplicateBoneName {
                 side,
                 name: bone.name.clone(),
             });
@@ -1085,10 +1026,7 @@ fn skeleton_names<'a>(
     Ok(names)
 }
 
-fn input_text_bytes(
-    doc: &animsmith_core::Document,
-    side: &'static str,
-) -> Result<(), ComparisonError> {
+fn input_text_bytes(doc: &animsmith_core::Document, side: &'static str) -> Result<(), ReportError> {
     let bytes = doc
         .skeleton
         .bones
@@ -1098,7 +1036,7 @@ fn input_text_bytes(
         .try_fold(0usize, |total, bytes| total.checked_add(bytes))
         .unwrap_or(usize::MAX);
     if bytes > MAX_COMPARISON_INPUT_TEXT_BYTES {
-        return Err(ComparisonError::InputTextWorkExceeded {
+        return Err(ReportError::InputTextWorkExceeded {
             side,
             bytes,
             limit: MAX_COMPARISON_INPUT_TEXT_BYTES,
@@ -1127,7 +1065,7 @@ fn comparison_side_json(
     grid: &PoseGrid,
     side_name: &'static str,
     options: ReportOptions,
-) -> Result<Value, ComparisonError> {
+) -> Result<Value, ReportError> {
     let frames = grid.frame_count();
     let bones = side.grids.document().skeleton.bones.len();
     let mut positions = Vec::new();
@@ -1158,7 +1096,8 @@ fn comparison_side_json(
     .collect::<serde_json::Map<_, _>>()
     .into();
     let anchored_findings = side
-        .checks
+        .evidence
+        .checks()
         .iter()
         .flat_map(CheckEvaluation::findings)
         .filter(|finding| finding.clip.as_deref().is_none_or(|clip| clip == clip_name))
@@ -1172,32 +1111,11 @@ fn comparison_side_json(
             json!({"anchor":anchor,"check":finding.check_id,"severity":finding.severity.to_string(),"clip":finding.clip,"bone":finding.bone,"node":finding.node,"subject_bone":subject_bone,"time":finding.time_s,"measured":finding.measured,"expected":finding.expected,"members":finding.members,"prediction_scope":finding.prediction_scope,"message":finding.message})
         })
         .collect::<Vec<_>>();
-    let gaps = side.checks.iter().flat_map(|check| check.gaps().iter().map(move |gap| (check.check_id(), gap)))
+    let gaps = side.evidence.checks().iter().flat_map(|check| check.gaps().iter().map(move |gap| (check.check_id(), gap)))
         .filter(|(_, gap)| scope_applies(gap.scope.as_ref(), clip_name))
         .map(|(check_id, gap)| json!({"check_id":check_id,"code":gap.code,"message":gap.message,"scope":gap.scope}))
         .collect::<Vec<_>>();
-    let predictions = side
-        .checks
-        .iter()
-        .filter_map(|check| {
-            let prediction = check.engine_prediction()?;
-            let facets = prediction
-                .facets()
-                .iter()
-                .filter(|facet| scope_applies(Some(facet.scope()), clip_name))
-                .collect::<Vec<_>>();
-            (!facets.is_empty()).then(|| {
-                json!({
-                    "check_id": check.check_id(),
-                    "prediction": {
-                        "schema": prediction.contract_id(),
-                        "provenance_identity": prediction.provenance_identity(),
-                        "facets": facets,
-                    }
-                })
-            })
-        })
-        .collect::<Vec<_>>();
+    let engine = EngineEvidence::new(side.evidence);
     let mut clip = json!({"anchor":semantic_anchor("clip", clip_name),"name":clip_name,"duration":duration_s,"frames":frames,"times":grid.times,"trails":trails});
     if let Some(encoded) = encoded_positions(options, || positions) {
         clip["positions"] = json!(encoded);
@@ -1212,7 +1130,7 @@ fn comparison_side_json(
     // cannot say one thing in a single-clip report and another in a
     // comparison of the same clip. The viewer supplies only the measured
     // numbers around them.
-    let contract = clip_contract(side.checks, clip_name);
+    let contract = clip_contract(side.evidence.checks(), clip_name);
     Ok(json!({
         "identity": {"sha256": primary.sha256(), "bytes": primary.bytes()},
         "dependency_closure_identity": closure_identity,
@@ -1222,7 +1140,7 @@ fn comparison_side_json(
         },
         "clip": clip,
         "contexts": comparison_contexts(side, clip_name, grid, &anchored_findings),
-        "findings":findings,"gaps":gaps,"prediction_provenance":side.prediction_provenance,"predictions":predictions,
+        "findings":findings,"gaps":gaps,"engine_evidence":engine,
     }))
 }
 
@@ -1283,7 +1201,7 @@ fn comparison_contexts(
     ]
     .into_iter()
     .filter(|(_, _, scope_code)| {
-        side.checks.iter().any(|check| {
+        side.evidence.checks().iter().any(|check| {
             check.check_id() == "foot-slide"
                 && check.evaluated_scopes().iter().any(|scope| {
                     scope.code.as_str() == *scope_code
@@ -1451,13 +1369,13 @@ fn comparison_pose_bytes(
     frames: usize,
     bones: usize,
     side: &'static str,
-) -> Result<u128, ComparisonError> {
+) -> Result<u128, ReportError> {
     let bytes = (frames as u128)
         .saturating_mul(bones as u128)
         .saturating_mul(3)
         .saturating_mul(4);
     if bytes > MAX_COMPARISON_POSE_BYTES as u128 {
-        return Err(ComparisonError::PoseWorkExceeded {
+        return Err(ReportError::PoseWorkExceeded {
             side,
             bytes,
             limit: MAX_COMPARISON_POSE_BYTES,
@@ -1484,13 +1402,13 @@ impl Write for BoundedCounter {
         Ok(())
     }
 }
-fn bounded_json(data: &Value) -> Result<String, ComparisonError> {
+fn bounded_json(data: &Value) -> Result<String, ReportError> {
     serde_json::to_writer(BoundedCounter { bytes: 0 }, data).map_err(|_| {
-        ComparisonError::ReportWorkExceeded {
+        ReportError::ReportWorkExceeded {
             limit: MAX_COMPARISON_JSON_BYTES,
         }
     })?;
-    serde_json::to_string(data).map_err(|_| ComparisonError::ReportWorkExceeded {
+    serde_json::to_string(data).map_err(|_| ReportError::ReportWorkExceeded {
         limit: MAX_COMPARISON_JSON_BYTES,
     })
 }
@@ -1505,7 +1423,7 @@ mod comparison_tests {
             .expect_err("two bones at this frame count exceed the fixed limit");
         assert_eq!(
             error,
-            ComparisonError::PoseWorkExceeded {
+            ReportError::PoseWorkExceeded {
                 side: "before",
                 bytes: (MAX_COMPARISON_POSE_BYTES as u128) * 2 * 3 * 4,
                 limit: MAX_COMPARISON_POSE_BYTES,
@@ -1532,7 +1450,7 @@ mod comparison_tests {
                 "findings",
                 MAX_COMPARISON_FINDINGS_PER_SIDE,
             ),
-            Err(ComparisonError::ReportRowsExceeded {
+            Err(ReportError::ReportRowsExceeded {
                 side: "before",
                 kind: "findings",
                 found: MAX_COMPARISON_FINDINGS_PER_SIDE + 1,
@@ -1561,7 +1479,7 @@ mod comparison_tests {
         );
         assert_eq!(
             require_report_estimate(MAX_COMPARISON_JSON_BYTES as u128 + 1),
-            Err(ComparisonError::ReportWorkExceeded {
+            Err(ReportError::ReportWorkExceeded {
                 limit: MAX_COMPARISON_JSON_BYTES,
             })
         );
@@ -1666,8 +1584,10 @@ pub struct ReportInputs<'a> {
     pub grids: &'a MetricGrids<'a>,
     /// Resolved rig roles.
     pub roles: &'a ResolvedRoles,
-    /// Typed check evaluations for this document.
-    pub checks: &'a [CheckEvaluation],
+    /// Exact source that owns the grids and evidence identity.
+    pub source: &'a LoadedSource,
+    /// Validated current evidence from the analysis of this source.
+    pub evidence: &'a LintFileReportV19,
     /// Exact configuration the checks were evaluated under.
     ///
     /// A clean gait group emits no finding carrying its membership or its
@@ -1675,11 +1595,10 @@ pub struct ReportInputs<'a> {
     /// group's members against each other; the report reads nothing else
     /// out of it.
     pub config: &'a Config,
-    /// Optional engine-prediction provenance.
-    pub prediction_provenance: Option<&'a PredictionProvenanceV1>,
     /// Restricts the report to one clip name when present. The gait-group
     /// figures a selected clip belongs to are still drawn from every member,
-    /// because the group is what that clip is judged against.
+    /// because the group is what that clip is judged against. Engine evidence
+    /// remains whole-input, including other clips and source-only subjects.
     pub clip: Option<&'a str>,
     /// Presentation choices — see [`ReportOptions::evidence_only`] for a
     /// report that omits the sampled motion.
@@ -1688,19 +1607,20 @@ pub struct ReportInputs<'a> {
 
 impl<'a> ReportInputs<'a> {
     /// The inputs a report of every clip in `grids` needs, with no
-    /// configuration, provenance or clip selection.
+    /// clip selection and with sampled motion included.
     pub fn new(
         grids: &'a MetricGrids<'a>,
         roles: &'a ResolvedRoles,
-        checks: &'a [CheckEvaluation],
+        source: &'a LoadedSource,
+        evidence: &'a LintFileReportV19,
         config: &'a Config,
     ) -> Self {
         Self {
             grids,
             roles,
-            checks,
+            source,
+            evidence,
             config,
-            prediction_provenance: None,
             clip: None,
             options: ReportOptions {
                 evidence_only: false,
@@ -1714,17 +1634,32 @@ impl<'a> ReportInputs<'a> {
 /// The function performs no filesystem I/O and cannot report write errors;
 /// callers choose where to store or serve the returned self-contained HTML
 /// string.
-pub fn render(inputs: ReportInputs<'_>) -> String {
+///
+/// # Errors
+/// Refuses grids from another source, evidence with a different primary identity
+/// or profiled dependency closure, and engine evidence above the presentation
+/// row/text bounds. Callers must supply the roles and configuration used for
+/// analysis; profile-free evidence does not independently bind those values.
+pub fn render(inputs: ReportInputs<'_>) -> Result<String, ReportError> {
+    engine_evidence::validate(inputs.source, inputs.grids, inputs.evidence, "input")?;
+    let engine = EngineEvidence::new(inputs.evidence);
+    serde_json::to_writer(&mut ReportTextCounter { bytes: 0 }, &engine).map_err(|_| {
+        ReportError::ReportTextWorkExceeded {
+            side: "input",
+            limit: MAX_COMPARISON_REPORT_TEXT_BYTES_PER_SIDE,
+        }
+    })?;
     let ReportInputs {
         grids,
         roles,
-        checks,
+        source: _,
+        evidence,
         config,
-        prediction_provenance,
         clip: clip_filter,
         options,
     } = inputs;
     let doc = grids.document();
+    let checks = evidence.checks();
     let bones: Vec<Value> = doc
         .skeleton
         .bones
@@ -1840,18 +1775,6 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         })
         .collect();
 
-    let predictions_json: Vec<Value> = checks
-        .iter()
-        .filter_map(|check| {
-            check.engine_prediction().map(|prediction| {
-                json!({
-                    "check_id": check.check_id(),
-                    "prediction": prediction,
-                })
-            })
-        })
-        .collect();
-
     let gaps_json: Vec<Value> = checks
         .iter()
         .flat_map(|check| {
@@ -1878,8 +1801,8 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
         "clips": clips_json,
         "findings": findings_json,
         "gaps": gaps_json,
-        "prediction_provenance": prediction_provenance,
-        "predictions": predictions_json,
+        "kind": "animsmith-report-v1",
+        "engine_evidence": engine,
     });
 
     if let Some(admission) = blend_admission {
@@ -1926,7 +1849,7 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
     // data block early; escaping `<` inside JSON strings is lossless.
     let data = data.to_string().replace('<', "\\u003c");
 
-    format!(
+    Ok(format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>animsmith — {title}</title>\n<style>{TOKENS_CSS}{BASE_CSS}{VIEWER_CSS}</style>\n</head>\n<body>\n\
@@ -1949,14 +1872,14 @@ pub fn render(inputs: ReportInputs<'_>) -> String {
          <section id=\"side\">\n\
            <h2>Findings</h2>\n<ul id=\"findings\"></ul>\n\
            <h2>Coverage gaps</h2>\n<ul id=\"gaps\"></ul>\n\
-           <h2>Engine predictions</h2>\n<ul id=\"predictions\"></ul>\n\
+           <h2>Whole-input engine evidence</h2>\n<ul id=\"predictions\"></ul>\n\
            <h2>Charts</h2>\n<div id=\"charts\">{charts_html}</div>\n\
          </section>\n\
          </main>\n\
          <script>{shared_js}</script>\n\
          <script type=\"application/json\" id=\"report-data\">{data}</script>\n\
          <script>{VIEWER_JS}</script>\n</body>\n</html>\n"
-    )
+    ))
 }
 
 /// Render a collection inventory dashboard from its already-validated,
@@ -3539,24 +3462,28 @@ mod tests {
 
     #[test]
     fn shared_grid_render_embeds_clip_data() {
-        let doc = report_document();
+        let source = test_support::source(report_document());
+        let doc = source.document();
         let roles = ResolvedRoles::from_names(&doc.skeleton, [(Role::Root, "root".to_string())]);
         let config = Config::default();
         let checks = Vec::new();
 
+        let evidence = test_support::evidence(&source, &roles, &checks);
         let options = ReportOptions::default();
-        let grids_once = MetricGrids::new(&doc);
+        let grids_once = MetricGrids::new(doc);
         let fresh = render(ReportInputs {
             options,
-            ..ReportInputs::new(&grids_once, &roles, &checks, &config)
-        });
-        let grids = MetricGrids::new(&doc);
+            ..ReportInputs::new(&grids_once, &roles, &source, &evidence, &config)
+        })
+        .unwrap();
+        let grids = MetricGrids::new(doc);
         let ctx = CheckCtx::new(&grids, &roles, &config);
         assert!(ctx.grid(0).is_some());
         let shared = render(ReportInputs {
             options,
-            ..ReportInputs::new(&grids, &roles, &checks, &config)
-        });
+            ..ReportInputs::new(&grids, &roles, &source, &evidence, &config)
+        })
+        .unwrap();
 
         assert_eq!(fresh, shared);
         assert!(shared.contains(r#"data-kind="rootpath""#));

@@ -694,29 +694,34 @@ for (const gap of data.gaps) {
 
 // Prediction facets remain distinct from content findings and ordinary gaps.
 const predictionList = document.getElementById("predictions");
-if (!data.prediction_provenance) {
+const engineEvidence = data.engine_evidence;
+const engineDisplay = engineEvidence.projection;
+const addEngineRow = (text, className) => {
   const li = document.createElement("li");
-  li.textContent = "engine-neutral — no profile resolved";
+  if (className) li.className = className;
+  li.textContent = text;
   predictionList.appendChild(li);
-} else if (!data.predictions.length) {
-  const li = document.createElement("li");
-  const selection = data.prediction_provenance.profile.selection;
-  li.textContent = `profile ${selection.family} revision ${selection.profile_revision} resolved; ` +
-    "no engine-backed checks emitted predictions";
-  predictionList.appendChild(li);
+};
+addEngineRow("Whole-input engine evidence includes other clips and source-only subjects.");
+if (!engineDisplay.profile) {
+  addEngineRow("engine-neutral — no profile resolved");
+} else if (!engineDisplay.facets.length) {
+  const selection = engineDisplay.profile;
+  addEngineRow(`profile ${selection.family} revision ${selection.profile_revision} resolved; no engine-backed checks emitted predictions`);
 }
-for (const row of data.predictions) {
-  for (const facet of row.prediction.facets) {
-    const li = document.createElement("li");
-    li.className = "prediction " + facet.state;
-    const subject = facet.scope.subject == null ? "" : ` · ${facet.scope.subject}`;
-    const state = facet.state === "available"
-      ? "available"
-      : `required prediction unavailable: ${facet.reasons.join(", ")}`;
-    li.textContent = `${row.check_id} · ${facet.scope.code}${subject} — ${state}`;
-    predictionList.appendChild(li);
-  }
+for (const facet of engineDisplay.facets) {
+  addEngineRow(animsmithEngineFacetText(facet), "prediction " + facet.state);
 }
+for (const check of engineEvidence.checks) {
+  if (!check.prediction) addEngineRow(`${check.check_id} · ${check.configuration} · ${check.applicability} · ${check.evaluation}`);
+}
+const engineDetails = document.createElement("details");
+const engineSummary = document.createElement("summary");
+engineSummary.textContent = "Original engine checks and provenance";
+const engineRaw = document.createElement("pre");
+engineRaw.textContent = JSON.stringify({ provenance: engineEvidence.provenance, checks: engineEvidence.checks }, null, 2);
+engineDetails.appendChild(engineSummary); engineDetails.appendChild(engineRaw);
+predictionList.appendChild(engineDetails);
 
 // Fragment selection runs once the clip list, charts, and findings exist, so
 // a deep link lands exactly where the equivalent click would. Each option that

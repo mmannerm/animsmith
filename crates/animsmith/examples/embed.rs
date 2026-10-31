@@ -9,8 +9,8 @@ use animsmith_core::config::{ClipExpectations, MovementOwner, Pinned};
 use animsmith_core::measure::measure_document;
 use animsmith_core::profile::{ResolvedRoles, Role, detect_profile};
 use animsmith_core::{
-    CheckCtx, CheckSelection, Config, LintEnvelope, LintFileReport, MeasurementContract,
-    MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks,
+    CheckCtx, CheckSelection, Config, LintEnvelopeV19, LintFileReportV19, MeasurementContract,
+    MetricGrids, RigInfo, Severity, ToolInfo, ToolSource, all_checks, evaluate_checks_v2,
 };
 use std::path::Path;
 
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4b. Lint: the same sampled grids judged against the declarations.
     let ctx = CheckCtx::new(&grids, &roles, &config);
-    let evaluations = evaluate_checks(&ctx, &all_checks(), CheckSelection::All)?;
+    let evaluations = evaluate_checks_v2(&ctx, &all_checks(), CheckSelection::All)?;
     let findings: Vec<_> = evaluations
         .iter()
         .flat_map(|check| check.findings())
@@ -118,16 +118,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // When the host interoperates with CLI consumers, it can emit the exact
     // same versioned envelope without copying wire structs or schema URNs.
-    let report = LintEnvelope::new(
+    let evidence = LintFileReportV19::new(
+        path.display().to_string(),
+        input,
+        RigInfo::from_resolved(doc, &roles)?,
+        None,
+        evaluations,
+        MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))?,
+    )?;
+    // Optional HTML consumes the same validated current evidence and grids.
+    // This example is engine-neutral; docs/embedding.md describes the current
+    // V3/V5/V6 provenance and catalog choices for a profiled host.
+    #[cfg(feature = "report")]
+    {
+        let html = animsmith_report::render(animsmith_report::ReportInputs::new(
+            &grids, &roles, &source, &evidence, &config,
+        ))?;
+        println!("HTML report: {} bytes", html.len());
+    }
+    let report = LintEnvelopeV19::new(
         ToolInfo::animsmith(ToolSource::new(None, None)),
-        vec![LintFileReport::new(
-            path.display().to_string(),
-            input,
-            RigInfo::from_resolved(doc, &roles)?,
-            None,
-            evaluations,
-            MeasurementContract::new(measurements, animsmith_core::measure::measure_assets(doc))?,
-        )?],
+        vec![evidence],
     )?;
     println!("result contract: {}", serde_json::to_string(&report)?);
     std::process::exit(exit);
