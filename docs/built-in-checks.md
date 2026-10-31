@@ -95,8 +95,9 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Inactive, not-applicable, and coverage gaps: never `not_applicable` and no
   typed gaps once selected.
 - Remediation and boundary: `animsmith fix` can renormalize finite, non-zero
-  quaternions losslessly. If the source exporter keeps reintroducing the issue,
-  correct that upstream.
+  LINEAR/STEP quaternions losslessly. CUBICSPLINE tracks needing repair are
+  skipped to preserve their curves; correct them in the DCC and re-export.
+  If the source exporter keeps reintroducing the issue, correct that upstream.
 - Runtime and references: non-unit rotations skew interpolation, skinning, and
   blends. See [The pose flickers, spins, or
   explodes](symptoms/pose-flickers.md), [CLI
@@ -114,8 +115,9 @@ only after an explicit `note`, `warn`, or `error` severity.
 - Inactive, not-applicable, and coverage gaps: never `not_applicable` and no
   typed gaps once selected.
 - Remediation and boundary: `animsmith fix` can flip equivalent quaternion
-  signs into a hemisphere-consistent track. Re-export if the source keeps
-  emitting unstable signs.
+  signs into a hemisphere-consistent LINEAR/STEP track. CUBICSPLINE tracks
+  needing a flip are skipped to preserve their curves; correct them in the DCC
+  and re-export. Correct the exporter if it keeps emitting unstable signs.
 - Runtime and references: the visible symptom is a sudden long-way spin between
   keys. See [The pose flickers, spins, or
   explodes](symptoms/pose-flickers.md), [CLI

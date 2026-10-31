@@ -11,18 +11,14 @@
 //! - `quat-flip`: adjacent rotation keys with `dot < 0` make engines
 //!   without neighborhood correction slerp the long way around. Negating
 //!   a quaternion leaves the rotation it represents unchanged, so
-//!   walking each track and negating keys until the whole track is
-//!   hemisphere-consistent is lossless.
+//!   walking a LINEAR/STEP track and negating keys until the whole track
+//!   is hemisphere-consistent is lossless.
 //!
-//! Scope: float32 VEC4 rotation outputs. `quat-flip` handles CUBICSPLINE
-//! tracks by negating the whole `[in-tangent, value, out-tangent]`
-//! triplet with the key — the tangents are derivatives in quaternion
-//! component space, so they flip with it. (Hermite segments between a
-//! flipped and an unflipped key traverse 4-space differently than
-//! authored, but the authored curve was the long-way spin being
-//! repaired.) `quat-norm` skips CUBICSPLINE tracks because scaling value
-//! keys without their tangents would change interior samples. Sparse
-//! accessors and quantized (normalized-int) rotations are skipped.
+//! Scope: float32 VEC4 rotation outputs. Both repairs skip CUBICSPLINE
+//! tracks when a repair would be needed: changing quaternion values or
+//! negating individual tangent/value triplets can change interior Hermite
+//! samples, even when endpoint rotations stay equivalent. Sparse accessors
+//! and quantized (normalized-int) rotations are skipped.
 
 use crate::{
     FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path,
@@ -71,7 +67,7 @@ impl FixReport {
 pub enum Repair {
     /// Normalize finite, non-zero LINEAR/STEP rotation keys.
     QuatNorm,
-    /// Hemisphere-normalize adjacent rotation keys.
+    /// Hemisphere-normalize adjacent LINEAR/STEP rotation keys.
     QuatFlip,
 }
 
@@ -228,12 +224,19 @@ impl FixSession {
                 if let Some(p) = prev {
                     let dot: f32 = p.iter().zip(&q).map(|(a, b)| a * b).sum();
                     if dot < 0.0 {
-                        for e in (k * layout.per_key)..(k * layout.per_key + layout.per_key) {
-                            let negated = read_rotation(buffer, layout, e).map(|v| -v);
-                            write_rotation(buffer, layout, e, negated);
+                        if layout.cubic {
+                            // No earlier pair needed a flip, so no bytes have
+                            // changed. Endpoint equivalence does not preserve
+                            // the authored component-space Hermite curve.
+                            return (
+                                0,
+                                Some("cubic rotation output (quat-flip skipped to preserve the curve)"),
+                            );
                         }
+                        let negated = q.map(|v| -v);
+                        write_rotation(buffer, layout, value_element, negated);
                         flipped += 1;
-                        prev = Some(q.map(|v| -v));
+                        prev = Some(negated);
                         continue;
                     }
                 }
@@ -318,8 +321,8 @@ impl FixSession {
                 };
 
                 // Cubic outputs hold [in-tangent, value, out-tangent]
-                // triplets; repairs inspect VALUE elements, while
-                // hemisphere flips negate whole triplets.
+                // triplets; repairs inspect only VALUE elements to decide
+                // whether a skipped disposition is needed.
                 let (per_key, value_offset) = if cubic { (3usize, 1usize) } else { (1, 0) };
                 if accessor.count() % per_key != 0 {
                     report

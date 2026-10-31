@@ -245,6 +245,10 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   writes; `--dry-run` is the check mode — it inspects only and exits `1`
   when repairs are pending, mirroring `lint`. Repairs are addressed by
   stable ids; every repair must be safe, lossless, and idempotent.
+  Quaternion repairs change only LINEAR/STEP tracks. CUBICSPLINE tracks
+  needing normalization or hemisphere edits are reported as skipped and
+  preserved byte-for-byte: changing an individual key or tangent/value
+  triplet can change interior Hermite samples despite equivalent endpoints.
   Repair taxonomy (risk-tier groups) is deliberately deferred until a
   repair exists that doesn't meet that bar.
 - **`fix` stays byte-surgical — a product requirement, not an accident**

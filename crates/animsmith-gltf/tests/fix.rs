@@ -452,45 +452,154 @@ fn session_writes_captured_json_after_the_input_path_is_removed() {
     animsmith_gltf::load(&output).expect("captured JSON and embedded buffer reload");
 }
 
-#[test]
-fn cubic_tracks_are_fixed_by_triplet() {
-    // A CUBICSPLINE rotation track whose middle key (value + tangents)
-    // is sign-flipped.
-    let angles = [0.0f32, 0.5, 1.0];
-    let mut values: Vec<Quat> = Vec::new();
-    for (k, &a) in angles.iter().enumerate() {
-        let q = Quat::from_rotation_y(a);
-        let sign = if k == 1 { -1.0 } else { 1.0 };
-        values.push(Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)); // in-tangent
-        values.push(q * sign);
-        values.push(Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)); // out-tangent
-    }
-    let mut doc = flipped_doc();
-    doc.clips[0].tracks[0] = Track {
-        bone: 1,
-        property: Property::Rotation,
-        interpolation: Interpolation::CubicSpline,
-        times: vec![0.0, 0.5, 1.0],
-        values: TrackValues::Quats(values),
+// Fixed f32 components for a 0.5-radian Y rotation; no production sampler
+// or repair routine computes the fixture's expected curve.
+fn hemisphere_doc(interpolation: Interpolation, flipped: bool) -> Document {
+    let q1 = Quat::from_xyzw(0.0, 0.24740396, 0.0, 0.9689124);
+    let values = [Quat::IDENTITY, if flipped { -q1 } else { q1 }];
+    let values = if interpolation == Interpolation::CubicSpline {
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        values.into_iter().flat_map(|q| [zero, q, zero]).collect()
+    } else {
+        values.to_vec()
     };
-    let dir = unique_temp_dir("fix-test");
-    let path = dir.path().join("cubic.glb");
-    animsmith_gltf::write::write(&doc, &path).expect("writes");
-    assert_eq!(lint_flip_count(&animsmith_gltf::load(&path).unwrap()), 1);
+    let mut doc = doc_with_quats(values);
+    doc.clips[0].tracks[0].times = vec![0.0, 1.0];
+    doc.clips[0].tracks[0].interpolation = interpolation;
+    doc
+}
 
-    let report = FixSession::apply_to_path(&path, &path, Repair::QuatFlip).expect("fixes");
-    assert_eq!(report.total_fixed(), 1, "one triplet repaired");
-    assert!(report.skipped.is_empty(), "cubic no longer skipped");
+/// Evaluate the actual BIN components independently at t=0.5 for the
+/// fixture's [0,1] interval. Hermite basis is [1/2, 1/8, 1/2, -1/8];
+/// normalize only the resulting quaternion, as cubic interpolation requires.
+fn authored_cubic_midpoint(bytes: &[u8]) -> [f64; 4] {
+    let gltf = gltf::Gltf::from_slice(bytes).unwrap();
+    let output = gltf
+        .animations()
+        .next()
+        .unwrap()
+        .samplers()
+        .next()
+        .unwrap()
+        .output();
+    let view = output.view().unwrap();
+    let blob = gltf.blob.as_ref().unwrap();
+    let stride = view.stride().unwrap_or(16);
+    let mut midpoint = [0.0f64; 4];
+    for (element, basis) in [(1, 0.5), (2, 0.125), (4, 0.5), (3, -0.125)] {
+        for (component, value) in midpoint.iter_mut().enumerate() {
+            let offset = view.offset() + output.offset() + element * stride + component * 4;
+            *value += basis
+                * f64::from(f32::from_le_bytes(
+                    blob[offset..offset + 4].try_into().unwrap(),
+                ));
+        }
+    }
+    let norm = midpoint.iter().map(|v| v * v).sum::<f64>().sqrt();
+    midpoint.map(|v| v / norm)
+}
 
-    let repaired = animsmith_gltf::load(&path).expect("reloads");
-    assert_eq!(lint_flip_count(&repaired), 0);
-    let track = &repaired.clips[0].tracks[0];
-    assert!(
-        track
-            .key_quat(1)
-            .unwrap()
-            .angle_between(Quat::from_rotation_y(0.5))
-            < 1e-5,
-        "rotation preserved"
+#[test]
+fn cubic_hemisphere_repair_preserves_the_authored_interior_curve_and_bytes() {
+    let dir = unique_temp_dir("cubic-curve");
+    let input = dir.path().join("cubic.glb");
+    let fixed = dir.path().join("fixed.glb");
+    animsmith_gltf::write::write(&hemisphere_doc(Interpolation::CubicSpline, true), &input)
+        .unwrap();
+    let before = std::fs::read(&input).unwrap();
+    // Normalizing (identity - rotation_y(0.5))/2 gives this interior
+    // orientation. Flipping only the second triplet instead gives
+    // [0, sin(0.125), 0, cos(0.125)], which differs by 180 degrees.
+    let expected = [0.0, -0.125f64.cos(), 0.0, 0.125f64.sin()];
+    let report = FixSession::apply_to_path(&input, &fixed, Repair::QuatFlip).unwrap();
+    assert_eq!(report.total_fixed(), 0);
+    assert_eq!(
+        report.skipped,
+        ["sway/spine: cubic rotation output (quat-flip skipped to preserve the curve)"]
     );
+    let after = std::fs::read(&fixed).unwrap();
+    for bytes in [&before, &after] {
+        for (actual, expected) in authored_cubic_midpoint(bytes).into_iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 2e-7,
+                "interior component {actual} != {expected}"
+            );
+        }
+    }
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+    assert_eq!(std::fs::read(&fixed).unwrap(), before);
+    let second = FixSession::apply_to_path(&fixed, &fixed, Repair::QuatFlip).unwrap();
+    assert_eq!(second.total_fixed(), 0);
+    assert_eq!(std::fs::read(&fixed).unwrap(), before);
+}
+
+#[test]
+fn clean_cubic_rotation_is_not_reported_as_skipped() {
+    let dir = unique_temp_dir("clean-cubic");
+    let input = dir.path().join("clean.glb");
+    animsmith_gltf::write::write(&hemisphere_doc(Interpolation::CubicSpline, false), &input)
+        .unwrap();
+    let before = std::fs::read(&input).unwrap();
+    let report = FixSession::apply_to_path(&input, &input, Repair::QuatFlip).unwrap();
+    assert_eq!(report.total_fixed(), 0);
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+}
+
+#[test]
+fn cubic_skip_keeps_other_linear_and_step_repairs_byte_surgical() {
+    for interpolation in [Interpolation::Linear, Interpolation::Step] {
+        let dir = unique_temp_dir("hemisphere-control");
+        let input = dir.path().join("flipped.glb");
+        let fixed = dir.path().join("fixed.glb");
+        let mut doc = hemisphere_doc(interpolation, true);
+        let mut cubic = hemisphere_doc(Interpolation::CubicSpline, true).clips[0].tracks[0].clone();
+        cubic.bone = 0;
+        // The skipped cubic track comes first on a different bone: skipping
+        // it must still let the following LINEAR/STEP track be repaired.
+        doc.clips[0].tracks.insert(0, cubic);
+        animsmith_gltf::write::write(&doc, &input).unwrap();
+        let before = std::fs::read(&input).unwrap();
+        let report = FixSession::apply_to_path(&input, &fixed, Repair::QuatFlip).unwrap();
+        assert_eq!(report.total_fixed(), 1, "{interpolation:?}");
+        assert_eq!(
+            report.skipped,
+            ["sway/root: cubic rotation output (quat-flip skipped to preserve the curve)"]
+        );
+        let repaired = animsmith_gltf::load(&fixed).unwrap();
+        let track = &repaired.clips[0].tracks[1];
+        assert_eq!(track.interpolation, interpolation);
+        assert_eq!(
+            track.key_quat(1).unwrap().to_array(),
+            [0.0, 0.24740396, 0.0, 0.9689124]
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), before);
+        let first_output = std::fs::read(&fixed).unwrap();
+        let gltf = gltf::Gltf::from_slice(&before).unwrap();
+        let output = gltf
+            .animations()
+            .next()
+            .unwrap()
+            .samplers()
+            .nth(1)
+            .unwrap()
+            .output();
+        let view = output.view().unwrap();
+        let json_length = u32::from_le_bytes(before[12..16].try_into().unwrap()) as usize;
+        let second_key =
+            28 + json_length + view.offset() + output.offset() + view.stride().unwrap_or(16);
+        let mut expected = before.clone();
+        for (component, value) in [0.0f32, 0.24740396, 0.0, 0.9689124].iter().enumerate() {
+            expected[second_key + component * 4..second_key + (component + 1) * 4]
+                .copy_from_slice(&value.to_le_bytes());
+        }
+        assert_eq!(
+            first_output, expected,
+            "only the LINEAR/STEP key changes; cubic bytes stay authored"
+        );
+        let second = FixSession::apply_to_path(&fixed, &fixed, Repair::QuatFlip).unwrap();
+        assert_eq!(second.total_fixed(), 0);
+        assert_eq!(second.skipped, report.skipped);
+        assert_eq!(std::fs::read(&fixed).unwrap(), first_output);
+    }
 }
