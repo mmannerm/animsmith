@@ -176,7 +176,14 @@ fn required_measurement_commands_refuse_the_small_on_disk_pose_grid_bomb() {
     }
 }
 
-fn mixed_manifest(dir: &Path, bomb_first: bool, wrong_digest: bool) -> PathBuf {
+#[derive(Clone, Copy)]
+enum SourceMismatch {
+    None,
+    Digest,
+    TakeName,
+}
+
+fn mixed_manifest(dir: &Path, bomb_first: bool, mismatch: SourceMismatch) -> PathBuf {
     let mut manifest = String::from(
         "schema = \"urn:animsmith:schema:collection-manifest:1\"\nschema_version = 1\ncollection_id = \"com.example.sampling\"\ninput_root = \"source\"\n",
     );
@@ -188,11 +195,16 @@ fn mixed_manifest(dir: &Path, bomb_first: bool, wrong_digest: bool) -> PathBuf {
         manifest.push_str(&format!(
             "\n[[sources]]\nkey = \"{key}\"\npath = \"{file}.gltf\"\nconfig = \"fixture.toml\"\n"
         ));
-        if file == "bomb" && wrong_digest {
+        if file == "bomb" && matches!(mismatch, SourceMismatch::Digest) {
             manifest.push_str(&format!("expected_sha256 = \"{}\"\n", "0".repeat(64)));
         }
+        let take_name = if file == "bomb" && matches!(mismatch, SourceMismatch::TakeName) {
+            "Incorrect authored take"
+        } else {
+            "clip_0"
+        };
         manifest.push_str(&format!(
-            "\n[[clips]]\nid = \"com.example.sampling/{file}\"\nsource = \"{key}\"\ntake_index = 0\ntake_name = \"clip_0\"\n"
+            "\n[[clips]]\nid = \"com.example.sampling/{file}\"\nsource = \"{key}\"\ntake_index = 0\ntake_name = \"{take_name}\"\n"
         ));
     }
     manifest.push_str("\n[[runtime_sets]]\nid = \"com.example.sampling/pair\"\nkind = \"gait-group\"\nmembers = [\"com.example.sampling/small\", \"com.example.sampling/bomb\"]\n");
@@ -213,8 +225,13 @@ fn collection_keeps_successful_assets_and_exact_refused_source_facts_in_both_ord
     let bomb_bytes = std::fs::read(&bomb).unwrap();
     let loaded = animsmith_gltf::load_source(&bomb).unwrap();
     let closure = serde_json::to_value(loaded.dependency_closure().identity().unwrap()).unwrap();
-    for (bomb_first, wrong_digest) in [(false, false), (true, false), (true, true)] {
-        let manifest = mixed_manifest(dir.path(), bomb_first, wrong_digest);
+    for (bomb_first, mismatch, reason) in [
+        (false, SourceMismatch::None, "sampling_limit_exceeded"),
+        (true, SourceMismatch::None, "sampling_limit_exceeded"),
+        (true, SourceMismatch::Digest, "digest_mismatched"),
+        (true, SourceMismatch::TakeName, "take_name_mismatched"),
+    ] {
+        let manifest = mixed_manifest(dir.path(), bomb_first, mismatch);
         let result = run(&[
             "collection",
             "lint",
@@ -263,11 +280,6 @@ fn collection_keeps_successful_assets_and_exact_refused_source_facts_in_both_ord
         assert_eq!(good["result"]["state"], "available");
         let clips = output["clips"].as_array().unwrap();
         assert_eq!(clips.len(), 2);
-        let reason = if wrong_digest {
-            "digest_mismatched"
-        } else {
-            "sampling_limit_exceeded"
-        };
         assert_eq!(clips[0]["id"], "com.example.sampling/bomb");
         assert_eq!(
             clips[0]["binding"],
@@ -301,7 +313,7 @@ fn collection_allocation_failure_remains_a_command_error_without_partial_evidenc
     fixture(&source, "bomb", 512, 4096, 1);
     fixture(&source, "small", 1, 3, 1);
     std::fs::write(dir.path().join("fixture.toml"), "").unwrap();
-    let manifest = mixed_manifest(dir.path(), false, false);
+    let manifest = mixed_manifest(dir.path(), false, SourceMismatch::None);
     let result = run_with_memory(
         &[
             "collection",
