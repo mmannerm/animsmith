@@ -36,7 +36,7 @@ impl Check for RestWorldScale {
         }
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let settings = ctx.config.check_settings(self.id());
         let selectors = ctx
             .config
@@ -59,7 +59,7 @@ impl Check for RestWorldScale {
         let mut reported_nodes = BTreeSet::new();
 
         if coverage == SkeletonSourceCoverage::Unavailable {
-            return unavailable_selection_output(&selectors);
+            return Ok(unavailable_selection_output(&selectors));
         }
 
         for resolution in selectors.resolve(
@@ -127,7 +127,7 @@ impl Check for RestWorldScale {
             }
         }
 
-        CheckOutput::from_coverage(findings, scopes, gaps)
+        Ok(CheckOutput::from_coverage(findings, scopes, gaps))
     }
 }
 

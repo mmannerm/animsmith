@@ -17,8 +17,12 @@ impl Check for Complete {
         "complete"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(CheckOutput::from_coverage(
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ))
     }
 }
 
@@ -29,8 +33,8 @@ impl Check for FindingCheck {
         "finding"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::from_coverage(
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(CheckOutput::from_coverage(
             vec![Finding::new(
                 self.id(),
                 Severity::Warning,
@@ -38,7 +42,7 @@ impl Check for FindingCheck {
             )],
             Vec::new(),
             Vec::new(),
-        )
+        ))
     }
 }
 
@@ -53,8 +57,8 @@ impl Check for OptInFindingCheck {
         false
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::from_coverage(
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(CheckOutput::from_coverage(
             vec![Finding::new(
                 self.id(),
                 Severity::Note,
@@ -62,7 +66,7 @@ impl Check for OptInFindingCheck {
             )],
             Vec::new(),
             Vec::new(),
-        )
+        ))
     }
 }
 
@@ -73,8 +77,8 @@ impl Check for Partial {
         "partial"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::from_coverage(
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(CheckOutput::from_coverage(
             vec![Finding::new(self.id(), Severity::Error, "member missing")],
             vec![EvaluationScope::new(EvaluationScopeCode::custom(
                 "test:member_existence",
@@ -88,7 +92,7 @@ impl Check for Partial {
                     "test:phase_coherence",
                 ))),
             ],
-        )
+        ))
     }
 }
 
@@ -99,15 +103,15 @@ impl Check for Unevaluated {
         "unevaluated"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::from_coverage(
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(CheckOutput::from_coverage(
             Vec::new(),
             Vec::new(),
             vec![CoverageGap::new(
                 CoverageGapCode::custom("acme:input_unavailable"),
                 "nothing evaluated",
             )],
-        )
+        ))
     }
 }
 
@@ -129,7 +133,7 @@ impl Check for PoisonCheck {
         }
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         panic!("inactive check {} must not evaluate", self.id)
     }
 }
@@ -155,7 +159,7 @@ impl Check for ProtectedCheck {
         }
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         panic!("protected check must remain inactive when not applicable or unselected")
     }
 }
@@ -167,12 +171,12 @@ impl Check for MismatchedFinding {
         "parent"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::from_coverage(
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(CheckOutput::from_coverage(
             vec![Finding::new("other", Severity::Error, "wrong owner")],
             Vec::new(),
             Vec::new(),
-        )
+        ))
     }
 }
 
@@ -183,15 +187,15 @@ impl Check for ForeignBuiltin {
         "foreign-builtin"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx) -> CheckOutput {
-        CheckOutput::from_coverage(
+    fn evaluate(&self, _ctx: &CheckCtx) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(CheckOutput::from_coverage(
             Vec::new(),
             Vec::new(),
             vec![CoverageGap::new(
                 CoverageGapCode::ROLES_UNRESOLVED,
                 "wrong owner",
             )],
-        )
+        ))
     }
 }
 
@@ -622,8 +626,11 @@ fn malformed_check_output_returns_a_typed_evaluation_error() {
             "bad-output"
         }
 
-        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
-            CheckOutput::from_coverage(
+        fn evaluate(
+            &self,
+            _ctx: &CheckCtx<'_>,
+        ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+            Ok(CheckOutput::from_coverage(
                 vec![Finding::new(
                     "bad-output",
                     Severity::Error,
@@ -634,7 +641,7 @@ fn malformed_check_output_returns_a_typed_evaluation_error() {
                     CoverageGapCode::custom("test:measurement_unavailable"),
                     "no usable evidence",
                 )],
-            )
+            ))
         }
     }
 
@@ -706,7 +713,10 @@ fn empty_contract_identifiers_return_typed_errors() {
             ""
         }
 
-        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+        fn evaluate(
+            &self,
+            _ctx: &CheckCtx<'_>,
+        ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
             panic!("invalid catalog ids must fail before evaluation")
         }
     }

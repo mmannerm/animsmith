@@ -22,7 +22,7 @@ impl Check for ConstantNonunitScale {
         false
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let mut findings = Vec::new();
         for (clip, bone, track) in tracks(ctx.doc) {
             if track.property != Property::Scale {
@@ -45,6 +45,6 @@ impl Check for ConstantNonunitScale {
                 );
             }
         }
-        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
+        Ok(CheckOutput::from_coverage(findings, Vec::new(), Vec::new()))
     }
 }

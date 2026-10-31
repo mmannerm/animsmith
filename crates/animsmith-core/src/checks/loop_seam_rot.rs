@@ -48,7 +48,7 @@ impl Check for LoopSeamRotation {
         }
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let mut findings = Vec::new();
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
@@ -128,6 +128,6 @@ impl Check for LoopSeamRotation {
             }
         }
 
-        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
+        Ok(CheckOutput::from_coverage(findings, evaluated_scopes, gaps))
     }
 }

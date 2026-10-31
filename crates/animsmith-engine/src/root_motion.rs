@@ -139,9 +139,12 @@ impl Check for EngineRootMotionCheck<'_> {
         }
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance.filter(|_| self.exact_applicable()) else {
-            return empty_output();
+            return Ok(empty_output());
         };
         let demand = plan_demand(provenance);
         let (candidate_capacity, summary_required) = match demand {
@@ -151,13 +154,13 @@ impl Check for EngineRootMotionCheck<'_> {
                 true,
             ),
         };
-        evaluate_allocated(
+        Ok(evaluate_allocated(
             self.source,
             provenance,
             self.measurements,
             candidate_capacity,
             summary_required,
-        )
+        ))
     }
 
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
@@ -170,17 +173,17 @@ impl Check for EngineRootMotionCheck<'_> {
         &self,
         _ctx: &CheckCtx<'_>,
         allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance.filter(|_| self.exact_applicable()) else {
-            return empty_output();
+            return Ok(empty_output());
         };
-        evaluate_allocated(
+        Ok(evaluate_allocated(
             self.source,
             provenance,
             self.measurements,
             allocation.candidate_capacity(),
             allocation.summary_required(),
-        )
+        ))
     }
 }
 

@@ -18,7 +18,7 @@ impl Check for DurationSanity {
         "duration-sanity"
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let mut findings = Vec::new();
         let doc = ctx.doc;
         for (index, clip) in doc.clips.iter().enumerate() {
@@ -120,6 +120,6 @@ impl Check for DurationSanity {
                 );
             }
         }
-        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
+        Ok(CheckOutput::from_coverage(findings, Vec::new(), Vec::new()))
     }
 }

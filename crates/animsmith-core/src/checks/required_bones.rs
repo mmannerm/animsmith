@@ -32,7 +32,7 @@ impl Check for RequiredBones {
         }
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let required = ctx
             .config
             .rig
@@ -42,7 +42,7 @@ impl Check for RequiredBones {
         let scope = EvaluationScope::new(EvaluationScopeCode::REQUIRED_BONE_PRESENCE);
 
         if ctx.doc.skeleton.bones.is_empty() {
-            return CheckOutput::from_coverage(
+            return Ok(CheckOutput::from_coverage(
                 Vec::new(),
                 Vec::new(),
                 vec![CoverageGap::new(
@@ -50,7 +50,7 @@ impl Check for RequiredBones {
                     "required skeleton bones cannot be checked because the file has no usable skeleton",
                 )
                 .scope(scope)],
-            );
+            ));
         }
 
         // A repeated declaration is one requirement, not repeated work: emit
@@ -95,6 +95,10 @@ impl Check for RequiredBones {
             }
         }
 
-        CheckOutput::from_coverage(findings, vec![scope], Vec::new())
+        Ok(CheckOutput::from_coverage(
+            findings,
+            vec![scope],
+            Vec::new(),
+        ))
     }
 }

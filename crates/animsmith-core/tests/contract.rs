@@ -242,7 +242,10 @@ impl Check for DisabledCheck {
         "disabled"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         panic!("disabled checks must not evaluate")
     }
 }

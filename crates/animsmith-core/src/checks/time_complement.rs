@@ -33,7 +33,7 @@ impl Check for TimeComplement {
         }
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let mut findings = Vec::new();
         let mut evaluated_scopes =
             vec![EvaluationScope::new(EvaluationScopeCode::MEMBER_EXISTENCE)];
@@ -189,7 +189,7 @@ impl Check for TimeComplement {
             }
         }
 
-        CheckOutput::from_coverage(findings, evaluated_scopes, gaps)
+        Ok(CheckOutput::from_coverage(findings, evaluated_scopes, gaps))
     }
 }
 

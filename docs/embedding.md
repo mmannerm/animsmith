@@ -343,6 +343,13 @@ animsmith findings with host-owned checks keeps that boundary explicit.
 
 ## Migrating an existing pipeline
 
+For 0.15, custom `Check::evaluate` implementations and the existing
+prediction-allocation hook return `Result<CheckOutput, EvaluationError>`. Wrap
+successful outputs in `Ok` and propagate failures at direct call sites. Both
+catalog runners already return `Result` and now abort on inconclusive check
+evidence; do not replace that error with an empty result. Existing wire
+evidence contracts remain unchanged.
+
 For a command-by-command migration plan, use the
 [pipeline scenarios](pipeline-scenarios.md) for marketplace intake, mocap
 cleanup, outsourced acceptance, CI gating, and raw/generated artifact

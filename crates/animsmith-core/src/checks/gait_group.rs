@@ -31,14 +31,18 @@ impl Check for GaitGroup {
         }
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let mut findings = Vec::new();
         let mut coverage = run_content(ctx, &mut findings);
         coverage.evaluated_scopes.insert(
             0,
             EvaluationScope::new(EvaluationScopeCode::MEMBER_EXISTENCE),
         );
-        CheckOutput::from_coverage(findings, coverage.evaluated_scopes, coverage.gaps)
+        Ok(CheckOutput::from_coverage(
+            findings,
+            coverage.evaluated_scopes,
+            coverage.gaps,
+        ))
     }
 }
 
