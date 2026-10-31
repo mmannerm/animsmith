@@ -6,7 +6,8 @@ Scope note: this is a dated research artifact, not the current animsmith
 product contract. The user-facing explainer of what animsmith checks and
 why is [`docs/game-ready-clips.md`](../game-ready-clips.md). Before
 converting any recommendation into an issue, reconcile it against
-`DESIGN.md`, the shipped CLI docs, the stable check ids, and any newer
+[Current architecture](../architecture.md), retained [design decisions](../../DESIGN.md),
+the shipped CLI docs, the stable check ids, and any newer
 documentation that has merged since this note was written.
 
 ## Executive Summary

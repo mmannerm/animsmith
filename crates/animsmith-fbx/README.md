@@ -187,7 +187,7 @@ workspace MSRV is Rust 1.88.
 - [Embedding guide](https://github.com/mmannerm/animsmith/blob/main/docs/embedding.md)
 - [Raw asset to game-ready pipeline scenarios](https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md)
 - [CLI feature flags](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md#feature-flags)
-- [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
+- [Current architecture](https://github.com/mmannerm/animsmith/blob/main/docs/architecture.md)
 
 ## License
 

@@ -287,7 +287,7 @@ or artistically accepted.
 - [Scale workflow](https://github.com/mmannerm/animsmith/blob/main/docs/scale.md)
 - [Raw asset to game-ready pipeline scenarios](https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md)
 - [CLI reference](https://github.com/mmannerm/animsmith/blob/main/docs/cli.md)
-- [Workspace design](https://github.com/mmannerm/animsmith/blob/main/DESIGN.md)
+- [Current architecture](https://github.com/mmannerm/animsmith/blob/main/docs/architecture.md)
 
 ## License
 

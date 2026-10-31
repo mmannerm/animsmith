@@ -1,8 +1,20 @@
-# animsmith — design & requirements
+# animsmith — design history and retained decisions
 
-Status: pre-1.0 publishing design. Intended to keep the public crate and
-CLI surface aligned while the project is still willing to make breaking
-changes.
+Status: historical rationale with retained requirements. For current crate
+boundaries and data flow, start with [Current architecture](docs/architecture.md).
+Active sequencing is maintained in [GitHub milestones](https://github.com/mmannerm/animsmith/milestones)
+and [roadmap issue #165](https://github.com/mmannerm/animsmith/issues/165), not
+the original phases below.
+
+This document mixes original design context with accepted decisions added
+later. Its explicit numerical, preservation, authority and failure requirements
+remain in force, including the command decisions and Appendices C–F. Historical
+crate inventories, examples and implementation sequences are not evidence of
+current availability. Use the architecture, CLI/API references and live tracker
+to establish what ships; retain these decisions when assessing correctness.
+Schema identities in a decision refer to the revision it describes, not a
+promise that it is the latest emitted version. The [output reference](docs/output.md)
+owns current identities; historical wire contracts remain immutable.
 Origin: extracted from a private game project's animation pipeline
 (design session 2026-07-03); that project — "the incubating project"
 below — is the first consumer, not the scope.
@@ -347,57 +359,12 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
 
 ## 4. Repository & crate layout
 
-One public repo, one cargo workspace, five published crates (plus one
-`publish = false` dev crate, `animsmith-testkit`). The split is driven by
-two hard constraints: the core must be consumable with zero C compilation
-and minimal deps; FBX support pulls in a C build step most library
-consumers must never pay for.
-
-```
-animsmith/
-├── Cargo.toml                  # workspace, edition 2024
-├── LICENSE-MIT / LICENSE-APACHE
-├── THIRD-PARTY.md              # ufbx (MIT OR PDDL-1.0), vendored viewer assets
-├── crates/
-│   ├── animsmith-core/          # data model, sampling/FK, metrics, diffs, checks, config, findings
-│   ├── animsmith-gltf/          # glTF/GLB → core model; GLB writer for `convert`
-│   ├── animsmith-fbx/           # ufbx wrapper → core model; isolates the C build
-│   ├── animsmith-report/        # self-contained HTML report generation
-│   ├── animsmith/               # CLI binary (features: fbx, report — default on)
-│   └── animsmith-testkit/       # publish=false: fixture builders, documentation-source readers, and CLI process helpers shared by tests + the example generators
-├── assets/viewer/              # viewer JS/CSS, inlined via include_str!
-├── fuzz/                       # cargo-fuzz targets for the untrusted-input loaders
-└── testdata/                   # CC0 rigs + procedurally corrupted fixtures
-```
-
-- **animsmith-core**: deps `glam` (the de-facto Rust game-math crate — do
-  not hand-roll mat4/quat as the Python did), `serde`, `serde_json`,
-  `serde_jcs` for strict bounded core-owned RFC 8785 canonical JSON contracts,
-  `sha2`, and `thiserror`. Its JCS use remains engine-, format-, filesystem-,
-  and network-agnostic. It owns strict versioned JSON contract validation but
-  no file-format knowledge or filesystem/network I/O. This is what embedding
-  pipelines link.
-- **animsmith-gltf**: the `gltf` crate with trimmed features (no image
-  decoding); owns GLB emission via `gltf-json`.
-- **animsmith-fbx**: `ufbx` (official bindings, v0.11.x, actively
-  maintained; bundles the single-file C library via `cc` — no system
-  deps). A separate crate rather than a feature flag so the C toolchain
-  requirement is structurally isolated.
-- **animsmith (CLI)**: `clap`, `serde_json`, `toml`. `--no-default-features`
-  yields a pure-Rust glTF-only build.
-- Toolchain: stable Rust, edition 2024, MSRV pinned in CI. License:
-  MIT OR Apache-2.0. All crate names verified free on crates.io
-  (2026-07-03).
-- **fuzz/**: a nightly-only cargo-fuzz workspace (detached from the main
-  workspace) with libFuzzer targets for the three entry points that ingest
-  untrusted files — `animsmith_gltf::load`, `FixSession::apply_to_path(..., Repair::QuatFlip)`,
-  and `animsmith_fbx::load`. These are the executable check on invariant-1
-  ("untrusted input must never panic or OOM"): targets run in release mode
-  to match the shipped CLI's panic semantics, with AddressSanitizer on. A
-  weekly CI job (`fuzz.yml`) runs each target for 60s off a checked-in seed
-  corpus; minimized crashers are committed under `fuzz/seeds/` as regression
-  fixtures, each also pinned by a unit test in `animsmith-gltf`'s hardening
-  suite. Continuous/long-running fuzzing (OSS-Fuzz) is deferred.
+The original split separated an engine-neutral core from format adapters,
+reporting and CLI orchestration, keeping ufbx's C build out of core consumers.
+The current crate inventory, dependency direction, isolated tools and ownership
+are maintained in [Current architecture](docs/architecture.md#workspace-and-dependency-direction).
+The original five-crate inventory is superseded; it predates the separate
+engine crate and is not a contributor contract.
 
 ## 5. Core data model
 
@@ -874,6 +841,12 @@ to *that* frame N. Determinism is the feature.
   inherited scale.
 
 ## 11. Roadmap
+
+**Historical plan from the 2026-07-03 design session.** These M0–M3 phases
+record the original sequence, not active work or release acceptance. Current
+sequencing and deliberate deferrals are in [milestones](https://github.com/mmannerm/animsmith/milestones)
+and [roadmap issue #165](https://github.com/mmannerm/animsmith/issues/165).
+
 
 - **M0 — walking skeleton.** Repo bootstrap: workspace, dual license, CI
   (fmt/clippy/test on Linux/macOS/Windows), CC0 test fixtures. Core model

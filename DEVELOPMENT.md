@@ -3,7 +3,8 @@
 This file is the canonical local setup and verification guide for a
 source checkout. Contributor process lives in [CONTRIBUTING.md](CONTRIBUTING.md);
 release operations live in [RELEASING.md](RELEASING.md); architecture and
-crate boundaries live in [DESIGN.md](DESIGN.md).
+crate boundaries live in [Current architecture](docs/architecture.md);
+[DESIGN.md](DESIGN.md) retains historical rationale and accepted contracts.
 
 ## Toolchain
 

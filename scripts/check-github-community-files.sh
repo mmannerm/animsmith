@@ -271,7 +271,7 @@ require_match CONTRIBUTING.md '^## Labels And Milestones$' "labels and milestone
 require_match CONTRIBUTING.md '^## Merge Policy$' "merge policy"
 
 require_literal DEVELOPMENT.md "RELEASING.md" "maintainer release-doc link"
-require_literal DEVELOPMENT.md "DESIGN.md" "architecture-doc link"
+require_literal DEVELOPMENT.md "docs/architecture.md" "architecture-doc link"
 require_literal DEVELOPMENT.md "MSRV \`$MSRV\`" "MSRV"
 require_no_versioned_rust_toolchain_ref
 require_literal DEVELOPMENT.md "just install-rust-tools" "tool install command"
