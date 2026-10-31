@@ -23,11 +23,17 @@
 //! repaired.) `quat-norm` skips CUBICSPLINE tracks because scaling value
 //! keys without their tangents would change interior samples. Sparse
 //! accessors and quantized (normalized-int) rotations are skipped.
+//!
+//! Both repairs require exclusive storage ownership. Original source ranges
+//! and semantic uses are inventoried once before mutation; conflicting or
+//! unprovable ownership produces a located skip instead of altering another
+//! accessor, image or extension payload. Disjoint accessors may share a view.
 
 use crate::{FixError, LoadError, resolve_buffers};
 use std::ops::Range;
 use std::path::Path;
 
+mod ownership;
 mod publication;
 
 const ROTATION_ELEMENT_BYTES: usize = 16;
@@ -54,8 +60,8 @@ pub struct TrackFix {
 pub struct FixReport {
     /// Rotation tracks that were patched.
     pub tracks: Vec<TrackFix>,
-    /// Tracks that needed repair but were skipped (data URI, cubic,
-    /// quantized, sparse, or malformed accessors), with reasons.
+    /// Tracks skipped because interpolation, encoding, layout, or source storage
+    /// ownership prevents a safe repair, with reasons.
     pub skipped: Vec<String>,
 }
 
@@ -104,6 +110,7 @@ pub struct FixSession {
     original: Vec<u8>,
     gltf: gltf::Gltf,
     buffers: Vec<Vec<u8>>,
+    ownership: ownership::Ownership,
     origin: publication::Origin,
 }
 
@@ -128,12 +135,14 @@ impl FixSession {
         // time, not assumed to be index 0). External and data-URI buffers
         // are loaded, patched, and written back to where they came from.
         let buffers = resolve_buffers(&gltf, input.parent())?;
+        let ownership = ownership::Ownership::read(&original, &buffers)?;
         let origin = publication::Origin::capture(input, &gltf, !original.starts_with(b"glTF"))?;
 
         Ok(Self {
             original,
             gltf,
             buffers,
+            ownership,
             origin,
         })
     }
@@ -338,6 +347,13 @@ impl FixSession {
                         range.start,
                         range.end,
                         buffer.len()
+                    ));
+                    continue;
+                }
+                if let Some(reason) = self.ownership.reason(accessor.index()) {
+                    report.skipped.push(format!(
+                        "{clip}/{bone}: /accessors/{} {reason}",
+                        accessor.index()
                     ));
                     continue;
                 }

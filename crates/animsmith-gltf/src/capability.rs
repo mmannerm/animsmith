@@ -949,7 +949,7 @@ fn violation(
     });
 }
 
-fn as_index(value: Option<&Value>) -> Option<usize> {
+pub(crate) fn as_index(value: Option<&Value>) -> Option<usize> {
     value?.as_u64()?.try_into().ok()
 }
 
@@ -1693,7 +1693,7 @@ enum AccessorUse {
 
 /// Which source object owns one byte range in the disjointness inspection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum RangeOwner {
+pub(crate) enum RangeOwner {
     /// An accessor's dense element range.
     Accessor(usize),
     /// An accessor's sparse-index element range.
@@ -1702,11 +1702,13 @@ enum RangeOwner {
     SparseValues(usize),
     /// An `image`'s complete buffer view.
     ImagePayload(usize),
+    /// A direct buffer view owned by an extension payload.
+    ExtensionView(usize),
 }
 
 impl RangeOwner {
     /// JSON pointer identifying the owner.
-    fn location(self) -> String {
+    pub(crate) fn location(self) -> String {
         match self {
             Self::Accessor(index) => format!("/accessors/{index}"),
             Self::SparseIndices(index) => {
@@ -1716,6 +1718,7 @@ impl RangeOwner {
                 format!("/accessors/{index}/sparse/values/bufferView")
             }
             Self::ImagePayload(index) => format!("/images/{index}/bufferView"),
+            Self::ExtensionView(index) => format!("/bufferViews/{index}"),
         }
     }
 
@@ -1727,12 +1730,13 @@ impl RangeOwner {
                 GltfCapabilityViolationKind::OverlappingAccessorRanges
             }
             Self::ImagePayload(_) => GltfCapabilityViolationKind::ImagePayloadOverlap,
+            Self::ExtensionView(_) => GltfCapabilityViolationKind::ExtensionPayload,
         }
     }
 }
 
-/// One `(buffer, start, end, owner, scale_bearing)` range entry.
-type OwnedRange = (usize, usize, usize, RangeOwner, bool);
+/// One `(buffer, start, end, owner, writable)` range entry.
+pub(crate) type OwnedRange = (usize, usize, usize, RangeOwner, bool);
 
 fn inspect_accessor_layouts(
     root: &Value,
@@ -1784,45 +1788,69 @@ fn inspect_accessor_layouts(
         }
     }
     ranges.extend(image_payload_ranges(root));
+    for owner in overlapping_ranges(&mut ranges).into_keys() {
+        violation(violations, owner.overlap_kind(), owner.location());
+    }
+}
+
+/// Mark every owner overlapping a writable range, with a deterministic witness.
+/// Sort once, then sweep both directions to include enclosing preserved spans.
+/// Callers supply their own writable policy and interpret the conflicts.
+pub(crate) fn overlapping_ranges(ranges: &mut Vec<OwnedRange>) -> BTreeMap<RangeOwner, RangeOwner> {
+    ranges.retain(|(_, start, end, _, _)| start < end);
     ranges.sort_unstable();
 
-    let mut overlapping = BTreeSet::new();
-    let mut prior_scale: Option<(usize, usize, RangeOwner)> = None;
-    for &(buffer, start, end, owner, scale_bearing) in &ranges {
-        if let Some((left_buffer, left_end, left_owner)) = prior_scale
+    let mut overlapping = BTreeMap::new();
+    let mut prior_write: Option<(usize, usize, RangeOwner)> = None;
+    let mut prior_any: Option<(usize, usize, RangeOwner)> = None;
+    for &(buffer, start, end, owner, writable) in ranges.iter() {
+        // A writable owner must see every preserved span as well. Keeping only
+        // writable extrema misses later writes enclosed by one preserved span.
+        let prior = if writable { prior_any } else { prior_write };
+        if let Some((left_buffer, left_end, left_owner)) = prior
             && left_buffer == buffer
             && start < left_end
         {
-            overlapping.insert(left_owner);
-            overlapping.insert(owner);
+            overlapping.entry(left_owner).or_insert(owner);
+            overlapping.entry(owner).or_insert(left_owner);
         }
-        if scale_bearing
-            && prior_scale
+        if writable
+            && prior_write
                 .is_none_or(|(left_buffer, left_end, _)| left_buffer != buffer || end > left_end)
         {
-            prior_scale = Some((buffer, end, owner));
+            prior_write = Some((buffer, end, owner));
+        }
+        if prior_any
+            .is_none_or(|(left_buffer, left_end, _)| left_buffer != buffer || end > left_end)
+        {
+            prior_any = Some((buffer, end, owner));
         }
     }
-    let mut later_scale: Option<(usize, usize, RangeOwner)> = None;
-    for &(buffer, start, end, owner, scale_bearing) in ranges.iter().rev() {
-        if let Some((right_buffer, right_start, right_owner)) = later_scale
+    let mut later_write: Option<(usize, usize, RangeOwner)> = None;
+    let mut later_any: Option<(usize, usize, RangeOwner)> = None;
+    for &(buffer, start, end, owner, writable) in ranges.iter().rev() {
+        let later = if writable { later_any } else { later_write };
+        if let Some((right_buffer, right_start, right_owner)) = later
             && right_buffer == buffer
             && right_start < end
         {
-            overlapping.insert(owner);
-            overlapping.insert(right_owner);
+            overlapping.entry(owner).or_insert(right_owner);
+            overlapping.entry(right_owner).or_insert(owner);
         }
-        if scale_bearing
-            && later_scale.is_none_or(|(right_buffer, right_start, _)| {
+        if writable
+            && later_write.is_none_or(|(right_buffer, right_start, _)| {
                 right_buffer != buffer || start < right_start
             })
         {
-            later_scale = Some((buffer, start, owner));
+            later_write = Some((buffer, start, owner));
+        }
+        if later_any.is_none_or(|(right_buffer, right_start, _)| {
+            right_buffer != buffer || start < right_start
+        }) {
+            later_any = Some((buffer, start, owner));
         }
     }
-    for owner in overlapping {
-        violation(violations, owner.overlap_kind(), owner.location());
-    }
+    overlapping
 }
 
 /// Every byte range owned by an unreferenced accessor.
@@ -1833,7 +1861,7 @@ fn inspect_accessor_layouts(
 /// same disjointness ledger as ordinary dense accessors. Returning `None`
 /// fails closed when a declared span cannot be resolved; an empty vector is a
 /// valid accessor with no owned bytes.
-fn preserved_accessor_ranges(
+pub(crate) fn preserved_accessor_ranges(
     root: &Map<String, Value>,
     buffers: &[Vec<u8>],
     accessor_index: usize,
@@ -1844,7 +1872,7 @@ fn preserved_accessor_ranges(
         .get(accessor_index)?
         .as_object()?;
     let count: usize = accessor.get("count")?.as_u64()?.try_into().ok()?;
-    if count == 0 {
+    if count == 0 && accessor.get("sparse").is_none() {
         return Some(Vec::new());
     }
     let Some(sparse) = accessor.get("sparse") else {
@@ -1859,7 +1887,7 @@ fn preserved_accessor_ranges(
     };
 
     let mut ranges = Vec::with_capacity(3);
-    if accessor.get("bufferView").is_some() {
+    if count > 0 && accessor.get("bufferView").is_some() {
         let range = dense_accessor_range(root, buffers, accessor_index)?;
         ranges.push((
             range.buffer,
@@ -1882,7 +1910,7 @@ fn preserved_accessor_ranges(
         5125 => 4,
         _ => return None,
     };
-    let indices_range = packed_view_range(
+    let indices_range = preserved_view_range(
         root,
         buffers,
         as_index(indices.get("bufferView"))?,
@@ -1905,7 +1933,7 @@ fn preserved_accessor_ranges(
     let values = sparse.get("values")?.as_object()?;
     let component_size = component_size(accessor.get("componentType")?.as_u64()?)?;
     let element_layout = accessor_element_layout(accessor.get("type")?.as_str()?, component_size)?;
-    let values_range = packed_view_range(
+    let values_range = preserved_view_range(
         root,
         buffers,
         as_index(values.get("bufferView"))?,
@@ -1927,8 +1955,10 @@ fn preserved_accessor_ranges(
     Some(ranges)
 }
 
-/// Resolve one tightly packed walk within a declared buffer view.
-fn packed_view_range(
+/// Preserve a sparse payload's full storage envelope. Sparse views should be
+/// packed, but the upstream parser also accepts an explicit stride and its
+/// reader uses it. Ignoring that declaration could leave owned bytes unprotected.
+fn preserved_view_range(
     root: &Map<String, Value>,
     buffers: &[Vec<u8>],
     view_index: usize,
@@ -1955,8 +1985,17 @@ fn packed_view_range(
         return None;
     }
     let relative_offset: usize = relative_offset.try_into().ok()?;
+    let stride: usize = view
+        .get("byteStride")
+        .and_then(Value::as_u64)
+        .unwrap_or(element_stride as u64)
+        .try_into()
+        .ok()?;
+    if stride < element_stride {
+        return None;
+    }
     let relative_end = relative_offset
-        .checked_add(count.checked_sub(1)?.checked_mul(element_stride)?)?
+        .checked_add(count.checked_sub(1)?.checked_mul(stride)?)?
         .checked_add(terminal_size)?;
     if relative_end > view_length {
         return None;
@@ -1980,7 +2019,7 @@ fn packed_view_range(
 /// | `/accessors/*/bufferView` | Every accessor is ranged by [`inspect_accessor_layouts`] above, whether referenced or not. |
 /// | `/accessors/*/sparse/indices/bufferView`, `/accessors/*/sparse/values/bufferView` | Ranged for unreferenced accessors. A referenced sparse accessor remains an `UnsafeAccessorLayout` refusal and never reaches a rewrite. |
 /// | `/images/*/bufferView` | Ranged here. |
-/// | Extension payloads such as `EXT_meshopt_compression` or `KHR_draco_mesh_compression` | Out of range: this crate registers no extension handler, so every extension declaration *and* every extension payload is already an `ExtensionDeclaration`/`ExtensionPayload` violation. |
+/// | Extension payloads such as `EXT_meshopt_compression` or `KHR_draco_mesh_compression` | Scale's capability gate rejects extension declarations/payloads. Surgical repair supplies its own extension ownership inventory before reusing the overlap scan. |
 ///
 /// # Bounds
 ///
@@ -1992,15 +2031,10 @@ fn packed_view_range(
 /// buffer's length, so every range compared against ends below `usize::MAX`: a
 /// start large enough to clamp is already past all of them, and a clamped end
 /// only widens the image range.
-fn image_payload_ranges(root: &Map<String, Value>) -> Vec<OwnedRange> {
+pub(crate) fn image_payload_ranges(root: &Map<String, Value>) -> Vec<OwnedRange> {
     let Some(images) = root.get("images").and_then(Value::as_array) else {
         return Vec::new();
     };
-    let buffer_views = root
-        .get("bufferViews")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
     let mut out = Vec::new();
     for (image_index, image) in images.iter().enumerate() {
         let Some(view_index) = as_index(image.get("bufferView")) else {
@@ -2008,16 +2042,9 @@ fn image_payload_ranges(root: &Map<String, Value>) -> Vec<OwnedRange> {
         };
         // An out-of-range index is an `IndexOutOfBounds` validation error,
         // which `validate_document` raises before this inspection runs.
-        let Some(view) = buffer_views.get(view_index).and_then(Value::as_object) else {
+        let Some((buffer, start, end)) = declared_view_range(root, view_index) else {
             continue;
         };
-        let Some(buffer) = as_index(view.get("buffer")) else {
-            continue;
-        };
-        let start = clamped_usize(view.get("byteOffset").and_then(Value::as_u64).unwrap_or(0));
-        let end = start.saturating_add(clamped_usize(
-            view.get("byteLength").and_then(Value::as_u64).unwrap_or(0),
-        ));
         // An empty view shares no byte with anything under the half-open
         // comparison every range here uses, so it is dropped rather than
         // ranged. [`crate::scale::reject_image_payload_overlap`] skips the
@@ -2033,6 +2060,23 @@ fn image_payload_ranges(root: &Map<String, Value>) -> Vec<OwnedRange> {
         }
     }
     out
+}
+
+/// A direct payload view, conservatively saturated rather than truncated to
+/// the loaded buffer: even a declared tail beyond loaded bytes owns its prefix.
+pub(crate) fn declared_view_range(
+    root: &Map<String, Value>,
+    view_index: usize,
+) -> Option<(usize, usize, usize)> {
+    let view = root
+        .get("bufferViews")?
+        .as_array()?
+        .get(view_index)?
+        .as_object()?;
+    let buffer = as_index(view.get("buffer"))?;
+    let start = clamped_usize(view.get("byteOffset").and_then(Value::as_u64).unwrap_or(0));
+    let end = start.saturating_add(clamped_usize(view.get("byteLength")?.as_u64()?));
+    Some((buffer, start, end))
 }
 
 fn clamped_usize(value: u64) -> usize {
@@ -2407,11 +2451,11 @@ fn inspect_schema_members(
     }
 }
 
-fn json_pointer_child(pointer: &str, token: &str) -> String {
+pub(crate) fn json_pointer_child(pointer: &str, token: &str) -> String {
     format!("{pointer}/{}", json_pointer_token(token))
 }
 
-fn json_pointer_token(token: &str) -> String {
+pub(crate) fn json_pointer_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
 
