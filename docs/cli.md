@@ -90,6 +90,13 @@ It inventories clips, bones, materials, and mesh-instance nodes, including each
 instance's mesh, skin status, and primitive/material context. Use those names
 when authoring `assemble` or material texture recipes.
 
+`frozen-bone` uses conservative interpolation-aware evidence for cubic
+rotation. If it cannot prove sufficient motion or a flat hold, lint and
+collection lint return a contextual operator error (exit 2) with no result;
+report commands leave prior output intact. This is not a clean or partial
+check. LINEAR/STEP behavior and the keyed rotation-range measurement remain
+unchanged. See [frozen-bone](built-in-checks.md#frozen-bone).
+
 ### Structural skeleton comparison
 
 `skeleton compare` establishes only declared structural compatibility evidence

@@ -12041,7 +12041,10 @@ mod measurement_report_input_tests {
             Applicability::NotApplicable
         }
 
-        fn evaluate(&self, _ctx: &crate::CheckCtx<'_>) -> CheckOutput {
+        fn evaluate(
+            &self,
+            _ctx: &crate::CheckCtx<'_>,
+        ) -> Result<CheckOutput, crate::EvaluationError> {
             panic!("an inapplicable check must not be evaluated")
         }
     }

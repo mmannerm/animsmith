@@ -16,7 +16,7 @@ impl Check for QuatFlip {
         "quat-flip"
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let mut findings = Vec::new();
         let doc = ctx.doc;
         for (clip, bone, track) in tracks(doc) {
@@ -56,6 +56,6 @@ impl Check for QuatFlip {
                 );
             }
         }
-        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
+        Ok(CheckOutput::from_coverage(findings, Vec::new(), Vec::new()))
     }
 }

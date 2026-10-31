@@ -2841,7 +2841,10 @@ mod tests {
                 Applicability::Applicable
             }
 
-            fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+            fn evaluate(
+                &self,
+                _ctx: &CheckCtx<'_>,
+            ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
                 panic!("disabled check must not evaluate")
             }
         }

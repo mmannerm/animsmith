@@ -26,7 +26,7 @@ impl Check for MissingBones {
         }
     }
 
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput {
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError> {
         let mut findings = Vec::new();
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
             let Some(required) = ctx.expectations(index).animates_bones.as_deref() else {
@@ -68,6 +68,6 @@ impl Check for MissingBones {
                 }
             }
         }
-        CheckOutput::from_coverage(findings, Vec::new(), Vec::new())
+        Ok(CheckOutput::from_coverage(findings, Vec::new(), Vec::new()))
     }
 }

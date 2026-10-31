@@ -10,6 +10,15 @@ README is a compact crates.io and repository index; the crate-root
 rustdoc owns the embedding flow, API status, extension points, and
 panic/error contracts.
 
+## Fallible check evaluation
+
+For 0.15, `Check::evaluate` and its existing prediction-allocation hook return
+`Result<CheckOutput, EvaluationError>`. Custom implementations wrap completed
+outputs in `Ok`; direct callers propagate errors. Both catalog runners abort
+on errors rather than creating partial records. This is a Rust API break;
+wire schemas are unchanged. Cubic `frozen-bone` evidence uses this boundary
+when it cannot prove sufficient motion or a genuinely flat hold.
+
 ## Raw Source Facts and Dependency Closure
 
 The core crate owns a bounded, format-neutral V1 vocabulary for importer-
