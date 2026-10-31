@@ -40,7 +40,10 @@ impl Check for LaterFacetRule {
         "test:later-facet"
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         panic!("current V2 evaluation must use the allocated hook")
     }
 
@@ -52,7 +55,7 @@ impl Check for LaterFacetRule {
         &self,
         _ctx: &CheckCtx<'_>,
         allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         self.allocations.borrow_mut().push((
             allocation.candidate_capacity(),
             allocation.summary_required(),
@@ -64,8 +67,10 @@ impl Check for LaterFacetRule {
         .unwrap();
         let facet = EnginePredictionFacetV2::available(scope.clone(), basis).unwrap();
         let prediction = EnginePredictionV2::new(self.identity.clone(), vec![facet]).unwrap();
-        CheckOutput::from_coverage(Vec::new(), vec![scope], Vec::new())
-            .with_engine_prediction_v2(prediction)
+        Ok(
+            CheckOutput::from_coverage(Vec::new(), vec![scope], Vec::new())
+                .with_engine_prediction_v2(prediction),
+        )
     }
 }
 
@@ -233,7 +238,9 @@ fn evaluate(
     let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
-    check.evaluate(&CheckCtx::new(&grids, &roles, &config))
+    check
+        .evaluate(&CheckCtx::new(&grids, &roles, &config))
+        .unwrap()
 }
 
 fn evaluate_record(

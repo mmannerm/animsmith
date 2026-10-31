@@ -74,21 +74,29 @@ impl Check for EngineClipBoundaryCheck<'_> {
         }
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return empty_output();
+            return Ok(empty_output());
         };
         if !is_exact_unreal_fbx(self.source, provenance)
             || complete_empty_stack_inventory(self.source)
         {
-            return empty_output();
+            return Ok(empty_output());
         }
         let demand = facet_demand(self.source);
         let (capacity, summary_required) = match demand {
             PredictionFacetDemandV2::Exact(count) => (count, false),
             PredictionFacetDemandV2::NPlusOne => (FACET_LIMIT.saturating_sub(1), true),
         };
-        evaluate_allocated(self.source, provenance, capacity, summary_required)
+        Ok(evaluate_allocated(
+            self.source,
+            provenance,
+            capacity,
+            summary_required,
+        ))
     }
 
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
@@ -107,21 +115,21 @@ impl Check for EngineClipBoundaryCheck<'_> {
         &self,
         _ctx: &CheckCtx<'_>,
         allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return empty_output();
+            return Ok(empty_output());
         };
         if !is_exact_unreal_fbx(self.source, provenance)
             || complete_empty_stack_inventory(self.source)
         {
-            return empty_output();
+            return Ok(empty_output());
         }
-        evaluate_allocated(
+        Ok(evaluate_allocated(
             self.source,
             provenance,
             allocation.candidate_capacity(),
             allocation.summary_required(),
-        )
+        ))
     }
 }
 

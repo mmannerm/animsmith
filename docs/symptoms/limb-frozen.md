@@ -119,6 +119,13 @@ Four related rig-integrity failures, in increasing subtlety:
   skeleton and carry at least one keyframed track. The `missing-bones`
   check catches slices that accidentally dropped a channel — leaving a
   limb static — and exports against the wrong rig.
+- **Cubic motion cannot be decided.** Equal key rotations do not imply a
+  static CUBICSPLINE curve: its tangents may move the bone between keys.
+  `frozen-bone` accepts a sufficient authored-key or midpoint motion witness,
+  and proves flat holds from equal raw values and zero participating tangents.
+  Otherwise it returns a contextual command error (exit 2), without replacing
+  a prior report. This conservative check does not solve the full curve
+  maximum or infer frozen motion from a finite sample.
 - **A bone has keys but never moves.** A required bone whose rotation
   never exceeds a floor is frozen: a T-posed limb, a wrong-source
   slice, or a masked-out channel that a presence-only check would

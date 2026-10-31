@@ -141,7 +141,7 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   may remain), `1` at least one error-severity finding, any
   `required_prediction_unavailable` facet, pending repairs under
   `fix --dry-run`, or any producer refusal established as a fact about source
-  asset bytes, `2` operator/tool error (unreadable declared file, bad config or
+  asset bytes, `2` operator/tool error (inconclusive check evaluation, unreadable declared file, bad config or
   recipe syntax, unsafe/unwritable path, or publication failure).
   `--deny-warnings` promotes warnings to errors; severity and `--allow` do not
   suppress an emitted required-unavailable facet.
@@ -476,7 +476,7 @@ pub trait Check {
     fn id(&self) -> &'static str;              // "loop-seam", "quat-flip", …
     fn enabled_by_default(&self) -> bool;       // true unless policy is opt-in
     fn applicability(&self, ctx: &CheckCtx) -> Applicability;
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput;
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, EvaluationError>;
 }
 pub struct Finding {
     pub check_id: &'static str, pub severity: Severity,   // Note | Warning | Error
@@ -485,6 +485,12 @@ pub struct Finding {
     pub message: String,
 }
 ```
+
+A check that cannot establish its decision and has no declared unavailable
+wire state returns `EvaluationError`; both runners abort without partial
+records. The CLI maps that error to exit 2 before publication. This includes
+inconclusive cubic `frozen-bone` evidence and does not widen historical output
+schemas or their permitted coverage codes.
 
 The structured fields (not just a message string) are what make `diff`,
 the JSON schema, and the HTML report cheap.
@@ -508,7 +514,7 @@ golden-test against.
 | `non-uniform-scale` | component inequality anywhere on the interpolation-aware scale trajectory | raw trajectory | severity | new |
 | `constant-nonunit-scale` | constant non-unit scale channel or single-key pin | raw trajectory | opt-in severity (off by default) | new |
 | `constant-track` | redundant multi-key representation whose interpolation-aware trajectory never moves | raw trajectory | eps | new |
-| `frozen-bone` | required bone's max angular deviation from first frame below floor | grid + roles/meta | `min_rotation_deg` | reference contract rotation floor + measured rotation ranges |
+| `frozen-bone` | required bone's rotation below floor; conservative cubic proof or error | authored tracks + expectations | `min_rotation_deg` | reference contract rotation floor + measured rotation ranges |
 | `duplicate-loop-endpoint` | strict authored-key duplicate closing endpoint in a declared loop; warning/default-on | common finite strictly increasing timeline, valid cardinality, matching endpoints, interior motion + loop declaration | — | mechanical subset of #22's endpoint classifier plus open-cycle transform |
 | `loop-closure` | maximum per-bone model-space last→first position and shortest-path rotation delta | grid + loop declaration | global `max_position_delta_m` / `max_rotation_delta_deg`; clip `max_loop_position_delta_m` / `max_loop_rotation_delta_deg` | consumer-neutral authoring-loop requirement |
 | `loop-seam` | last→first position wrap discontinuity of feet-relative-to-hips, normalized by the *local neighbour* per-frame step, with a stride floor so stationary clips skip | grid + Hips/feet/toe roles | `max_ratio`, `min_stride_step_m` | `locomotion_metrics.py` — port verbatim |
@@ -3579,7 +3585,8 @@ has already passed all control-plane validation:
 - exit `2` with no collection envelope for an unreadable or malformed manifest,
   unsupported schema identity, budget violation, duplicate/unsafe declaration,
   existing non-regular source target, missing/unreadable/malformed selected
-  config, serialization failure, or other control/tool error;
+  config, serialization failure, an inconclusive check evaluation (see §5),
+  or other control/tool error;
 - exit `1` with a schema-complete collection envelope when a lexically safe declared
   source is missing or unreadable, when readable bytes are unsupported or
   malformed, when a digest/take binding mismatches, or when another required

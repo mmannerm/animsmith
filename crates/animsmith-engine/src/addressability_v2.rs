@@ -1034,8 +1034,11 @@ impl Check for RichAddressabilityCheck {
         Applicability::Applicable
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
-        self.output.clone()
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
+        Ok(self.output.clone())
     }
 }
 

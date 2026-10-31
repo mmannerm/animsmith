@@ -155,12 +155,15 @@ impl Check for EngineUnitScaleCheck<'_> {
         }
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return empty_output();
+            return Ok(empty_output());
         };
         if !self.exact_applicable() {
-            return empty_output();
+            return Ok(empty_output());
         }
         let plan = plan(self.source, provenance);
         let (capacity, summary_required) = match plan.demand {
@@ -170,14 +173,14 @@ impl Check for EngineUnitScaleCheck<'_> {
                 true,
             ),
         };
-        evaluate_allocated(
+        Ok(evaluate_allocated(
             self.source,
             provenance,
             self.successor_provenance,
             &plan,
             capacity,
             summary_required,
-        )
+        ))
     }
 
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
@@ -191,22 +194,22 @@ impl Check for EngineUnitScaleCheck<'_> {
         &self,
         _ctx: &CheckCtx<'_>,
         allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return empty_output();
+            return Ok(empty_output());
         };
         if !self.exact_applicable() {
-            return empty_output();
+            return Ok(empty_output());
         }
         let plan = plan(self.source, provenance);
-        evaluate_allocated(
+        Ok(evaluate_allocated(
             self.source,
             provenance,
             self.successor_provenance,
             &plan,
             allocation.candidate_capacity(),
             allocation.summary_required(),
-        )
+        ))
     }
 }
 

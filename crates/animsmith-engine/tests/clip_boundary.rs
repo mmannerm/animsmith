@@ -203,7 +203,9 @@ fn evaluate(source: &animsmith_core::LoadedSource) -> animsmith_core::CheckOutpu
     let grids = MetricGrids::new(source.document());
     let roles = ResolvedRoles::default();
     let config = animsmith_core::Config::default();
-    check.evaluate(&CheckCtx::new(&grids, &roles, &config))
+    check
+        .evaluate(&CheckCtx::new(&grids, &roles, &config))
+        .unwrap()
 }
 
 #[test]
@@ -413,7 +415,7 @@ fn partial_inventory_at_row_limit_uses_n_plus_one_and_keeps_both_summaries() {
         check.prediction_facet_demand_v2(&ctx),
         animsmith_core::PredictionFacetDemandV2::NPlusOne
     );
-    let output = check.evaluate(&ctx);
+    let output = check.evaluate(&ctx).unwrap();
     let prediction = output.engine_prediction_v3().unwrap();
     assert_eq!(
         prediction.facets().len(),

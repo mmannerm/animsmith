@@ -82,8 +82,10 @@ impl<'a> CheckCtx<'a> {
 /// [`crate::evaluate_checks`] alongside, or instead of, [`all_checks`].
 /// Implementors should keep both methods panic-free for loader-valid
 /// documents. Applicability describes whether declared work exists;
-/// unavailable prerequisites or measurements belong in typed coverage gaps
-/// returned from [`Check::evaluate`]. Custom checks should use namespaced
+/// unavailable prerequisites or measurements belong in the check's declared
+/// typed coverage gaps returned from [`Check::evaluate`]. A decision that
+/// cannot be represented truthfully by that contract returns an
+/// [`crate::EvaluationError`] and aborts evaluation. Custom checks should use namespaced
 /// scope and gap codes. Built-in code values are reserved to the checks named
 /// by animsmith's evidence-code authority, and the evaluation boundary rejects
 /// a built-in value emitted by any other check id.
@@ -124,7 +126,13 @@ pub trait Check {
 
     /// Evaluate every modelled work unit, returning content findings and
     /// explicit coverage. Missing prerequisites are gaps, never findings.
-    fn evaluate(&self, ctx: &CheckCtx) -> CheckOutput;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the check cannot establish its decision and its
+    /// evidence contract does not represent that unavailable result. Callers
+    /// must not replace the error with an empty or completed check output.
+    fn evaluate(&self, ctx: &CheckCtx) -> Result<CheckOutput, crate::EvaluationError>;
 
     /// Bounded V2 facet demand, collected before current-output evaluation.
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx) -> PredictionFacetDemandV2 {
@@ -132,11 +140,15 @@ pub trait Check {
     }
 
     /// Evaluate after the catalog allocator has reserved this check's slots.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the same evaluation failures as [`Self::evaluate`].
     fn evaluate_with_prediction_allocation_v2(
         &self,
         ctx: &CheckCtx,
         _allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, crate::EvaluationError> {
         self.evaluate(ctx)
     }
 }

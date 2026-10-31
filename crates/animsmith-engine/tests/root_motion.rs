@@ -1159,7 +1159,9 @@ fn output_v18_conflict_atomic_and_budget_facets_reject_strict_mutations() {
         .unwrap();
     let budget_evaluation = CheckEvaluation::evaluated(
         ENGINE_ROOT_MOTION_CHECK_ID,
-        check.evaluate_with_prediction_allocation_v2(&ctx, allocation),
+        check
+            .evaluate_with_prediction_allocation_v2(&ctx, allocation)
+            .unwrap(),
     )
     .unwrap();
     let budget_bytes = strict_v18_bytes_with_evaluations(
@@ -1767,7 +1769,9 @@ fn shared_allocator_emits_canonical_prefix_and_one_budget_summary() {
         .unwrap();
     assert_eq!(allocation.candidate_capacity(), 1);
     assert!(allocation.summary_required());
-    let output = check.evaluate_with_prediction_allocation_v2(&ctx, allocation);
+    let output = check
+        .evaluate_with_prediction_allocation_v2(&ctx, allocation)
+        .unwrap();
     let facets = output.engine_prediction_v6().unwrap().facets();
     assert_eq!(facets.len(), 2);
     assert!(

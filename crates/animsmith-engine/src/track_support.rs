@@ -82,14 +82,17 @@ impl Check for EngineTrackSupportCheck<'_> {
             .map_or(Applicability::NotApplicable, |_| Applicability::Applicable)
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return empty_output();
+            return Ok(empty_output());
         };
         if !is_exact_bevy_gltf(self.source, provenance)
             || provenance.raw_animation_channels().is_complete_empty()
         {
-            return empty_output();
+            return Ok(empty_output());
         }
         let demand = demand(provenance.raw_animation_channels());
         let (capacity, summary_required) = match demand {
@@ -99,7 +102,7 @@ impl Check for EngineTrackSupportCheck<'_> {
                 true,
             ),
         };
-        evaluate_allocated(provenance, capacity, summary_required)
+        Ok(evaluate_allocated(provenance, capacity, summary_required))
     }
 
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
@@ -117,20 +120,20 @@ impl Check for EngineTrackSupportCheck<'_> {
         &self,
         _ctx: &CheckCtx<'_>,
         allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return empty_output();
+            return Ok(empty_output());
         };
         if !is_exact_bevy_gltf(self.source, provenance)
             || provenance.raw_animation_channels().is_complete_empty()
         {
-            return empty_output();
+            return Ok(empty_output());
         }
-        evaluate_allocated(
+        Ok(evaluate_allocated(
             provenance,
             allocation.candidate_capacity(),
             allocation.summary_required(),
-        )
+        ))
     }
 }
 

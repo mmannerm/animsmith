@@ -1157,10 +1157,19 @@ impl CheckSelection<'_> {
     }
 }
 
-/// Invalid catalog or check output supplied to [`evaluate_checks`].
+/// Invalid catalog/output or an inconclusive check evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum EvaluationError {
+    /// A check could not establish its decision from the available evidence.
+    /// This is an operator error, not a completed or partial check record.
+    #[error("check {check_id:?} could not evaluate: {reason}")]
+    Inconclusive {
+        /// Stable id of the check that could not decide.
+        check_id: &'static str,
+        /// Contextual explanation naming the affected subject and limitation.
+        reason: String,
+    },
     /// The supplied programmatic configuration contains an invalid value.
     #[error("invalid configuration: {0}")]
     InvalidConfiguration(#[from] ConfigValidationError),
@@ -1261,7 +1270,8 @@ pub fn lint_requires_failure(
 /// Returns an error for invalid directly constructed configuration, empty or
 /// duplicate catalog ids, unknown explicitly selected ids, malformed coverage
 /// evidence, built-in evidence emitted by an undeclared check, or a nested
-/// finding whose id disagrees with its parent check. Configuration validation
+/// finding whose id disagrees with its parent check, or a check that cannot
+/// establish its decision. No partial records are returned. Configuration validation
 /// runs before catalog inspection or check evaluation.
 pub fn evaluate_checks(
     ctx: &CheckCtx<'_>,
@@ -1326,7 +1336,7 @@ pub fn evaluate_checks(
             continue;
         }
 
-        let mut evaluation = CheckEvaluation::evaluated(check.id(), check.evaluate(ctx))?;
+        let mut evaluation = CheckEvaluation::evaluated(check.id(), check.evaluate(ctx)?)?;
         if let Some(setting) = setting {
             evaluation.override_severity(setting);
         }
@@ -1418,7 +1428,7 @@ pub fn evaluate_checks_v2(
             .find(|allocation| allocation.rule_id() == check.id())
             .copied()
             .expect("active check was allocated");
-        let output = check.evaluate_with_prediction_allocation_v2(ctx, allocation);
+        let output = check.evaluate_with_prediction_allocation_v2(ctx, allocation)?;
         let emitted = output
             .engine_prediction_v2()
             .map_or(0, |prediction| prediction.facets().len())
@@ -1491,7 +1501,7 @@ mod authority_contract {
             "test:empty-allocated"
         }
 
-        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> Result<CheckOutput, crate::EvaluationError> {
             panic!("V2 orchestration must call the allocation-aware hook")
         }
 
@@ -1503,8 +1513,12 @@ mod authority_contract {
             &self,
             _ctx: &CheckCtx<'_>,
             _allocation: PredictionRuleAllocationV2<'_>,
-        ) -> CheckOutput {
-            CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new())
+        ) -> Result<CheckOutput, crate::EvaluationError> {
+            Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ))
         }
     }
 
@@ -1521,7 +1535,7 @@ mod authority_contract {
             }
         }
 
-        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+        fn evaluate(&self, _ctx: &CheckCtx<'_>) -> Result<CheckOutput, crate::EvaluationError> {
             panic!("V2 orchestration must call the allocation-aware hook")
         }
 
@@ -1533,7 +1547,7 @@ mod authority_contract {
             &self,
             _ctx: &CheckCtx<'_>,
             allocation: PredictionRuleAllocationV2<'_>,
-        ) -> CheckOutput {
+        ) -> Result<CheckOutput, crate::EvaluationError> {
             self.allocations.borrow_mut().push((
                 self.id.to_owned(),
                 allocation.candidate_capacity(),
@@ -1573,15 +1587,19 @@ mod authority_contract {
                 );
             }
             if facets.is_empty() {
-                return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+                return Ok(CheckOutput::from_coverage(
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ));
             }
             let identity: PredictionProvenanceIdentityV2 = serde_json::from_value(
                 serde_json::to_value(InputIdentity::from_bytes(b"synthetic-v2-provenance"))
                     .unwrap(),
             )
             .unwrap();
-            CheckOutput::from_coverage(Vec::new(), scopes, Vec::new())
-                .with_engine_prediction_v2(EnginePredictionV2::new(identity, facets).unwrap())
+            Ok(CheckOutput::from_coverage(Vec::new(), scopes, Vec::new())
+                .with_engine_prediction_v2(EnginePredictionV2::new(identity, facets).unwrap()))
         }
     }
 

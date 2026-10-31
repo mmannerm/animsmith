@@ -201,14 +201,25 @@ impl Check for EngineAddressabilityCheckV3<'_> {
         }
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         };
         if !is_bevy_gltf_v3(self.source, provenance) || facts_are_complete_and_empty(self.source) {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         }
-        evaluate_animation_asset_labels_v3(self.source, provenance)
+        Ok(evaluate_animation_asset_labels_v3(self.source, provenance))
     }
 
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
@@ -237,14 +248,26 @@ impl Check for EngineAddressabilityCheckV3<'_> {
         &self,
         _ctx: &CheckCtx<'_>,
         allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         };
         if !is_bevy_gltf_v3(self.source, provenance) || facts_are_complete_and_empty(self.source) {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         }
-        evaluate_animation_asset_labels_v3_allocated(self.source, provenance, allocation)
+        Ok(evaluate_animation_asset_labels_v3_allocated(
+            self.source,
+            provenance,
+            allocation,
+        ))
     }
 }
 
@@ -301,14 +324,25 @@ impl Check for EngineAddressabilityCheckV2<'_> {
         }
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         };
         if !is_bevy_gltf_v2(self.source, provenance) || facts_are_complete_and_empty(self.source) {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         }
-        evaluate_animation_asset_labels_v2(self.source, provenance)
+        Ok(evaluate_animation_asset_labels_v2(self.source, provenance))
     }
 
     fn prediction_facet_demand_v2(&self, _ctx: &CheckCtx<'_>) -> PredictionFacetDemandV2 {
@@ -341,14 +375,26 @@ impl Check for EngineAddressabilityCheckV2<'_> {
         &self,
         _ctx: &CheckCtx<'_>,
         allocation: PredictionRuleAllocationV2<'_>,
-    ) -> CheckOutput {
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         };
         if !is_bevy_gltf_v2(self.source, provenance) || facts_are_complete_and_empty(self.source) {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         }
-        evaluate_animation_asset_labels_v2_allocated(self.source, provenance, allocation)
+        Ok(evaluate_animation_asset_labels_v2_allocated(
+            self.source,
+            provenance,
+            allocation,
+        ))
     }
 }
 
@@ -398,14 +444,25 @@ impl Check for EngineAddressabilityCheck<'_> {
         borrowed_applicability(self.source, self.provenance)
     }
 
-    fn evaluate(&self, _ctx: &CheckCtx<'_>) -> CheckOutput {
+    fn evaluate(
+        &self,
+        _ctx: &CheckCtx<'_>,
+    ) -> Result<CheckOutput, animsmith_core::EvaluationError> {
         let Some(provenance) = self.provenance else {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         };
         if !is_bevy_gltf(self.source, provenance) || facts_are_complete_and_empty(self.source) {
-            return CheckOutput::from_coverage(Vec::new(), Vec::new(), Vec::new());
+            return Ok(CheckOutput::from_coverage(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            ));
         }
-        evaluate_animation_asset_labels(self.source, provenance)
+        Ok(evaluate_animation_asset_labels(self.source, provenance))
     }
 }
 

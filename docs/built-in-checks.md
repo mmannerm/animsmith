@@ -32,7 +32,7 @@ only after an explicit `note`, `warn`, or `error` severity.
 | [required-bones](#required-bones) | contract-aware | `error` | `rig.required_bones`, usable skeleton | `severity`, `rig.required_bones` | DCC/export repair |
 | [rest-world-scale](#rest-world-scale) | contract-aware | `warning` | `runtime_nodes.selectors` or legacy node selector alias, source-node transform evidence | `severity`, `runtime_nodes.selectors`, `checks.rest-world-scale.node_selectors`, `expected_uniform_scale`, `uniform_scale_tolerance` | `scale`, DCC/export repair |
 | [missing-bones](#missing-bones) | contract-aware | `error` | `clips.<name>.animates_bones` | `severity`, `clips.<name>.animates_bones` | DCC/export repair |
-| [frozen-bone](#frozen-bone) | contract-aware | `error` | `clips.<name>.animates_bones`, keyed bone tracks | `severity`, `min_rotation_deg`, `clips.<name>.animates_bones` | DCC/export repair |
+| [frozen-bone](#frozen-bone) | contract-aware | `error` | `clips.<name>.animates_bones`, authored bone tracks | `severity`, `min_rotation_deg`, `clips.<name>.animates_bones` | DCC/export repair |
 | [duplicate-loop-endpoint](#duplicate-loop-endpoint) | contract-aware | `warning` | `clips.<name>.loop`, authored endpoint analysis | `severity`, `clips.<name>.loop` | `transform --drop-duplicate-loop-endpoint` |
 | [loop-closure](#loop-closure) | contract-aware | `error` | `clips.<name>.loop`, usable loop-continuity samples | `severity`, `max_position_delta_m`, `max_rotation_delta_deg`, `clips.<name>.loop`, `clips.<name>.max_loop_position_delta_m`, `clips.<name>.max_loop_rotation_delta_deg` | DCC/export repair |
 | [loop-seam](#loop-seam) | contract-aware | `error` | `clips.<name>.loop`, hips and foot roles, sampled stride step | `severity`, `max_ratio`, `min_stride_step_m`, `clips.<name>.loop` | DCC/export repair |
@@ -300,16 +300,27 @@ only after an explicit `note`, `warn`, or `error` severity.
 
 - Default findings: `error`.
 - Measurement and finding: checks whether each declared animated bone rotates
-  beyond the configured floor, using the maximum keyed orientation deviation
-  from its first rotation key. Finite nonzero quaternion magnitudes do not
-  change the measured orientation range.
+  to at least the configured floor. LINEAR/STEP retain maximum keyed
+  orientation deviation from the first rotation key. Finite nonzero quaternion
+  magnitudes do not change that keyed orientation range. For CUBICSPLINE,
+  authored keys and Hermite segment midpoints may prove enough motion; they
+  never prove an upper bound. A zero-degree frozen finding requires identical
+  nonzero raw key values and zero participating tangents throughout the track.
+  Other cubic curves without a sufficient motion witness are inconclusive.
 - Prerequisites and applicability: active only on clips that declare
   `animates_bones`. The bone must exist and carry at least one keyed track.
 - Config, defaults, and units: `[checks.frozen-bone] severity`,
   `min_rotation_deg` default `1.0` degrees, and `clips.<name>.animates_bones`.
 - Inactive, not-applicable, and coverage gaps: `not_applicable` on clips
   without `animates_bones`; no typed gaps once the declaration exists. Missing
-  bones themselves belong to `missing-bones`.
+  bones themselves belong to `missing-bones`. Inconclusive cubic evidence
+  returns an evaluation error (CLI exit 2), with the clip and bone identified,
+  rather than a complete, clean or frozen result. Lint/collection output is
+  withheld and prior report files remain unchanged. To omit this requirement,
+  set `[checks.frozen-bone] severity = "off"` in the selected config (per source
+  for collection lint). Ordinary lint also supports selecting other checks.
+  Neither establishes motion. `--allow` only suppresses findings, not
+  evaluation errors.
 - Remediation and boundary: correct the source clip, wrong slice, or masked-out
   track in the DCC/export pipeline.
 - Runtime and references: the visible symptom is a limb that stays pinned,
