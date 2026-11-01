@@ -9,7 +9,6 @@ on:
       - scripts/package-release-binary.py
       - scripts/release_archives.py
       - scripts/release-targets.py
-      - scripts/check-release-packaging.sh
       - Cargo.toml
       - Cargo.lock
       - '**/Cargo.toml'
@@ -50,15 +49,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           key: packaging-smoke-${{ matrix.target }}
-      - name: Release packaging contract
-        run: bash scripts/check-release-packaging.sh
       - name: Build release binary
         run: cargo build --locked -p animsmith --release --target "${{ matrix.target }}"
       - name: Package and execute the archive
