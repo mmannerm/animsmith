@@ -152,6 +152,12 @@ Supported CLI archive targets live in `release-targets.json`.
 `scripts/release-targets.py write` and then `just release-packaging` so the
 generated docs and workflow matrix stay in sync.
 
+Packaging changes also run `.github/workflows/release-packaging-smoke.yml`
+on pull requests. It runs the existing packaging contract and builds the exact
+PR head on the manifest's hosted macOS runner, checks the archive and checksum,
+and runs the unpacked CLI.
+This validation does not upload release assets or create a release.
+
 ## Post-release verification
 
 Treat workflow success as the start of verification, not the final claim.
