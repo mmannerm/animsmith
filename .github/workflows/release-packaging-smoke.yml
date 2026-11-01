@@ -1,0 +1,89 @@
+name: macOS release packaging smoke
+
+on:
+  pull_request:
+    paths:
+      - release-targets.json
+      - .github/workflows/release-binaries.yml
+      - .github/workflows/release-packaging-smoke.yml
+      - scripts/package-release-binary.py
+      - scripts/release_archives.py
+      - scripts/release-targets.py
+      - Cargo.toml
+      - Cargo.lock
+      - '**/Cargo.toml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-packaging-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  targets:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Read canonical macOS release target
+        id: targets
+        run: |
+          python3 scripts/release-targets.py check
+          matrix=$(jq -ce '{include: [.release_targets[] | select(.target == "aarch64-apple-darwin")]} | select(.include | length == 1)' release-targets.json)
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: targets
+    name: package ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          key: packaging-smoke-${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --locked -p animsmith --release --target "${{ matrix.target }}"
+      - name: Package and execute the archive
+        shell: bash
+        env:
+          ASSET_STEM: animsmith-smoke-${{ github.event.pull_request.head.sha }}-${{ matrix.target }}
+          ARCHIVE_EXT: ${{ matrix.archive_extension }}
+          BINARY_NAME: ${{ matrix.binary }}
+          PYTHON: ${{ matrix.python }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          rustc --version --verbose
+          binary="target/${TARGET}/release/${BINARY_NAME}"
+          "${binary}" --version
+          sw_vers
+          file "${binary}"
+          otool -l "${binary}" | grep -A 5 LC_BUILD_VERSION
+          "${PYTHON}" scripts/package-release-binary.py \
+            --binary "${binary}" \
+            --stem "${ASSET_STEM}" \
+            --ext "${ARCHIVE_EXT}" \
+            README.md LICENSE-APACHE LICENSE-MIT THIRD-PARTY.md
+          archive="${ASSET_STEM}.${ARCHIVE_EXT}"
+          (cd dist && shasum -a 256 -c "${archive}.sha256")
+          tar -tzf "dist/${archive}"
+          mkdir unpacked
+          tar -xzf "dist/${archive}" -C unpacked
+          cmp "${binary}" "unpacked/${ASSET_STEM}/${BINARY_NAME}"
+          test "$("unpacked/${ASSET_STEM}/${BINARY_NAME}" --version)" = "$("${binary}" --version)"
+          "unpacked/${ASSET_STEM}/${BINARY_NAME}" --help > /dev/null
