@@ -278,7 +278,12 @@ The transform removes the same closing key count from every channel and re-pins
 the duration; it does not repair a stationary hold, root-travel/nonclosing
 clip, mismatched timelines, endpoint tangents, or retargeting damage. The open
 cycle is for engines that wrap over duration, so its inclusive
-`loop-closure` result is expected to change.
+`loop-closure` result is expected to change. If also applying `--gait-anchor`,
+its source-boundary admission now refuses ordinary open motion that exceeds the
+default loop limits. Declare every relevant per-clip pose/velocity cap for the
+intended motion; widening position alone does not widen rotation or velocity.
+See the [gait-anchor source policy](../docs/cli.md#commands) before combining
+these operations.
 
 For exported clips with redundant “key everything” or baked-control channels,
 start with the default `constant-track` note, inspect the DCC/engine result,

@@ -2200,7 +2200,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 }
                 if gait_anchor {
                     let source_loop_policy =
-                        animsmith_core::transform::GaitLoopPolicy::from_config(&config, &c.name)?;
+                        animsmith_core::transform::GaitLoopPolicy::from_config(config, &c.name)?;
                     let outcome = animsmith_core::transform::align_gait_anchor(
                         &skeleton,
                         c,

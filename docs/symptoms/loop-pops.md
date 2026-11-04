@@ -223,9 +223,14 @@ evidence refuses so the phase shift cannot synthesize values at omitted frames.
 Duplicate `(bone, property)` channels refuse too. The safety grid refuses before
 allocation when declared frames × skeleton bones, declared frames × tracks, or
 maximum authored keys × skeleton bones exceeds 1,000,000 samples. It does not rewrite
-arbitrary bone endpoint poses or tangents. Angular-velocity C1 continuity,
-acceleration/jerk continuity, root-motion extraction policy, and runtime blend
-settings remain out of scope.
+arbitrary bone endpoint poses or tangents. Before rotation, the shared core
+also checks the source pose and linear/angular velocity seam against the
+resolved loop limits. Ordinary open cycles can exceed those default limits;
+declare the relevant per-clip position, rotation and velocity caps for the
+intended motion before anchoring. See the [source-boundary admission
+policy](../cli.md#commands) for its authored-frame sampling basis and refusal
+behavior. Acceleration/jerk continuity, root-motion extraction policy and
+runtime blend settings remain out of scope.
 
 All four checks are judged only on clips declared `loop = true` — whether a
 clip is intended to loop is project knowledge — while raw measurements are

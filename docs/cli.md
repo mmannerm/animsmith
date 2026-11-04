@@ -389,9 +389,13 @@ refuses; a foot cycle with no usable stride step still has no foot seam ratio.
 An open cycle's last-to-first transition is one intentional frame, not a
 required duplicate pose. Configure its existing per-clip loop caps to admit
 that motion when appropriate; the defaults remain 1 cm, 1 degree, 0.1 m/s and
-5 degrees/s. For example, a deliberate 3 cm wrap frame can declare
-`max_loop_position_delta_m = 0.04` under its `[clips.<name>]` entry. This does
-not repair the source or detect arbitrary interior edit pops. Successful output
+5 degrees/s. Ordinary open gait cycles can exceed these defaults and now
+refuse anchoring until appropriate per-clip caps are declared. Set each relevant
+cap for the intended motion: position, rotation, linear velocity and angular
+velocity are judged independently. For example, a deliberate 3 cm wrap frame
+can declare `max_loop_position_delta_m = 0.04` under its `[clips.<name>]` entry;
+that does not also relax the rotation or velocity limits. This does not repair
+the source or detect arbitrary interior edit pops. Successful output
 should still be linted under the project's ordinary acceptance policy.
 
 `scale` is the atomic linear-scale producer. It has two distinct

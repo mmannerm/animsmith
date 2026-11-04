@@ -1154,10 +1154,7 @@ pub enum GaitTrajectoryPolicy {
 /// exact endpoint equality is not required. Root trajectory caps remain fixed.
 #[derive(Debug, Clone, Copy)]
 pub struct GaitLoopPolicy {
-    max_position_delta_m: f64,
-    max_rotation_delta_deg: f64,
-    max_velocity_delta_mps: f64,
-    max_angular_velocity_delta_degps: f64,
+    continuity: crate::LoopContinuityTolerances,
     max_seam_ratio: f64,
     min_stride_step_m: f64,
 }
@@ -1170,25 +1167,27 @@ impl GaitLoopPolicy {
     /// Rejects negative or non-finite resolved limits, including values supplied
     /// by embedders constructing [`crate::Config`] directly.
     pub fn from_config(config: &crate::Config, clip_name: &str) -> Result<Self, String> {
-        use crate::checks::{loop_closure, loop_seam, loop_seam_rot, loop_seam_vel};
-        let expectations = config.expectations_for(clip_name);
-        let (max_position_delta_m, max_rotation_delta_deg) =
-            loop_closure::effective_caps(config, &expectations);
         let policy = Self {
-            max_position_delta_m,
-            max_rotation_delta_deg,
-            max_velocity_delta_mps: loop_seam_vel::effective_cap(config, &expectations),
-            max_angular_velocity_delta_degps: loop_seam_rot::effective_cap(config, &expectations),
-            max_seam_ratio: loop_seam::effective_max_ratio(config),
+            continuity: config.loop_continuity_tolerances(clip_name),
+            max_seam_ratio: crate::checks::loop_seam::effective_max_ratio(config),
             min_stride_step_m: config.loop_seam_min_stride_step_m(),
         };
         for (name, value) in [
-            ("max_position_delta_m", policy.max_position_delta_m),
-            ("max_rotation_delta_deg", policy.max_rotation_delta_deg),
-            ("max_velocity_delta_mps", policy.max_velocity_delta_mps),
+            (
+                "max_position_delta_m",
+                policy.continuity.max_position_delta_m(),
+            ),
+            (
+                "max_rotation_delta_deg",
+                policy.continuity.max_rotation_delta_deg(),
+            ),
+            (
+                "max_velocity_delta_mps",
+                policy.continuity.max_velocity_delta_mps(),
+            ),
             (
                 "max_angular_velocity_delta_degps",
-                policy.max_angular_velocity_delta_degps,
+                policy.continuity.max_angular_velocity_delta_degps(),
             ),
             ("max_ratio", policy.max_seam_ratio),
             ("min_stride_step_m", policy.min_stride_step_m),
@@ -1547,25 +1546,25 @@ fn verify_gait_source_loop(
                 "loop-closure",
                 "position delta (m)",
                 metric.position_delta_m,
-                policy.max_position_delta_m,
+                policy.continuity.max_position_delta_m(),
             ),
             (
                 "loop-closure",
                 "rotation delta (deg)",
                 metric.rotation_delta_deg,
-                policy.max_rotation_delta_deg,
+                policy.continuity.max_rotation_delta_deg(),
             ),
             (
                 "loop-seam-vel",
                 "velocity delta (m/s)",
                 metric.seam_velocity_delta_mps,
-                policy.max_velocity_delta_mps,
+                policy.continuity.max_velocity_delta_mps(),
             ),
             (
                 "loop-seam-rot",
                 "angular velocity delta (deg/s)",
                 metric.seam_angular_velocity_delta_degps,
-                policy.max_angular_velocity_delta_degps,
+                policy.continuity.max_angular_velocity_delta_degps(),
             ),
         ] {
             if crate::checks::exceeds_f32_cap(measured, cap) {
