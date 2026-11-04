@@ -5799,6 +5799,7 @@ fn version_names_the_composed_build_version_and_the_compiled_features() {
     assert!(output.status.success(), "stderr:\n{}", stderr(&output));
     assert!(stderr(&output).is_empty(), "stderr:\n{}", stderr(&output));
     let out = stdout(&output);
+    assert_eq!(out, format!("animsmith {}\n", env!("ANIMSMITH_VERSION")));
     assert!(
         out.starts_with(concat!("animsmith ", env!("CARGO_PKG_VERSION"))),
         "{out}"
@@ -5809,6 +5810,71 @@ fn version_names_the_composed_build_version_and_the_compiled_features() {
         "the version line must name the features this build was compiled with, \
          expected [features: {EXPECTED_COMPILED_FEATURES}]; got:\n{out}"
     );
+}
+
+#[test]
+fn version_json_reports_embedded_identity_without_assets_config_or_git() {
+    let directory = unique_temp_dir("build-info");
+    let config = directory.path().join("animsmith.toml");
+    std::fs::write(&config, "not valid TOML [").expect("writes malformed auto config");
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../docs/schemas/build-info-v1.schema.json"
+    ))
+    .expect("build-info schema JSON");
+    let validator = jsonschema::validator_for(&schema).expect("build-info schema");
+    let features: Vec<_> = if EXPECTED_COMPILED_FEATURES == "none" {
+        Vec::new()
+    } else {
+        EXPECTED_COMPILED_FEATURES.split(", ").collect()
+    };
+    let expected = json!({
+        "schema_version": 1,
+        "schema": "urn:animsmith:schema:build-info:1",
+        "tool": {
+            "name": "animsmith",
+            "version": env!("CARGO_PKG_VERSION"),
+            "source": {
+                "revision": option_env!("ANIMSMITH_GIT_REVISION"),
+                "dirty": option_env!("ANIMSMITH_GIT_DIRTY").map(|value| value.parse::<bool>().unwrap())
+            }
+        },
+        "features": features
+    });
+
+    // Cover default JSON and the documented explicit invocation, including
+    // an explicit missing config. Build identity never depends on either
+    // auto-discovered or explicitly named asset configuration.
+    for args in [
+        vec!["version"],
+        vec!["--config", "missing.toml", "version", "--format", "json"],
+    ] {
+        let output = animsmith()
+            .current_dir(directory.path())
+            .env("PATH", "")
+            .args(args)
+            .output()
+            .expect("runs installed binary without Git on PATH");
+        assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+        assert!(output.stderr.is_empty(), "stderr:\n{}", stderr(&output));
+        let info: Value = serde_json::from_slice(&output.stdout).expect("build-info JSON");
+        assert_eq!(info, expected);
+        assert!(validator.is_valid(&info), "emitted build-info: {info}");
+    }
+    assert_eq!(std::fs::read_to_string(config).unwrap(), "not valid TOML [");
+
+    // CI builds in Git. Pin the schema's package/metadata-free forms too,
+    // so requiring a clean bit or revision cannot break those installations.
+    for source in [
+        json!({"revision": null, "dirty": null}),
+        json!({"revision": "0123456789abcdef0123456789abcdef01234567", "dirty": null}),
+    ] {
+        let mut package = expected.clone();
+        package["tool"]["source"] = source;
+        assert!(
+            validator.is_valid(&package),
+            "packaged build-info: {package}"
+        );
+    }
 }
 
 #[test]
@@ -9122,6 +9188,14 @@ fn parser_and_json_reporting_survive_both_output_streams_being_closed() {
     for (case, args) in [
         ("root help", vec!["--help".to_owned()]),
         ("version", vec!["--version".to_owned()]),
+        (
+            "JSON version",
+            vec![
+                "version".to_owned(),
+                "--format".to_owned(),
+                "json".to_owned(),
+            ],
+        ),
         (
             "JSON measure",
             vec![

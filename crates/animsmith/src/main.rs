@@ -2,7 +2,7 @@
 //!
 //! This crate publishes the `animsmith` command: inspect, measure, lint,
 //! report, transform, fix, convert, assemble, scale, generate, and diff
-//! skeletal animation clips. It
+//! skeletal animation clips, plus `version` to query the installed build. It
 //! is not the Rust library API; use `animsmith-core` plus the loader
 //! crates (`animsmith-gltf`, `animsmith-fbx`), `animsmith-engine`, and
 //! `animsmith-report` from library code.
@@ -52,9 +52,7 @@ use animsmith_engine::{
 use animsmith_gltf::fix::Repair;
 use clap::builder::{PossibleValue, PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::Deserialize;
-#[cfg(feature = "fbx")]
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 #[cfg(feature = "fbx")]
@@ -114,6 +112,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Report the installed build's version, source revision, and compiled features.
+    Version {
+        #[arg(long, value_enum, default_value_t = JsonOnlyFormat::Json)]
+        format: JsonOnlyFormat,
+    },
     /// Summarize a file: skeleton, clips, mesh instances, materials, and rig profile.
     Inspect {
         /// Input .glb, .gltf, or .fbx file.
@@ -553,8 +556,7 @@ enum Format {
     Json,
 }
 
-/// The transition-pose evaluator has no presentation view: its one result is
-/// the stable machine-readable V1 contract.
+/// Commands whose result is only a stable machine-readable contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum JsonOnlyFormat {
     Json,
@@ -856,6 +858,28 @@ fn current_tool() -> ToolInfo {
         option_env!("ANIMSMITH_GIT_REVISION").map(str::to_owned),
         option_env!("ANIMSMITH_GIT_DIRTY").and_then(|value| value.parse().ok()),
     ))
+}
+
+/// Installed-binary identity is CLI-owned; asset output contracts reuse the
+/// same tool identity but do not describe the CLI's compiled feature surface.
+#[derive(Serialize)]
+struct BuildInfo {
+    schema_version: u32,
+    schema: &'static str,
+    tool: ToolInfo,
+    features: Vec<&'static str>,
+}
+
+fn current_build_info() -> BuildInfo {
+    BuildInfo {
+        schema_version: 1,
+        schema: "urn:animsmith:schema:build-info:1",
+        tool: current_tool(),
+        features: env!("ANIMSMITH_COMPILED_FEATURES")
+            .split(',')
+            .filter(|feature| !feature.is_empty())
+            .collect(),
+    }
 }
 
 fn main() -> ExitCode {
@@ -1736,6 +1760,12 @@ fn analyze_loaded_lint(
 
 fn run(cli: Cli) -> Result<ExitCode, String> {
     match cli.cmd {
+        Cmd::Version {
+            format: JsonOnlyFormat::Json,
+        } => {
+            render::print_json(&current_build_info())?;
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Inspect { file } => {
             let loaded_config = load_config(cli.config.as_deref())?;
             let loaded = load_with_config(&file, &loaded_config)?;

@@ -59,9 +59,27 @@ for a `--no-default-features` build: `fbx` means the binary reads FBX input,
 stamps on itself, so treat it as identification rather than as proof — run the
 command you depend on when a build's capabilities have to be established.
 
+To check a pinned source revision, including an exact release-tag build, use:
+
+```console
+animsmith version --format json
+```
+
+`version` emits the standalone `urn:animsmith:schema:build-info:1` record;
+JSON is its only format and the default. Read `tool.source.revision` for the
+full embedded Git revision, `tool.source.dirty` for the tracked-change flag,
+and `features` for the sorted feature names (an empty array in the minimal
+build). The command needs no asset, ignores configuration, and does not run
+Git or access the network. A Cargo package can retain its revision through
+Cargo VCS metadata while reporting `dirty: null`; without trustworthy source
+metadata, the revision and dirty flag are null. Ordinary `--version` keeps
+its existing single-line format. See [build information](output.md#build-information)
+for the complete JSON contract.
+
 ## Commands
 
 ```console
+animsmith version [--format json]
 animsmith inspect <file>
 animsmith measure <file...> [--format text|json]
 animsmith lint <file...> [--format text|json|markdown] [--select id[,id]] [--allow id[,id]] [--deny-warnings]

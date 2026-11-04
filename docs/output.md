@@ -5,6 +5,30 @@ Text and Markdown lint output are presentation views over the same evaluation
 results. The HTML report renders the same typed findings, coverage gaps, and
 prediction facets beside its sampled-motion view.
 
+## Build information
+
+`animsmith version --format json` emits the standalone
+`urn:animsmith:schema:build-info:1` contract, described by
+[`build-info-v1.schema.json`](schemas/build-info-v1.schema.json). It reads only
+metadata embedded in the installed binary, without loading assets or config.
+
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | `1` |
+| `schema` | `urn:animsmith:schema:build-info:1` |
+| `tool.name` | `animsmith` |
+| `tool.version` | Plain package semantic version |
+| `tool.source.revision` | Full 40-character Git revision, or null when unavailable |
+| `tool.source.dirty` | Whether tracked source changes were present at build time, or null when unknown |
+| `features` | Alphabetically sorted compiled Cargo feature names, excluding the `default` alias; an empty array when none are enabled |
+
+The `tool` object is the same build identity used by asset output documents.
+Exact release tags do not suppress its revision. Cargo package metadata can
+supply a revision without establishing cleanliness, so packaged builds may
+have a revision with `dirty: null`. Builds without trustworthy VCS metadata
+report null source fields. Features and source identity are build labels,
+not binary-integrity attestations or runtime capability proofs.
+
 ## HTML report: source poses and illustrative blending
 
 The single-document report keeps source playback separate from its optional

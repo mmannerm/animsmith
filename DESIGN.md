@@ -121,6 +121,7 @@ output, and a self-contained HTML report with a 3D preview.
 ## 3. CLI surface
 
 ```
+animsmith version [--format json]                 # installed build identity, no asset/config
 animsmith lint    <file...> [--config animsmith.toml] [--select ids] [--deny warn] [--format text|json]
 animsmith measure <file...> --format json          # measurements only, no judgment
 animsmith inspect <file>                           # clips, durations, tracks, bones, detected rig profile
@@ -133,6 +134,10 @@ animsmith assemble <recipe.toml> -o <out.glb> --evidence <out.json>
 animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file output-v13 measure/lint JSON
 ```
 
+- `version` exposes the CLI-owned `build-info:1` contract with the same
+  `ToolInfo` source identity as asset reports and the build-derived feature
+  list. It does not read assets, config, or runtime Git state. Ordinary
+  `--version` retains its existing release-tag presentation.
 - `lint` = measure + judge against config. `measure` is lint minus
   judgment — both emit the independently versioned measurement contract
   that other pipelines can pin.
