@@ -1214,6 +1214,7 @@ fn assembles_synthetic_skinned_recipe_with_complete_public_provenance() {
             "hips = \"hips\"\n",
             "left_foot = \"left_foot\"\n",
             "right_foot = \"right_foot\"\n",
+            "[checks.loop-closure]\nmax_position_delta_m = 0.02\n",
         ),
     )
     .expect("writes role config");

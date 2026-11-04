@@ -7,8 +7,8 @@ use animsmith_core::model::*;
 use animsmith_core::profile::{ResolvedRoles, Role};
 use animsmith_core::transform::{
     GAIT_ANCHOR_MAX_HORIZONTAL_ACCUMULATION_M, GAIT_ANCHOR_MAX_TRAJECTORY_POSE_SAMPLES,
-    GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG, GaitTrajectoryPolicy, align_gait_anchor, hold_extend,
-    slice,
+    GAIT_ANCHOR_MAX_YAW_ACCUMULATION_DEG, GaitAlignOutcome, GaitLoopPolicy, GaitTrajectoryPolicy,
+    align_gait_anchor as align_with_policy, hold_extend, slice,
 };
 use glam::{Quat, Vec3};
 use std::f64::consts::TAU;
@@ -101,6 +101,25 @@ fn open_walk_at_fps(fps: f64) -> (Skeleton, Clip) {
         ],
     };
     (skel, clip)
+}
+
+// This suite's authored open walk wraps by one ordinary frame (~3 cm).
+// Root-boundary mutations also intentionally introduce endpoint velocity steps;
+// admit those here to isolate the unchanged hard trajectory caps. The dedicated
+// source-policy suite exercises the default C0/C1 limits independently.
+fn align_gait_anchor(
+    skeleton: &Skeleton,
+    clip: &mut Clip,
+    roles: &ResolvedRoles,
+    fps: f64,
+    trajectory: GaitTrajectoryPolicy,
+) -> Result<GaitAlignOutcome, String> {
+    let config = serde_json::from_value(serde_json::json!({
+        "checks": {"loop-closure": {"max_position_delta_m": 0.04}, "loop-seam-vel": {"max_velocity_delta_mps": 1.0}, "loop-seam-rot": {"max_angular_velocity_delta_degps": 64.0}}
+    }))
+    .unwrap();
+    let policy = GaitLoopPolicy::from_config(&config, &clip.name).unwrap();
+    align_with_policy(skeleton, clip, roles, fps, trajectory, &policy)
 }
 
 fn circular_delta(a: f64, b: f64) -> f64 {

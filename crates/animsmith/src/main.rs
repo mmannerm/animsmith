@@ -2199,12 +2199,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     }
                 }
                 if gait_anchor {
+                    let source_loop_policy =
+                        animsmith_core::transform::GaitLoopPolicy::from_config(&config, &c.name)?;
                     let outcome = animsmith_core::transform::align_gait_anchor(
                         &skeleton,
                         c,
                         &roles,
                         fps,
                         animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
+                        &source_loop_policy,
                     )
                     .map_err(|reason| format!("clip {:?}: {reason}", c.name))?;
                     messages.push_str(&render::render_transform_gait_anchor(

@@ -134,7 +134,14 @@ apply:
   allowing a later axis switch to hide yaw; loss of the selected horizontal
   projection refuses. Error does not grow with segment count; four f32
   successors at the inclusive 1 cm/1° caps cover
-  only authored endpoint translation/quaternion quantization;
+  only authored endpoint translation/quaternion quantization. The same core
+  operation checks the original per-bone pose/velocity and foot seam against
+  the output clip name's resolved loop limits before rotating it into the
+  interior; a refusal preserves both existing output files. See the
+  [gait-anchor source-boundary policy](cli.md#commands) for the sampling basis,
+  open-cycle tolerances and nonblocking absence of a foot stride ratio.
+  `gait_anchor_frame_offset` in evidence is only the selected −1/0/+1-frame
+  refinement, not the total phase shift or a source-seam location;
 - `strip_bones = [...]`: remove every TRS track for named base bones.
 
 ### Optional rest/bind scale canonicalization

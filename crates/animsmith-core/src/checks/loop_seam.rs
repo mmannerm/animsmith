@@ -17,6 +17,14 @@ use crate::metrics::foot_cycle_metrics;
 /// that is a seam pop.
 pub const DEFAULT_MAX_RATIO: f64 = 1.5;
 
+/// Resolve the configured/default foot-seam ratio once for lint and transforms.
+pub(crate) fn effective_max_ratio(config: &crate::Config) -> f64 {
+    config
+        .check_settings("loop-seam")
+        .max_ratio
+        .unwrap_or(DEFAULT_MAX_RATIO)
+}
+
 pub struct LoopSeam;
 
 impl Check for LoopSeam {
@@ -40,8 +48,7 @@ impl Check for LoopSeam {
         let mut findings = Vec::new();
         let mut evaluated_scopes = Vec::new();
         let mut gaps = Vec::new();
-        let settings = ctx.config.check_settings(self.id());
-        let max_ratio = settings.max_ratio.unwrap_or(DEFAULT_MAX_RATIO);
+        let max_ratio = effective_max_ratio(ctx.config);
         let min_stride_step_m = ctx.config.loop_seam_min_stride_step_m();
 
         for (index, clip) in ctx.doc.clips.iter().enumerate() {
