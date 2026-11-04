@@ -374,6 +374,30 @@ artifact write succeed. Keep authored root motion unchanged, apply a
 runtime phase offset, or use separately designed trajectory-preserving tooling.
 The option does not convert root motion to in-place motion.
 
+Before rotation, the shared core also checks the **source wrap** against the
+resolved `loop-closure`, `loop-seam-vel`, `loop-seam-rot` and `loop-seam` limits.
+A failure names the source clip, bone (for per-bone checks), boundary time,
+measurement and cap, and refuses before output publication. This prevents
+anchoring from hiding a bad source wrap in the clip interior. These are transform
+admission limits: lint severity, suppression and `loop = false` do not disable
+them. The fixed root-motion caps above remain independent.
+
+The source checks use the existing bounded `--fps` authored-frame grid. Lint
+can use a denser grid when constant channels carry more keys, so C1 samples
+are not promised to match in that case. Missing per-bone continuity evidence
+refuses; a foot cycle with no usable stride step still has no foot seam ratio.
+An open cycle's last-to-first transition is one intentional frame, not a
+required duplicate pose. Configure its existing per-clip loop caps to admit
+that motion when appropriate; the defaults remain 1 cm, 1 degree, 0.1 m/s and
+5 degrees/s. Ordinary open gait cycles can exceed these defaults and now
+refuse anchoring until appropriate per-clip caps are declared. Set each relevant
+cap for the intended motion: position, rotation, linear velocity and angular
+velocity are judged independently. For example, a deliberate 3 cm wrap frame
+can declare `max_loop_position_delta_m = 0.04` under its `[clips.<name>]` entry;
+that does not also relax the rotation or velocity limits. This does not repair
+the source or detect arbitrary interior edit pops. Successful output
+should still be linted under the project's ordinary acceptance policy.
+
 `scale` is the atomic linear-scale producer. It has two distinct
 subcommands because the two operations rewrite different domains and a factor
 alone does not identify which one was meant: `whole-document` converts every

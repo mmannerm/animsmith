@@ -112,6 +112,7 @@ fn transform_refuses_root_motion_before_publishing_output() {
             "hips = \"hips\"\n",
             "left_foot = \"left_foot\"\n",
             "right_foot = \"right_foot\"\n",
+            "[checks.loop-closure]\nmax_position_delta_m = 0.02\n",
         ),
     )
     .expect("writes role config");
@@ -177,6 +178,7 @@ fn transform_accepts_in_place_gait_when_local_z_is_vertical() {
             "hips = \"hips\"\n",
             "left_foot = \"left_foot\"\n",
             "right_foot = \"right_foot\"\n",
+            "[checks.loop-closure]\nmax_position_delta_m = 0.02\n",
         ),
     )
     .expect("writes role config");
@@ -244,6 +246,7 @@ fn multi_clip_stationary_refusal_names_the_failing_clip_and_is_atomic() {
             "hips = \"hips\"\n",
             "left_foot = \"left_foot\"\n",
             "right_foot = \"right_foot\"\n",
+            "[checks.loop-closure]\nmax_position_delta_m = 0.02\n",
         ),
     )
     .expect("writes role config");
@@ -277,4 +280,160 @@ fn multi_clip_stationary_refusal_names_the_failing_clip_and_is_atomic() {
         "stderr: {stderr}"
     );
     assert_eq!(std::fs::read(output).unwrap(), b"existing output");
+}
+
+#[test]
+fn source_head_seam_refuses_transform_and_assembly_before_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("source.glb");
+    let mut source = root_motion_gait();
+    source.clips[0].name = "walk".into();
+    let TrackValues::Vec3s(root) = &mut source.clips[0].tracks[0].values else {
+        unreachable!()
+    };
+    root.fill(Vec3::ZERO);
+    for (track, sign) in source.clips[0].tracks[1..].iter_mut().zip([1.0, -1.0]) {
+        let TrackValues::Vec3s(values) = &mut track.values else {
+            unreachable!()
+        };
+        for (key, value) in values.iter_mut().enumerate() {
+            *value = Vec3::new(
+                sign * 0.1,
+                -1.0 + sign
+                    * 0.025
+                    * (std::f32::consts::TAU * key as f32 / (KEYS - 1) as f32).sin(),
+                0.0,
+            );
+        }
+    }
+    source.skeleton.bones.push(Bone {
+        name: "head".into(),
+        parent: Some(1),
+        rest: Transform::IDENTITY,
+        inverse_bind: None,
+    });
+    source.clips[0].tracks.push(Track {
+        bone: 4,
+        property: Property::Rotation,
+        interpolation: Interpolation::Linear,
+        times: (0..KEYS).map(|key| key as f32 / FPS).collect(),
+        values: TrackValues::Quats(
+            (0..KEYS)
+                .map(|key| {
+                    Quat::from_rotation_y((5.0 * key as f32 / (KEYS - 1) as f32).to_radians())
+                })
+                .collect(),
+        ),
+    });
+    std::fs::write(dir.path().join("animsmith.toml"), concat!(
+        "[rig.roles]\nroot=\"root\"\nhips=\"hips\"\nleft_foot=\"left_foot\"\nright_foot=\"right_foot\"\n",
+        "[clips.walk]\nloop=true\n",
+    )).unwrap();
+    animsmith_gltf::write::write(&source, &input).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_animsmith"))
+            .current_dir(dir.path())
+            .args(["--config", "animsmith.toml"])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let lint = run(&[
+        "lint",
+        "source.glb",
+        "--select",
+        "loop-closure",
+        "--format",
+        "json",
+    ]);
+    assert_eq!(lint.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&lint.stdout).unwrap();
+    let findings = report["files"][0]["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["check_id"] == "loop-closure")
+        .unwrap()["findings"]
+        .as_array()
+        .unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["bone"], "head");
+    assert_eq!(findings[0]["clip"], "walk");
+
+    let operations = vec![vec![
+        "transform",
+        "source.glb",
+        "-o",
+        "anchored.glb",
+        "--gait-anchor",
+        "--fps",
+        "32",
+    ]];
+    #[cfg(feature = "fbx")]
+    let operations = {
+        let mut operations = operations;
+        std::fs::write(dir.path().join("recipe.toml"), concat!(
+            "schema_version=7\nschema=\"urn:animsmith:schema:character-assembly-recipe:7\"\n",
+            "input_root=\".\"\nbase_input=\"source.glb\"\ncomplete_tracks=false\ncanonicalize_skin=false\nground_and_center=false\nfps=32.0\n",
+            "[[clips]]\nname=\"walk\"\ninput=\"source.glb\"\ntake=\"walk\"\ngait_anchor=true\n",
+        )).unwrap();
+        operations.push(vec![
+            "assemble",
+            "recipe.toml",
+            "-o",
+            "anchored.glb",
+            "--evidence",
+            "evidence.json",
+        ]);
+        operations
+    };
+    let source_bytes = std::fs::read(&input).unwrap();
+    for args in &operations {
+        std::fs::write(dir.path().join("anchored.glb"), b"prior artifact").unwrap();
+        std::fs::write(dir.path().join("evidence.json"), b"prior evidence").unwrap();
+        let refusal = run(args);
+        assert_eq!(
+            refusal.status.code(),
+            Some(if args[0] == "assemble" { 1 } else { 2 })
+        );
+        assert!(refusal.stdout.is_empty());
+        let error = String::from_utf8(refusal.stderr).unwrap();
+        for expected in [
+            "walk",
+            "head",
+            "source wrap at 0.968750 s",
+            "loop-closure",
+            "5.000000",
+        ] {
+            assert!(
+                error.contains(expected),
+                "{args:?}: missing {expected:?}: {error}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join("anchored.glb")).unwrap(),
+            b"prior artifact"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("evidence.json")).unwrap(),
+            b"prior evidence"
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), source_bytes);
+    }
+    // Change only the bad head channel. Both real producers must now publish.
+    let TrackValues::Quats(head) = &mut source.clips[0].tracks.last_mut().unwrap().values else {
+        unreachable!()
+    };
+    head.fill(Quat::IDENTITY);
+    animsmith_gltf::write::write(&source, &input).unwrap();
+    for args in &operations {
+        std::fs::write(dir.path().join("anchored.glb"), b"prior artifact").unwrap();
+        let success = run(args);
+        assert!(
+            success.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&success.stderr)
+        );
+        animsmith_gltf::load(&dir.path().join("anchored.glb")).unwrap();
+    }
 }

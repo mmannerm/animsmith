@@ -2725,6 +2725,8 @@ fn process_clip_before_copy(
     )
     .map_err(|error| format!("{context} {:?}: {error}", clip.name))?;
     let gait_anchor_frame_offset = if recipe.gait_anchor {
+        let source_loop_policy =
+            animsmith_core::transform::GaitLoopPolicy::from_config(config, &clip.name)?;
         let roles = resolve_configured_roles(&base.skeleton, &config.rig);
         Some(
             animsmith_core::transform::align_gait_anchor(
@@ -2733,6 +2735,7 @@ fn process_clip_before_copy(
                 &roles,
                 fps,
                 animsmith_core::transform::GaitTrajectoryPolicy::InPlace,
+                &source_loop_policy,
             )
             .map_err(|reason| format!("{context} {:?}: {reason}", clip.name))?
             .frame_offset,

@@ -40,6 +40,13 @@ URLs are:
 [animsmith-report](https://docs.rs/animsmith-report). For the current workspace
 state, build the same rustdocs locally with `just doc`.
 
+Gait anchoring requires both `GaitTrajectoryPolicy::InPlace` and a validated
+`GaitLoopPolicy::from_config(&config, clip_name)`. The latter resolves the
+existing loop tolerances before the shared transform checks the source seam;
+there is no caller-side bypass for CLI, assembly or library users. See the
+[CLI source-boundary policy](cli.md#commands) for open-cycle admission and its
+sampling basis.
+
 Rustdoc owns signatures, type invariants, lifetimes, and the `Errors` and
 `Panics` contracts. In particular, start at the `animsmith-core` crate root;
 it is the compact API map rather than another copy of this guide.

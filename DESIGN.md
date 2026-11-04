@@ -69,7 +69,15 @@ output, and a self-contained HTML report with a 3D preview.
   verifier samples those exact admitted f32 key times, and mutation is an
   integer-index permutation rather than a second floating-point resample.
   Constant channels need no grid because cyclic reordering cannot change them;
-  their key times cannot influence the declared period or shift.
+  their key times cannot influence the declared period or shift. The core
+  boundary also requires a resolved `GaitLoopPolicy`: before rotation it checks
+  the source all-bone C0/C1 and available foot-seam ratio with the same limits
+  used by the loop checks. It uses that one declared-frame grid, not lint's
+  potentially denser grid from constant channels. Missing all-bone evidence
+  refuses. These source-admission limits apply independently of lint severity
+  or loop declarations; deliberate open-cycle motion can use explicit loop
+  tolerances without widening the fixed root-trajectory caps. Refusal retains
+  the source and prevents publication rather than exporting new seam provenance.
   Before allocating a pose grid, the public core boundary validates all track
   cardinalities, targets, finite values, all resolved metric-role indices, and
   the complete acyclic parents-before-children skeleton. Both declared-frame

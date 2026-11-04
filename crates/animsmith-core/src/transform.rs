@@ -5,7 +5,8 @@
 
 use crate::checks::constant_track::{is_constant_track, quaternion_angular_delta};
 use crate::metrics::{
-    RootYawHeadingAxis, foot_cycle_metrics, horizontal_heading, select_horizontal_heading_axis,
+    RootYawHeadingAxis, foot_cycle_metrics, horizontal_heading, loop_continuity_metrics,
+    select_horizontal_heading_axis,
 };
 use crate::model::{BoneId, Clip, Interpolation, Property, Skeleton, Track, TrackValues};
 use crate::profile::{ResolvedRoles, Role};
@@ -1122,7 +1123,8 @@ pub struct GaitAlignOutcome {
     pub phase_after: f64,
     /// Loop-seam ratio after rotation (the chosen candidate's wrap).
     pub seam_after: Option<f64>,
-    /// The whole-frame offset (−1/0/+1) that produced the cleanest wrap.
+    /// The whole-frame refinement (−1/0/+1) that produced the cleanest wrap.
+    /// This is not the total phase shift or the relocated source-seam index.
     pub frame_offset: i32,
 }
 
@@ -1138,6 +1140,66 @@ pub enum GaitTrajectoryPolicy {
     /// The caller declares that gameplay, not the clip, owns locomotion travel.
     /// The transform verifies that declaration before rewriting any channel.
     InPlace,
+}
+
+/// Resolved source-loop admission limits for gait anchoring.
+///
+/// The transform checks the source boundary before rotating it into the clip
+/// interior, on the same bounded authored-frame grid used by gait anchoring.
+/// Lint may use a denser grid when constant channels carry extra keys; this
+/// policy shares its limits, not a promise of identical C1 samples. Limits come
+/// from the same settings as `loop-closure`, `loop-seam-vel`, `loop-seam-rot` and `loop-seam`.
+/// They apply regardless of lint severity, suppression or `loop` declarations.
+/// Open cycles need limits admitting their intentional last-to-first frame;
+/// exact endpoint equality is not required. Root trajectory caps remain fixed.
+#[derive(Debug, Clone, Copy)]
+pub struct GaitLoopPolicy {
+    continuity: crate::LoopContinuityTolerances,
+    max_seam_ratio: f64,
+    min_stride_step_m: f64,
+}
+
+impl GaitLoopPolicy {
+    /// Resolve the existing global and per-clip loop limits for `clip_name`.
+    ///
+    /// # Errors
+    ///
+    /// Rejects negative or non-finite resolved limits, including values supplied
+    /// by embedders constructing [`crate::Config`] directly.
+    pub fn from_config(config: &crate::Config, clip_name: &str) -> Result<Self, String> {
+        let policy = Self {
+            continuity: config.loop_continuity_tolerances(clip_name),
+            max_seam_ratio: crate::checks::loop_seam::effective_max_ratio(config),
+            min_stride_step_m: config.loop_seam_min_stride_step_m(),
+        };
+        for (name, value) in [
+            (
+                "max_position_delta_m",
+                policy.continuity.max_position_delta_m(),
+            ),
+            (
+                "max_rotation_delta_deg",
+                policy.continuity.max_rotation_delta_deg(),
+            ),
+            (
+                "max_velocity_delta_mps",
+                policy.continuity.max_velocity_delta_mps(),
+            ),
+            (
+                "max_angular_velocity_delta_degps",
+                policy.continuity.max_angular_velocity_delta_degps(),
+            ),
+            ("max_ratio", policy.max_seam_ratio),
+            ("min_stride_step_m", policy.min_stride_step_m),
+        ] {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "cannot gait-anchor clip {clip_name:?}: source-loop {name} must be finite and nonnegative"
+                ));
+            }
+        }
+        Ok(policy)
+    }
 }
 
 /// Maximum horizontal root-trajectory endpoint displacement admitted by the
@@ -1178,7 +1240,9 @@ const GAIT_TRAJECTORY_ALTERNATIVES: &str = "retain source root motion, use runti
 /// rotate the rest of the rig around it. Because a ±1-frame shift stays
 /// inside phase tolerance but moves *where the wrap lands*, all three
 /// candidates are tried and the one with the cleanest wrap (lowest seam
-/// ratio) wins.
+/// ratio) wins. Before candidate rotation, the source boundary must satisfy
+/// `source_loop_policy`; this prevents a failed wrap from becoming an unchecked
+/// interior segment. This is admission, not a repair of authored motion.
 ///
 /// # Errors
 ///
@@ -1207,10 +1271,11 @@ pub fn align_gait_anchor(
     roles: &ResolvedRoles,
     fps: f64,
     trajectory_policy: GaitTrajectoryPolicy,
+    source_loop_policy: &GaitLoopPolicy,
 ) -> Result<GaitAlignOutcome, String> {
     let sampling_times = match trajectory_policy {
         GaitTrajectoryPolicy::InPlace => {
-            verify_in_place_gait_trajectory(skeleton, clip, roles, fps)?
+            verify_in_place_gait_trajectory(skeleton, clip, roles, fps, source_loop_policy)?
         }
     };
 
@@ -1298,6 +1363,7 @@ fn verify_in_place_gait_trajectory(
     clip: &Clip,
     roles: &ResolvedRoles,
     fps: f64,
+    source_loop_policy: &GaitLoopPolicy,
 ) -> Result<Vec<f32>, String> {
     validate_gait_sampling_domain(skeleton, clip, roles)?;
     let (role, bone) = roles
@@ -1450,7 +1516,88 @@ fn verify_in_place_gait_trajectory(
             clip.name, bone_name
         ));
     }
+    verify_gait_source_loop(skeleton, clip, roles, &grid, source_loop_policy)?;
     Ok(sampling_times)
+}
+
+/// Check the original boundary on the already bounded authored grid. Keep this
+/// inside the common transform boundary, before any candidate can be published.
+fn verify_gait_source_loop(
+    skeleton: &Skeleton,
+    clip: &Clip,
+    roles: &ResolvedRoles,
+    grid: &PoseGrid,
+    policy: &GaitLoopPolicy,
+) -> Result<(), String> {
+    let metrics = loop_continuity_metrics(grid).ok_or_else(|| {
+        format!(
+            "cannot gait-anchor clip {:?}: source-loop continuity is unavailable",
+            clip.name
+        )
+    })?;
+    for (bone, metric) in metrics.iter().enumerate() {
+        let name = &skeleton.bones[bone].name;
+        let metric = metric.as_ref().ok_or_else(|| format!(
+            "cannot gait-anchor clip {:?}: source-loop continuity for bone {name:?} is unavailable",
+            clip.name
+        ))?;
+        for (check, quantity, measured, cap) in [
+            (
+                "loop-closure",
+                "position delta (m)",
+                metric.position_delta_m,
+                policy.continuity.max_position_delta_m(),
+            ),
+            (
+                "loop-closure",
+                "rotation delta (deg)",
+                metric.rotation_delta_deg,
+                policy.continuity.max_rotation_delta_deg(),
+            ),
+            (
+                "loop-seam-vel",
+                "velocity delta (m/s)",
+                metric.seam_velocity_delta_mps,
+                policy.continuity.max_velocity_delta_mps(),
+            ),
+            (
+                "loop-seam-rot",
+                "angular velocity delta (deg/s)",
+                metric.seam_angular_velocity_delta_degps,
+                policy.continuity.max_angular_velocity_delta_degps(),
+            ),
+        ] {
+            if crate::checks::exceeds_f32_cap(measured, cap) {
+                return Err(format!(
+                    "cannot gait-anchor clip {:?}: source wrap at {:.6} s, bone {name:?} fails {check}: {quantity} {measured:.6} exceeds {cap:.6}; fix the source seam or choose explicit loop tolerances for its intended open cycle",
+                    clip.name, clip.duration_s
+                ));
+            }
+        }
+    }
+    let feet = foot_cycle_metrics(grid, roles, policy.min_stride_step_m).ok_or_else(|| {
+        format!(
+            "cannot gait-anchor clip {:?}: source foot-cycle continuity is unavailable",
+            clip.name
+        )
+    })?;
+    // A no-stride cycle has no ratio, exactly as in the existing lint check.
+    // All-bone C0/C1 evidence above still has to be finite and within policy.
+    if feet.has_real_stride && feet.loop_seam_ratio.is_none() {
+        return Err(format!(
+            "cannot gait-anchor clip {:?}: source foot seam has unusable ratio evidence",
+            clip.name
+        ));
+    }
+    if let Some(ratio) = feet.loop_seam_ratio
+        && ratio > policy.max_seam_ratio
+    {
+        return Err(format!(
+            "cannot gait-anchor clip {:?}: source wrap at {:.6} s fails loop-seam: foot ratio {ratio:.6} exceeds {:.6}; fix the source seam or choose explicit loop tolerances for its intended open cycle",
+            clip.name, clip.duration_s, policy.max_seam_ratio
+        ));
+    }
+    Ok(())
 }
 
 /// Compare a gait-local derived binary32 quantity with an inclusive policy
