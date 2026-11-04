@@ -121,7 +121,7 @@ fn packaged_source_info_rejects_revision_that_cannot_satisfy_the_schema() {
 }
 
 #[test]
-fn git_source_info_observes_revision_and_tracked_dirty_state() {
+fn git_source_info_is_tag_independent_and_observes_tracked_dirty_state() {
     let temp = temp_dir("git-source");
     git(temp.path(), &["init", "--quiet"]);
     fs::write(temp.path().join("tracked.txt"), "clean\n").expect("writes tracked file");
@@ -146,6 +146,22 @@ fn git_source_info_observes_revision_and_tracked_dirty_state() {
     assert_eq!(clean.revision.len(), 40);
     assert!(clean.revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert_eq!(clean.dirty, Some(false));
+
+    git(temp.path(), &["tag", "v0.1.0"]);
+    assert_eq!(
+        git_output(temp.path(), &["describe", "--tags", "--always"]),
+        "v0.1.0"
+    );
+    assert_eq!(
+        build_script::git_source_info(temp.path()),
+        Some(clean.clone())
+    );
+    git(temp.path(), &["tag", "-d", "v0.1.0"]);
+    assert_ne!(
+        git_output(temp.path(), &["describe", "--tags", "--always"]),
+        "v0.1.0"
+    );
+    assert_eq!(build_script::git_source_info(temp.path()), Some(clean));
 
     fs::write(temp.path().join("tracked.txt"), "dirty\n").expect("edits tracked file");
     let dirty = build_script::git_source_info(temp.path()).expect("dirty source identity");

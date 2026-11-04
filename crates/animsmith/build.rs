@@ -13,6 +13,10 @@ fn main() {
     let version = version_with_features(&version, &features);
 
     println!("cargo:rustc-env=ANIMSMITH_VERSION={version}");
+    println!(
+        "cargo:rustc-env=ANIMSMITH_COMPILED_FEATURES={}",
+        features.join(",")
+    );
     if let Some(source) = source_info() {
         println!("cargo:rustc-env=ANIMSMITH_GIT_REVISION={}", source.revision);
         if let Some(dirty) = source.dirty {
