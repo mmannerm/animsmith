@@ -153,6 +153,23 @@ and exit 1. Skin membership, inverse-bind evidence, and deformation-model
 evidence are separate facets; they never become an opaque score or turn this
 structural result into a deformation claim.
 
+`report` stages complete HTML beside its destination, then publishes it with
+one rename. Ordinary and comparison reports, including `--evidence-only`,
+preserve their consumed primary inputs, selected or discovered config, and
+retained source sidecars. Destinations that would replace those sources are
+refused. Unix also refuses output hard links or final symlinks to a primary or
+config input; on other platforms a distinct link entry may be replaced safely
+while preserving the source. Refusal or staging/publication failure exits 2
+and leaves any previous report unchanged. Published reports on Unix have mode
+`0600`, including replacements of existing reports; previous permissions are
+not preserved.
+
+Missing optional resources do not by themselves prevent an ordinary report;
+their retained paths still cannot be used as its output.
+If dependency capture refuses a sidecar as a symlink or stops at its resource
+budget, report publication exits 2 even for an unrelated output path. The
+source files and any previous report remain unchanged.
+
 `report --compare-after` writes one offline synchronized before/after diagnostic.
 Both input files and both clip names are explicit; it refuses duplicate or
 incompatible named skeletons, missing/ambiguous clips, unavailable metric
@@ -160,9 +177,7 @@ grids, identical or incomplete rooted dependency closures, and report work
 beyond its fixed bounds. Authored duplicate take names remain ambiguous even
 when a loader gives normalized clips distinct display suffixes. Each panel
 shows both its primary input and complete closure identity, and includes only
-selected-clip or whole-input gaps and predictions. The output cannot alias
-either primary input, a rooted sidecar, or the selected config; refusal
-preserves any existing output. The two panels synchronize by
+selected-clip or whole-input gaps and predictions. The two panels synchronize by
 normalized sampled-frame phase and display both source times — that display
 mapping is not an authored time warp. Findings, coverage gaps, prediction
 provenance, and identities remain separate per side. Selecting a finding

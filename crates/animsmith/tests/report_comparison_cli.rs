@@ -1,5 +1,5 @@
-//! CLI contract for the offline HTML `report` command: the explicit visual
-//! before/after form, and the evidence-only form of both.
+//! CLI contracts for offline HTML reports: safe publication of ordinary and
+//! explicit before/after reports, including the evidence-only form of both.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -49,6 +49,363 @@ fn write_external_buffer_gltf(directory: &std::path::Path, name: &str) -> (PathB
     std::fs::write(&primary, serde_json::to_vec(&value).unwrap()).expect("external glTF");
     std::fs::write(&sidecar, BUFFER).expect("external buffer");
     (primary, sidecar)
+}
+
+fn assert_publication_refused(result: &std::process::Output, boundary: &str) {
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains(boundary), "{stderr}");
+    assert!(
+        result.stdout.is_empty(),
+        "a refusal must not announce a report"
+    );
+}
+
+fn assert_file_unchanged(path: &std::path::Path, expected: &[u8]) {
+    let actual = std::fs::read(path).unwrap();
+    assert!(
+        actual.as_slice() == expected,
+        "{} bytes changed ({} bytes became {})",
+        path.display(),
+        expected.len(),
+        actual.len()
+    );
+}
+
+#[test]
+fn ordinary_report_refuses_primary_path_aliases() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("input.glb");
+    std::fs::copy(fixture(), &input).unwrap();
+    std::fs::create_dir(directory.path().join("nested")).unwrap();
+    let original = std::fs::read(&input).unwrap();
+    for (source, output, evidence_only) in [
+        (input.clone(), input.clone(), false),
+        (PathBuf::from("input.glb"), input.clone(), true),
+        (input.clone(), PathBuf::from("nested/../input.glb"), true),
+    ] {
+        let mut command = animsmith();
+        command
+            .current_dir(directory.path())
+            .arg("report")
+            .arg(source)
+            .arg("--output")
+            .arg(output);
+        if evidence_only {
+            command.arg("--evidence-only");
+        }
+        assert_publication_refused(&command.output().unwrap(), "different files");
+        assert_file_unchanged(&input, &original);
+    }
+}
+
+#[test]
+fn ordinary_report_hardlink_destination_preserves_source_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("input.glb");
+    let output = directory.path().join("alias.html");
+    std::fs::copy(fixture(), &input).unwrap();
+    std::fs::hard_link(&input, &output).unwrap();
+    let original = std::fs::read(&input).unwrap();
+    let result = animsmith()
+        .current_dir(directory.path())
+        .arg("report")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert_file_unchanged(&input, &original);
+    if cfg!(unix) || result.status.code() == Some(2) {
+        assert_publication_refused(&result, "different files");
+        assert_file_unchanged(&output, &original);
+    } else {
+        // Without the Unix inode check, replacing a distinct hardlink entry
+        // is safe: the source bytes must survive and the report must be valid.
+        assert_eq!(result.status.code(), Some(0));
+        let html = std::fs::read_to_string(&output).unwrap();
+        assert_eq!(
+            embedded_data(&html, "report-data")["clips"][0]["name"],
+            "acceptance-matrix"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ordinary_report_refuses_symlink_aliases_without_replacing_entries() {
+    use std::os::unix::fs::{MetadataExt, symlink};
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("input.glb");
+    let alias = directory.path().join("alias.glb");
+    std::fs::copy(fixture(), &input).unwrap();
+    symlink(&input, &alias).unwrap();
+    let original = std::fs::read(&input).unwrap();
+    let inode = std::fs::metadata(&input).unwrap().ino();
+    for (source, output) in [(&input, &alias), (&alias, &input)] {
+        let result = animsmith()
+            .current_dir(directory.path())
+            .arg("report")
+            .arg(source)
+            .args(["--evidence-only", "--output"])
+            .arg(output)
+            .output()
+            .unwrap();
+        assert_publication_refused(&result, "different files");
+        assert_file_unchanged(&input, &original);
+        assert_eq!(std::fs::metadata(&input).unwrap().ino(), inode);
+        assert_eq!(std::fs::read_link(&alias).unwrap(), input);
+    }
+}
+
+#[test]
+fn ordinary_report_protects_explicit_and_discovered_configuration() {
+    for explicit in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("input.glb");
+        std::fs::copy(fixture(), &input).unwrap();
+        let source_bytes = std::fs::read(&input).unwrap();
+        let config = directory.path().join(if explicit {
+            "policy.toml"
+        } else {
+            "animsmith.toml"
+        });
+        let config_bytes = b"[checks.nan]\nseverity = \"warn\"\n";
+        std::fs::write(&config, config_bytes).unwrap();
+        let mut command = animsmith();
+        command.current_dir(directory.path());
+        if explicit {
+            command.arg("--config").arg(&config);
+        }
+        let result = command
+            .arg("report")
+            .arg(&input)
+            .args(["--evidence-only", "--output"])
+            .arg(&config)
+            .output()
+            .unwrap();
+        assert_publication_refused(&result, "configuration input");
+        assert_file_unchanged(&input, &source_bytes);
+        assert_file_unchanged(&config, config_bytes);
+    }
+}
+
+#[test]
+fn ordinary_report_protects_rooted_sidecars_and_unavailable_retained_keys() {
+    let directory = tempfile::tempdir().unwrap();
+    let assets = directory.path().join("assets");
+    std::fs::create_dir(&assets).unwrap();
+    let (input, buffer) = write_external_buffer_gltf(&assets, "source");
+    let texture = assets.join("texture.png");
+    let missing = assets.join("missing.png");
+    let blocked = assets.join("blocked");
+    // These images are retained source references, unused by the animation.
+    let mut source: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&input).unwrap()).unwrap();
+    source["images"] = serde_json::json!([
+        {"uri":"texture.png"}, {"uri":"missing.png"},
+        {"uri":"blocked/direct.png"}, {"uri":"blocked/nested/deep.png"}
+    ]);
+    std::fs::write(&input, serde_json::to_vec(&source).unwrap()).unwrap();
+    std::fs::write(&texture, b"retained unconsumed texture bytes").unwrap();
+    std::fs::write(&blocked, b"a regular file, not a directory").unwrap();
+    let originals: Vec<_> = [&input, &buffer, &texture, &blocked]
+        .into_iter()
+        .map(|path| (path, std::fs::read(path).unwrap()))
+        .collect();
+    for output in [&buffer, &texture, &missing] {
+        let result = animsmith()
+            .current_dir(directory.path())
+            .args([
+                "report",
+                "assets/source.gltf",
+                "--evidence-only",
+                "--output",
+            ])
+            .arg(output)
+            .output()
+            .unwrap();
+        assert_publication_refused(&result, "external dependency");
+        for (path, bytes) in &originals {
+            assert_file_unchanged(path, bytes);
+        }
+        assert!(!missing.exists());
+    }
+
+    // Ordinary diagnostics can describe an incomplete closure; comparison's
+    // complete-closure evidence requirement must not leak into publication.
+    let output = directory.path().join("report.html");
+    let result = animsmith()
+        .current_dir(directory.path())
+        .args(["report", "assets/source.gltf", "--output"])
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let html = std::fs::read_to_string(&output).unwrap();
+    assert_eq!(
+        embedded_data(&html, "report-data")["clips"][0]["name"],
+        "walk"
+    );
+    for (path, bytes) in &originals {
+        assert_file_unchanged(path, bytes);
+    }
+    assert!(!missing.exists());
+
+    let comparison = animsmith()
+        .current_dir(directory.path())
+        .args(["report", "assets/source.gltf", "--compare-after"])
+        .arg(rig_fixture())
+        .args(["--before-clip", "walk", "--after-clip", "walk", "--output"])
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert_publication_refused(&comparison, "no complete dependency-closure identity");
+    assert_file_unchanged(&output, html.as_bytes());
+}
+
+#[test]
+fn ordinary_report_load_errors_preserve_previous_output_and_inputs() {
+    for malformed_source in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("input.glb");
+        let config = directory.path().join("policy.toml");
+        let output = directory.path().join("report.html");
+        std::fs::copy(fixture(), &input).unwrap();
+        std::fs::write(&config, b"[checks.nan]\nseverity = \"warn\"\n").unwrap();
+        if malformed_source {
+            std::fs::write(&input, b"malformed GLB").unwrap();
+        } else {
+            std::fs::write(&config, b"[malformed TOML").unwrap();
+        }
+        std::fs::write(&output, b"previous report").unwrap();
+        let originals: Vec<_> = [&input, &config, &output]
+            .into_iter()
+            .map(|path| (path, std::fs::read(path).unwrap()))
+            .collect();
+        let result = animsmith()
+            .current_dir(directory.path())
+            .arg("--config")
+            .arg(&config)
+            .arg("report")
+            .arg(&input)
+            .arg("--output")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2));
+        assert!(!result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        for (path, bytes) in originals {
+            assert_file_unchanged(path, &bytes);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn ordinary_report_refuses_a_retained_symlink_even_for_an_unrelated_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let (input, buffer) = write_external_buffer_gltf(directory.path(), "source");
+    let target = directory.path().join("target.png");
+    let link = directory.path().join("texture.png");
+    let output = directory.path().join("report.html");
+    let mut source: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&input).unwrap()).unwrap();
+    source["images"] = serde_json::json!([{"uri":"texture.png"}]);
+    std::fs::write(&input, serde_json::to_vec(&source).unwrap()).unwrap();
+    std::fs::write(&target, b"unconsumed texture target").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    std::fs::write(&output, b"previous report").unwrap();
+    let originals: Vec<_> = [&input, &buffer, &target, &output]
+        .into_iter()
+        .map(|path| (path, std::fs::read(path).unwrap()))
+        .collect();
+
+    let result = animsmith()
+        .current_dir(directory.path())
+        .arg("report")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert_publication_refused(&result, "external dependency \"texture.png\" is a symlink");
+    for (path, bytes) in originals {
+        assert_file_unchanged(path, &bytes);
+    }
+    assert_eq!(std::fs::read_link(&link).unwrap(), target);
+}
+
+#[test]
+fn ordinary_report_replaces_the_destination_without_truncating_its_previous_hardlink() {
+    let directory = tempfile::tempdir().unwrap();
+    let (input, buffer) = write_external_buffer_gltf(directory.path(), "source");
+    let config = directory.path().join("policy.toml");
+    std::fs::write(&config, b"[checks.nan]\nseverity = \"warn\"\n").unwrap();
+    let originals: Vec<_> = [&input, &buffer, &config]
+        .into_iter()
+        .map(|path| (path, std::fs::read(path).unwrap()))
+        .collect();
+    let mut full_findings = None;
+    for evidence_only in [false, true] {
+        let output = directory
+            .path()
+            .join(format!("report-{evidence_only}.html"));
+        let backup = directory
+            .path()
+            .join(format!("backup-{evidence_only}.html"));
+        std::fs::write(&output, b"previous report").unwrap();
+        std::fs::hard_link(&output, &backup).unwrap();
+        let mut command = animsmith();
+        command
+            .current_dir(directory.path())
+            .arg("--config")
+            .arg(&config)
+            .arg("report")
+            .arg(&input)
+            .arg("--output")
+            .arg(&output);
+        if evidence_only {
+            command.arg("--evidence-only");
+        }
+        let result = command.output().unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let html = std::fs::read_to_string(&output).unwrap();
+        let data = embedded_data(&html, "report-data");
+        assert_eq!(data["clips"][0]["name"], "walk");
+        assert_eq!(data["evidence_only"], evidence_only);
+        if evidence_only {
+            assert_eq!(Some(&data["findings"]), full_findings.as_ref());
+            assert!(data["clips"][0].get("positions").is_none());
+            assert!(data["clips"][0].get("locals").is_none());
+        } else {
+            assert!(data["clips"][0]["positions"].is_string());
+            full_findings = Some(data["findings"].clone());
+        }
+        assert_file_unchanged(&backup, b"previous report");
+        for (path, bytes) in &originals {
+            assert_file_unchanged(path, bytes);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&output).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
 }
 
 #[cfg(unix)]

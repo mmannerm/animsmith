@@ -508,7 +508,7 @@ fn destination_identity_below(path: &Path, parent: PathBuf) -> Result<PathBuf, S
 /// Resolve a retained dependency's destination-style entry identity when its
 /// parent exists.
 ///
-/// A missing intermediate directory cannot alias a publication destination:
+/// A missing or non-directory ancestor cannot alias a publication destination:
 /// both producers have already required each destination's parent to exist.
 /// Returning `None` preserves that honest unavailable dependency without
 /// turning every unrelated invocation into an operator error. When only the
@@ -516,17 +516,29 @@ fn destination_identity_below(path: &Path, parent: PathBuf) -> Result<PathBuf, S
 /// the ordinary comparison reject publication to that exact key.
 fn retained_dependency_identity(path: &Path) -> Result<Option<PathBuf>, String> {
     let parent = parent_or_current(path);
-    let parent = match fs::canonicalize(parent) {
-        Ok(parent) => parent,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(format!(
-                "cannot resolve external dependency directory {}: {error}",
-                parent.display()
-            ));
+    let resolved = fs::metadata(parent).and_then(|metadata| {
+        if metadata.is_dir() {
+            fs::canonicalize(parent).map(Some)
+        } else {
+            Ok(None)
         }
-    };
-    destination_identity_below(path, parent).map(Some)
+    });
+    match resolved {
+        Ok(Some(parent)) => destination_identity_below(path, parent).map(Some),
+        Ok(None) => Ok(None),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(format!(
+            "cannot resolve external dependency directory {}: {error}",
+            parent.display()
+        )),
+    }
 }
 
 pub(crate) struct PublicationDestination<'a> {
@@ -2021,6 +2033,18 @@ mod tests {
         publish_single(&temp, &destination).unwrap();
         assert_eq!(fs::read(&destination).unwrap(), b"new fragment");
         assert!(!temp.exists(), "rename consumed the staged temporary file");
+    }
+
+    #[test]
+    fn single_publication_missing_stage_preserves_the_previous_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("report.html");
+        let missing_temp = dir.path().join("absent.tmp");
+        fs::write(&destination, b"previous report").unwrap();
+
+        let error = publish_single(&missing_temp, &destination).unwrap_err();
+        assert!(error.contains("cannot flush"), "{error}");
+        assert_eq!(fs::read(&destination).unwrap(), b"previous report");
     }
 
     #[test]

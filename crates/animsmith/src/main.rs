@@ -57,7 +57,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
-#[cfg(feature = "fbx")]
+#[cfg(feature = "report")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -879,12 +879,22 @@ fn main() -> ExitCode {
 #[cfg(feature = "report")]
 fn write_report(
     output: &Path,
+    inputs: &[(&str, &Path, &animsmith_core::DependencyClosureV1)],
+    config: Option<&Path>,
     doc: &Document,
     finding_count: usize,
     html: String,
 ) -> Result<ExitCode, String> {
-    std::fs::write(output, &html)
-        .map_err(|error| format!("cannot write {}: {error}", output.display()))?;
+    let destination = preflight_report_output(output, inputs, config)?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".animsmith-report-")
+        .tempfile_in(publish::parent_or_current(destination.identity()))
+        .map_err(|error| format!("cannot stage report output: {error}"))?;
+    temp.write_all(html.as_bytes())
+        .map_err(|error| format!("cannot stage report output: {error}"))?;
+    temp.flush()
+        .map_err(|error| format!("cannot stage report output: {error}"))?;
+    publish::publish_single(temp.path(), destination.identity())?;
     publish::emit_text(&render::render_report_written(
         output,
         doc.clips.len(),
@@ -895,22 +905,34 @@ fn write_report(
 }
 
 #[cfg(feature = "report")]
-fn require_comparison_output_distinct(
+fn preflight_report_output(
     output: &Path,
-    inputs: &[(&str, &Path)],
-) -> Result<(), String> {
-    let destination = publish::PublicationDestination::new("comparison output", output)?;
-    for &(label, input) in inputs {
+    inputs: &[(&str, &Path, &animsmith_core::DependencyClosureV1)],
+    config: Option<&Path>,
+) -> Result<publish::PublicationDestination<'static>, String> {
+    let destination = publish::PublicationDestination::new("report output", output)?;
+    for (label, input) in inputs
+        .iter()
+        .map(|&(label, input, _)| (label, input))
+        .chain(config.map(|path| ("configuration input", path)))
+    {
         let input_identity = publish::input_identity(input)?;
         if input_identity == destination.identity()
             || same_file_entry(input, destination.identity())?
         {
-            return Err(format!(
-                "report comparison {label} and output must be different files"
-            ));
+            return Err(format!("report {label} and output must be different files"));
         }
     }
-    publish::require_writable_destination(destination.identity())
+    publish::require_writable_destination(destination.identity())?;
+    for &(label, input, closure) in inputs {
+        publish::require_external_dependencies_safe_for_publication(
+            &format!("report {label}"),
+            input_resource_root(input),
+            closure,
+            &[("report output", output)],
+        )?;
+    }
+    Ok(destination)
 }
 
 #[cfg(all(feature = "report", unix))]
@@ -929,25 +951,6 @@ fn same_file_entry(input: &Path, destination: &Path) -> Result<bool, String> {
 #[cfg(all(feature = "report", not(unix)))]
 fn same_file_entry(_input: &Path, _destination: &Path) -> Result<bool, String> {
     Ok(false)
-}
-
-#[cfg(feature = "report")]
-fn publish_comparison_report(
-    output: &Path,
-    inputs: &[(&str, &Path)],
-    html: &str,
-) -> Result<(), String> {
-    require_comparison_output_distinct(output, inputs)?;
-    let destination = publish::PublicationDestination::new("comparison output", output)?;
-    let mut temp = tempfile::Builder::new()
-        .prefix(".animsmith-comparison-")
-        .tempfile_in(publish::parent_or_current(destination.identity()))
-        .map_err(|error| format!("cannot stage comparison output: {error}"))?;
-    temp.write_all(html.as_bytes())
-        .map_err(|error| format!("cannot stage comparison output: {error}"))?;
-    temp.flush()
-        .map_err(|error| format!("cannot stage comparison output: {error}"))?;
-    publish::publish_single(temp.path(), destination.identity())
 }
 
 fn finish_run(result: Result<ExitCode, String>) -> ExitCode {
@@ -1975,33 +1978,29 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     report_options,
                 )
                 .map_err(|error| error.to_string())?;
-                let mut comparison_inputs = vec![
-                    ("before input", file.as_path()),
-                    ("after input", after_path.as_path()),
-                ];
-                if let Some(config_path) = loaded_config.control_input() {
-                    comparison_inputs.push(("configuration input", config_path));
-                }
-                require_comparison_output_distinct(&output, &comparison_inputs)?;
-                let destinations = [("comparison output", output.as_path())];
-                publish::require_external_dependencies_safe_for_publication(
-                    "report comparison before input",
-                    input_resource_root(&file),
-                    loaded.dependency_closure(),
-                    &destinations,
-                )?;
-                publish::require_external_dependencies_safe_for_publication(
-                    "report comparison after input",
-                    input_resource_root(after_path),
-                    after_loaded.dependency_closure(),
-                    &destinations,
-                )?;
-                Some(after_loaded)
+                Some((after_path.as_path(), after_loaded))
             } else if before_clip.is_some() || after_clip.is_some() {
                 return Err("--before-clip and --after-clip require --compare-after".into());
             } else {
                 None
             };
+            let mut report_inputs = vec![(
+                if comparison_after.is_some() {
+                    "before input"
+                } else {
+                    "input"
+                },
+                file.as_path(),
+                loaded.dependency_closure(),
+            )];
+            if let Some((after_path, after_loaded)) = &comparison_after {
+                report_inputs.push((
+                    "after input",
+                    *after_path,
+                    after_loaded.dependency_closure(),
+                ));
+            }
+            preflight_report_output(&output, &report_inputs, loaded_config.control_input())?;
             let config = &loaded_config.config;
             let prediction_provenance = loaded
                 .engine
@@ -2025,24 +2024,26 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     .map_err(|error| error.to_string())?
             };
             let finding_count: usize = evaluations.iter().map(|check| check.findings().len()).sum();
-            let html = match comparison_after {
-                None => animsmith_report::render(animsmith_report::ReportInputs {
-                    grids: &grids,
-                    roles: &roles,
-                    checks: &evaluations,
-                    config,
-                    prediction_provenance: prediction_provenance.as_ref(),
-                    clip: clip.as_deref(),
-                    options: report_options,
-                }),
-                Some(after_loaded) => {
+            let (html, finding_count) = match &comparison_after {
+                None => (
+                    animsmith_report::render(animsmith_report::ReportInputs {
+                        grids: &grids,
+                        roles: &roles,
+                        checks: &evaluations,
+                        config,
+                        prediction_provenance: prediction_provenance.as_ref(),
+                        clip: clip.as_deref(),
+                        options: report_options,
+                    }),
+                    finding_count,
+                ),
+                Some((_, after_loaded)) => {
                     let before_clip = before_clip
+                        .as_deref()
                         .ok_or_else(|| "--compare-after requires --before-clip".to_string())?;
                     let after_clip = after_clip
+                        .as_deref()
                         .ok_or_else(|| "--compare-after requires --after-clip".to_string())?;
-                    let after_path = compare_after
-                        .as_ref()
-                        .expect("comparison load is paired with its path");
                     let after_prediction_provenance = after_loaded
                         .engine
                         .as_ref()
@@ -2078,7 +2079,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             checks: &evaluations,
                             config,
                             prediction_provenance: prediction_provenance.as_ref(),
-                            clip: &before_clip,
+                            clip: before_clip,
                         },
                         animsmith_report::ComparisonSide {
                             source: &after_loaded.source,
@@ -2087,7 +2088,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             checks: &after_evaluations,
                             config,
                             prediction_provenance: after_prediction_provenance.as_ref(),
-                            clip: &after_clip,
+                            clip: after_clip,
                         },
                         report_options,
                     )
@@ -2097,24 +2098,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                             .iter()
                             .map(|check| check.findings().len())
                             .sum::<usize>();
-                    let mut comparison_inputs = vec![
-                        ("before input", file.as_path()),
-                        ("after input", after_path.as_path()),
-                    ];
-                    if let Some(config_path) = loaded_config.control_input() {
-                        comparison_inputs.push(("configuration input", config_path));
-                    }
-                    publish_comparison_report(&output, &comparison_inputs, &html)?;
-                    publish::emit_text(&render::render_report_written(
-                        &output,
-                        doc.clips.len(),
-                        finding_count,
-                        html.len(),
-                    ));
-                    return Ok(ExitCode::SUCCESS);
+                    (html, finding_count)
                 }
             };
-            write_report(&output, doc, finding_count, html)
+            write_report(
+                &output,
+                &report_inputs,
+                loaded_config.control_input(),
+                doc,
+                finding_count,
+                html,
+            )
         }
         Cmd::Transform {
             input,
