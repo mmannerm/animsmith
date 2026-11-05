@@ -268,6 +268,37 @@ fn every_decodable_weight_output_encoding_still_loads() {
 }
 
 #[test]
+fn truncated_weight_output_is_refused_even_though_valid_weights_are_unmodeled() {
+    let clip = Clip::with_encodings(
+        Encoding::new("SCALAR", FLOAT),
+        Encoding::new("SCALAR", FLOAT),
+        "weights",
+    );
+    let mut document: Value = serde_json::from_slice(&clip.to_json()).unwrap();
+    // Keep the declared 16-byte buffer and both 8-byte views. Only the two
+    // input times are actually present; the weight output bytes are missing.
+    let times: Vec<u8> = [0.0f32, 1.0]
+        .into_iter()
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    document["buffers"][0]["uri"] = json!(format!(
+        "data:application/octet-stream;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&times)
+    ));
+    let error = animsmith_gltf::load_bytes(
+        std::path::Path::new("truncated-weights.gltf"),
+        &serde_json::to_vec(&document).unwrap(),
+    )
+    .expect_err("unsupported morph semantics do not permit unreadable sampler bytes");
+    assert!(matches!(error, LoadError::AnimationAccessorLayout { .. }));
+    assert_eq!(
+        error.to_string(),
+        "clip 'encoding' node 0 sampler output: accessor 1 reads its elements from buffer \
+         view 1, whose byte extent ends at 16 beyond loaded buffer 0's 8 bytes"
+    );
+}
+
+#[test]
 fn every_sampler_slot_refuses_wrong_type_and_component_type() {
     let scalar_f32 = Encoding::new("SCALAR", FLOAT);
     let vec3_f32 = Encoding::new("VEC3", FLOAT);

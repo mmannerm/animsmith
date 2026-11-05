@@ -24,11 +24,12 @@
 //! keys without their tangents would change interior samples. Sparse
 //! accessors and quantized (normalized-int) rotations are skipped.
 
-use crate::{FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path};
-use std::ops::Range;
+use crate::{
+    FixError, LoadError, WriteError, resolve_buffers, safe_external_buffer_path,
+    unreadable_loaded_layout,
+};
 use std::path::Path;
 
-const ROTATION_ELEMENT_BYTES: usize = 16;
 const QUAT_NORM_TOLERANCE: f32 = 1e-3;
 
 /// One track's repair summary.
@@ -295,6 +296,13 @@ impl FixSession {
                     ));
                     continue;
                 }
+                // A writable accessor must fit its own declared view as well
+                // as the loaded buffer. Bytes after the view can belong to an
+                // unrelated accessor, even when they look like rotation keys.
+                if let Some(problem) = unreadable_loaded_layout(&accessor, buffers) {
+                    report.skipped.push(format!("{clip}/{bone}: {problem}"));
+                    continue;
+                }
                 let stride = view.stride().unwrap_or(16);
                 let Some(start) = view.offset().checked_add(accessor.offset()) else {
                     report
@@ -317,23 +325,6 @@ impl FixSession {
                     report
                         .skipped
                         .push(format!("{clip}/{bone}: malformed cubic rotation accessor"));
-                    continue;
-                }
-                let Some(range) =
-                    accessor_byte_range(start, stride, accessor.count(), ROTATION_ELEMENT_BYTES)
-                else {
-                    report
-                        .skipped
-                        .push(format!("{clip}/{bone}: accessor byte range overflow"));
-                    continue;
-                };
-                if range.end > buffer.len() {
-                    report.skipped.push(format!(
-                        "{clip}/{bone}: accessor byte range {}..{} outside buffer length {}",
-                        range.start,
-                        range.end,
-                        buffer.len()
-                    ));
                     continue;
                 }
                 let layout = RotationLayout {
@@ -508,23 +499,6 @@ fn write_uri_buffers(
         }
     }
     Ok(())
-}
-
-fn accessor_byte_range(
-    start: usize,
-    stride: usize,
-    element_count: usize,
-    element_bytes: usize,
-) -> Option<Range<usize>> {
-    if stride < element_bytes {
-        return None;
-    }
-    if element_count == 0 {
-        return Some(start..start);
-    }
-    let last = element_count.checked_sub(1)?;
-    let last_start = start.checked_add(last.checked_mul(stride)?)?;
-    Some(start..last_start.checked_add(element_bytes)?)
 }
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<usize, LoadError> {

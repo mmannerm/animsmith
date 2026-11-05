@@ -394,7 +394,7 @@ fn malformed_external_accessor_range_is_skipped_without_panic() {
         report
             .skipped
             .iter()
-            .any(|reason| reason.contains("outside buffer length")),
+            .any(|reason| reason.contains("beyond loaded buffer 0's 8 bytes")),
         "skipped: {:?}",
         report.skipped
     );
