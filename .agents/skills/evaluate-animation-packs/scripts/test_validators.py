@@ -4191,6 +4191,64 @@ class EvaluationModelTests(unittest.TestCase):
             )
         cls.animsmith = Path(configured).resolve(strict=True)
 
+    def test_parser_build_owns_its_artifact_and_preserves_default_cli(self) -> None:
+        scripts = Path(__file__).resolve().parent
+        root = scripts.parents[3]
+        before = hashlib.sha256(self.animsmith.read_bytes()).digest()
+        # A fresh process cannot reuse either of validate_report's caches.
+        # The ambient directory makes a missing --target-dir observable in
+        # Cargo's real compiler-artifact response, without a mocked compiler.
+        program = """
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import validate_report
+print(json.dumps({
+    "executable": str(validate_report._parser_binary().resolve()),
+    "document": validate_report.parse_markdown(
+        "# Visible\\n\\n```md\\n# Hidden\\n```\\n\\n[Evidence](proof.md)\\n"
+    ),
+}))
+"""
+        with tempfile.TemporaryDirectory(prefix="animsmith-parser-target-") as temporary:
+            environment = os.environ.copy()
+            environment["CARGO_TARGET_DIR"] = str(Path(temporary) / "ambient-target")
+            result = subprocess.run(
+                [sys.executable, "-c", program, str(scripts)],
+                cwd=root, env=environment, text=True, encoding="utf-8",
+                capture_output=True, check=True,
+            )
+            parsed = json.loads(result.stdout)
+            executable = Path(parsed["executable"]).resolve(strict=True)
+            self.assertTrue(
+                executable.is_relative_to((root / "target/no-default-features").resolve()),
+                f"parser executable escaped its feature-owned target: {executable}",
+            )
+            self.assertEqual(
+                [heading["text"] for heading in parsed["document"]["headings"]],
+                ["Visible"],
+            )
+            self.assertEqual(
+                parsed["document"]["links"],
+                [{"text": "Evidence", "destination": "proof.md"}],
+            )
+        self.assertEqual(hashlib.sha256(self.animsmith.read_bytes()).digest(), before)
+        for fixture, clip in (
+            (root / "examples/assets/clip.glb", "swing"),
+            (root / "crates/animsmith-fbx/testdata/rigged_triangle.fbx", "take"),
+        ):
+            with self.subTest(format=fixture.suffix):
+                inspected = subprocess.run(
+                    [self.animsmith, "inspect", fixture], cwd=root,
+                    text=True, encoding="utf-8", capture_output=True, check=True,
+                )
+                self.assertIn("skeleton: 3 bones", inspected.stdout)
+                self.assertIn(f"{clip}: 1.000s", inspected.stdout)
+        subprocess.run(
+            [self.animsmith, "report", "--help"], cwd=root,
+            capture_output=True, check=True,
+        )
+
     def assert_authoritative_accepts(self, raw: bytes) -> None:
         model_validator_v2.validate_with_animsmith(self.animsmith, raw)
 

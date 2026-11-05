@@ -221,6 +221,7 @@ gates: require-cargo-deny require-typos
     cargo test -p animsmith --test foot_cycle_cli --no-default-features --target-dir target/no-default-features
     cargo test -p animsmith --test measure_mesh --no-default-features --target-dir target/no-default-features
     cargo test -p animsmith --test scale_cli --no-default-features --target-dir target/no-default-features
+    cargo test -p animsmith --test transition_pose_cli --no-default-features --target-dir target/no-default-features
     cargo build -p animsmith --no-default-features --target-dir target/no-default-features
     cargo build -p animsmith --release
     cargo build -p animsmith --release --no-default-features --target-dir target/no-default-features
