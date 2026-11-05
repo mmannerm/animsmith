@@ -85,7 +85,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Execute both Rust-generated report viewers in the Node browser harness
+      - name: Install locked browser-check dependency and Chromium
+        run: |
+          npm ci
+          npx --no-install playwright install chromium --only-shell --with-deps
+      - name: Execute generated reports in deterministic harnesses and real Chromium
         run: just report-browser
 
   msrv:

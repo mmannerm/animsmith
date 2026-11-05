@@ -1,7 +1,8 @@
 # Dependabot keeps dependencies and pinned Action versions current with
 # weekly PRs. Cargo covers the main workspace and the detached
 # nightly-only fuzz crate (its own workspace); github-actions covers the
-# workflow files under .github/workflows.
+# workflow files under .github/workflows. npm owns the private browser-check
+# development dependency and its lockfile.
 #
 # Grouping: root-Cargo minor/patch bumps, all fuzz-crate bumps, and all
 # Action bumps each collapse into one PR per ecosystem. Root-Cargo MAJOR
@@ -16,6 +17,16 @@
 # the config's intent.
 version: 2
 updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope
+
   - package-ecosystem: cargo
     directory: "/"
     schedule:
