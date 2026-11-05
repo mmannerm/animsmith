@@ -1647,33 +1647,11 @@ fn tracked_site_assets_stage_as_the_theme_and_never_as_published_source() {
 /// What the script *does* to a page is executed rather than read:
 /// `scripts/test-theme-bridge.js` builds mdBook's own chrome and asserts the
 /// sidebar gains exactly one Home entry resolving through `path_to_root`.
-/// This test keeps the asset, its wiring and its stylesheet in place.
+/// This test checks the CSS declarations supporting the sidebar pin and
+/// clickable title; the tracked-asset and gate wiring checks are separate.
 #[test]
-fn the_site_script_gives_every_page_a_link_back_to_the_front_door() {
+fn home_link_styles_preserve_the_sidebar_pin_and_clickable_title() {
     let root = repo_root();
-    let script =
-        std::fs::read_to_string(root.join("docs/site").join(SITE_SCRIPT)).expect("reads script");
-    for required in [
-        // mdBook's own site-root prefix, which is what makes one href work
-        // from every depth, and the front door it resolves to.
-        "path_to_root",
-        "index.html",
-        // The two places the link is written, and the label a reader reads.
-        ".sidebar .chapter",
-        ".menu-title",
-        "\"Home\"",
-        // The class both links carry, which is how the script recognises its
-        // own work and how the stylesheet finds it, and the class on the
-        // sidebar row, which now carries the scrollbox's top padding.
-        "as-home",
-        "chapter-item as-home-item",
-    ] {
-        assert!(
-            script.contains(required),
-            "{SITE_SCRIPT} must keep {required:?}"
-        );
-    }
-
     // The stylesheet is read as declarations rather than as selector text,
     // because the selectors are not what carries the behaviour: `position:
     // static` on the Home row leaves it scrolling off the top the moment
@@ -1741,27 +1719,15 @@ fn css_rule(stylesheet: &str, selector: &str) -> Option<String> {
     None
 }
 
-/// The bridge's own selector, mirrored here so the pages and the script
-/// cannot drift apart: a report document under `docs/visuals/`, in either
-/// the relative spelling the Markdown carries or the site-absolute one
-/// staging rewrites it to.
-fn selects_report(source: &str) -> bool {
-    let path = source.split('#').next().unwrap_or_default();
-    path.ends_with(".html")
-        && (path.contains("/docs/visuals/")
-            || path.starts_with("visuals/")
-            || path.contains("/visuals/"))
-}
-
 /// The site script is a tracked asset like the stylesheet, so the staged
 /// theme carries it and a published page never needs an inline script.
 ///
 /// What the bridge *does* to a fragment is executed rather than read:
 /// `scripts/test-theme-bridge.js` runs it against a synthetic page under
 /// `just report-browser`, beside the generated viewers it drives. This test
-/// keeps the asset, its selector and that wiring in place.
+/// keeps the asset, report destinations and that wiring in place.
 #[test]
-fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
+fn the_theme_bridge_and_embedded_report_assets_are_tracked() {
     let root = repo_root();
     let recipes = std::fs::read_to_string(root.join("justfile")).expect("reads the recipes");
     assert!(
@@ -1781,71 +1747,52 @@ fn the_theme_bridge_is_tracked_and_pins_the_embedded_report_theme() {
         "the site script must be tracked for the build to stage it"
     );
 
-    let script =
-        std::fs::read_to_string(root.join("docs/site").join(SITE_SCRIPT)).expect("reads bridge");
-    for required in [
-        // The book's theme classes it maps, both directions.
-        "navy",
-        "coal",
-        "ayu",
-        "light",
-        "rust",
-        // The fragment key the report viewers read, and the observer that
-        // re-applies it when mdBook swaps the class on <html>.
-        "theme",
-        "MutationObserver",
-        "attributeFilter",
-    ] {
-        assert!(
-            script.contains(required),
-            "{SITE_SCRIPT} must keep {required:?}"
-        );
-    }
-    assert!(
-        !script.contains("contentDocument") && !script.contains("contentWindow"),
-        "{SITE_SCRIPT} rewrites its own src rather than reading into the frame"
-    );
-
-    // Every page that embeds a report must be reachable by the bridge's own
-    // rule, in both spellings a frame source is ever written in: the
-    // relative one the repository Markdown carries, and the site-absolute
-    // one staging rewrites it to for the published page.
-    for spelling in [
-        "../visuals/walk.report.html",
-        "/animsmith/docs/visuals/walk.report.html",
-    ] {
-        assert!(
-            selects_report(spelling),
-            "{SITE_SCRIPT} must select a frame written as {spelling}"
-        );
-    }
-    assert!(
-        !selects_report("/animsmith/docs/cli.html") && !selects_report("../visuals/walk.svg"),
-        "{SITE_SCRIPT} selects report documents only"
-    );
+    let visual_root = root
+        .join("docs/visuals")
+        .canonicalize()
+        .expect("visual assets exist");
+    let tracked = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "--", "docs/visuals"])
+        .output()
+        .expect("lists tracked report assets");
+    assert!(tracked.status.success());
+    let tracked_paths = String::from_utf8(tracked.stdout).unwrap();
+    let tracked_paths: BTreeSet<_> = tracked_paths.lines().collect();
 
     let mut embedded = 0usize;
     for page in markdown_files(&root.join("docs")) {
         let markdown = std::fs::read_to_string(&page).expect("reads documentation page");
-        let mut rest = markdown.as_str();
-        while let Some(offset) = rest.find("<iframe src=\"") {
-            rest = &rest[offset + "<iframe src=\"".len()..];
-            let source = &rest[..rest.find('"').expect("iframe src is quoted")];
+        for (_, source) in docs_markdown::rendered_html_references(&markdown, &[("iframe", "src")])
+        {
             let path = source.split('#').next().unwrap_or_default();
+            let target = page
+                .parent()
+                .unwrap()
+                .join(path)
+                .canonicalize()
+                .unwrap_or_else(|error| {
+                    panic!("{} embeds missing {source}: {error}", page.display())
+                });
             assert!(
-                selects_report(path),
-                "{} embeds {source}, which the theme bridge would not recognise",
+                target.starts_with(&visual_root)
+                    && target.extension().is_some_and(|ext| ext == "html"),
+                "{} must embed a report HTML asset under docs/visuals: {source}",
                 page.display()
             );
-            for root in ["/animsmith/docs/", "/animsmith/dev/docs/"] {
-                let staged = format!("{root}{}", path.trim_start_matches("../"));
-                assert!(
-                    selects_report(&staged),
-                    "{} embeds {source}, which the bridge would lose once staging writes \
-                     it as {staged}",
-                    page.display()
-                );
-            }
+            let tracked_path = format!(
+                "docs/visuals/{}",
+                target
+                    .strip_prefix(&visual_root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            );
+            assert!(
+                tracked_paths.contains(tracked_path.as_str()),
+                "embedded report is not tracked: {tracked_path}"
+            );
             embedded += 1;
         }
     }

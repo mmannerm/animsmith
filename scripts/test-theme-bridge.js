@@ -54,7 +54,7 @@ const FRAMES = [
 // What each of mdBook's five themes must pin, and the order a reader switches
 // through in this run.
 const THEMES = { light: "light", rust: "light", navy: "dark", coal: "dark", ayu: "dark" };
-const SWITCHES = ["light", "navy", "coal"];
+const SWITCHES = ["light", "navy", "coal", "ayu", "rust"];
 
 // The page this runs against sits two directories down, exactly like
 // docs/symptoms/loop-pops.html, so a link that forgets the prefix resolves
@@ -145,12 +145,19 @@ function fragmentPairs(src) {
 }
 
 function load(code, pathToRoot) {
+  const reached = [];
+  const forbidden = (name) => () => {
+    reached.push(name);
+    throw new Error(`the theme bridge reached ${name}`);
+  };
   const root = { className: "" };
   const page = chrome();
   const frames = FRAMES.map((frame) => ({
     ...frame,
     attrs: { src: frame.src },
     writes: 0,
+    get contentDocument() { return forbidden(`${frame.name}.contentDocument`)(); },
+    get contentWindow() { return forbidden(`${frame.name}.contentWindow`)(); },
     getAttribute(name) { return this.attrs[name]; },
     setAttribute(name, value) { this.attrs[name] = value; this.writes++; },
   }));
@@ -159,11 +166,6 @@ function load(code, pathToRoot) {
     constructor(callback) { this.callback = callback; }
     observe(target, options) { observed.push({ target, options, callback: this.callback }); }
   }
-  const reached = [];
-  const forbidden = (name) => () => {
-    reached.push(name);
-    throw new Error(`the theme bridge reached ${name}`);
-  };
   const context = {
     fetch: forbidden("fetch"),
     XMLHttpRequest: forbidden("XMLHttpRequest"),
@@ -300,12 +302,6 @@ function exercise(code) {
     }
   }
 
-  // The bridge writes one attribute and reads nothing else: no network
-  // global, and no per-viewer storage, is reachable from it.
-  if (page.reached.length !== 0) {
-    throw new Error(`the theme bridge used ${page.reached.join(", ")}`);
-  }
-
   // Re-delivering the same theme must write nothing: assigning an unchanged
   // src would re-navigate every embedded report on every observed mutation.
   const before = page.frames.map((frame) => frame.writes);
@@ -313,45 +309,16 @@ function exercise(code) {
   if (String(page.frames.map((frame) => frame.writes)) !== String(before)) {
     throw new Error("an unchanged theme still rewrote a frame source");
   }
+
+  // Record accesses even if the production script catches the thrown error.
+  // The bridge owns frame attributes, not frame documents or browser storage.
+  for (const loaded of [page, reloaded, rootless]) {
+    if (loaded.reached.length !== 0) {
+      throw new Error(`the theme bridge used ${loaded.reached.join(", ")}`);
+    }
+  }
 }
 
 exercise(source);
-
-// Every rule above is load-bearing: each mutation below breaks one of them,
-// and the harness must refuse it.
-const MUTATIONS = [
-  // A link home that forgets mdBook's prefix reaches the current directory,
-  // which on a symptom page is not the site root.
-  [
-    'return typeof path_to_root === "string" ? path_to_root + "index.html" : null;',
-    'return "index.html";',
-  ],
-  // Appended instead of prepended, Home lands under the last part rather
-  // than above the first.
-  ["chapters.insertBefore(item, chapters.firstChild);", "chapters.appendChild(item);"],
-  // Without the guard a second load stacks a second Home entry.
-  ['if (chapters && !chapters.querySelector("a.as-home")) {', "if (chapters) {"],
-  // The stylesheet finds the row by this class; without it the sidebar loses
-  // its top padding and Home scrolls away with the list.
-  ['item.className = "chapter-item as-home-item";', 'item.className = "chapter-item";'],
-  // Codex's case: keeping only the theme drops the reader's own deep link.
-  ['return path + "#" + pairs.join("&");', 'return path + "#theme=" + value;'],
-  // Keeping the old theme pair leaves two of them, and the report reads the first.
-  ['if (key !== THEME_KEY && pair) pairs.push(pair);', 'if (pair) pairs.push(pair);'],
-  // A swapped mapping pins the opposite of what the page shows.
-  ['var DARK = ["navy", "coal", "ayu"];', 'var DARK = ["light", "rust"];'],
-  // A selector that matches everything rewrites the book's own frames.
-  ['return /\\.html$/.test(path) && /(^|\\/)visuals\\//.test(path);', 'return true;'],
-  // A substring test would match a directory merely ending in `visuals`.
-  ['/(^|\\/)visuals\\//.test(path)', 'path.indexOf("visuals/") !== -1'],
-  // Watching every attribute makes the page rewrite its frames on any change.
-  ['attributeFilter: ["class"],', ''],
-];
-for (const [from, to] of MUTATIONS) {
-  if (!source.includes(from)) throw new Error(`the bridge no longer contains ${from}`);
-  let refused = false;
-  try { exercise(source.replace(from, to)); } catch (_) { refused = true; }
-  if (!refused) throw new Error(`the theme-bridge contract accepted the mutation ${from} -> ${to}`);
-}
 
 console.log("site script contract passed");

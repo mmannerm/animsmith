@@ -20,6 +20,7 @@
 //! [pipeline scenario guide]: https://github.com/mmannerm/animsmith/blob/main/docs/pipeline-scenarios.md
 
 #![warn(missing_docs)]
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 
 #[cfg(feature = "report")]
 use animsmith_core::evaluate_checks;
