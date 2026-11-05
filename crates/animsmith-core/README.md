@@ -135,6 +135,14 @@ projection while refusing live animation, mesh, and skin references. It rejects 
 at a retargeting relationship. For a final-pose hold, use the existing
 `animsmith_core::transform::hold_extend` helper.
 
+`transform::slice` and `transform::hold_extend` return
+`Result<(), TransformTimingError>` and leave the clip unchanged on error.
+Callers must handle invalid arguments and unrepresentable f32 timelines,
+including positive holds too small to advance a last key. Slicing retains its
+boundary deduplication and supports equal bounds and negative starts; empty
+tracks remain unchanged by a valid hold. These fallible signatures replace
+the previous unit-returning API in 0.15.
+
 For recipe-v4 rest/bind integration, `animsmith_core::scale` also builds and
 compares versioned assembly basis records before remapping. Those records bind
 named parent topology, target paths, rests and orientations, helper layout,

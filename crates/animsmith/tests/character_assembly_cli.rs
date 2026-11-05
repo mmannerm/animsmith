@@ -860,6 +860,135 @@ fn invalid_recipe_leaves_no_partial_outputs() {
     assert!(!dir.path().join("character.assembly.json").exists());
 }
 
+fn write_timing_assembly_inputs(dir: &Path, last: f32) {
+    use animsmith_core::glam::Vec3;
+    use animsmith_core::model::{
+        Bone, Clip, Document, Interpolation, Property, Skeleton, Track, TrackValues, Transform,
+    };
+    let inputs = dir.join("inputs");
+    std::fs::create_dir(&inputs).unwrap();
+    let mut document = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "joint".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&document, &inputs.join("base.glb")).unwrap();
+    document.clips.push(Clip {
+        name: "source".into(),
+        duration_s: f64::from(last),
+        tracks: vec![Track {
+            bone: 0,
+            property: Property::Translation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0, last],
+            values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X]),
+        }],
+    });
+    animsmith_gltf::write::write(&document, &inputs.join("motion.glb")).unwrap();
+}
+
+#[test]
+fn unrepresentable_assembly_hold_refuses_before_either_output_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    write_timing_assembly_inputs(dir.path(), 65_536.0);
+    let recipe = concat!(
+        "schema_version = 3\nschema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
+        "input_root = \"inputs\"\nbase_input = \"base.glb\"\nfps = 1000.0\n",
+        "[[clips]]\nname = \"held\"\ninput = \"motion.glb\"\ntake = \"source\"\nhold_frames = 1\n",
+    );
+    std::fs::write(dir.path().join("recipe.toml"), recipe).unwrap();
+    let base_before = std::fs::read(dir.path().join("inputs/base.glb")).unwrap();
+    let motion_before = std::fs::read(dir.path().join("inputs/motion.glb")).unwrap();
+    for prior_outputs in [false, true] {
+        if prior_outputs {
+            std::fs::write(dir.path().join("character.glb"), b"old artifact").unwrap();
+            std::fs::write(dir.path().join("character.assembly.json"), b"old evidence").unwrap();
+        }
+        let result = run_args(
+            dir.path(),
+            &[
+                "recipe.toml",
+                "-o",
+                "character.glb",
+                "--evidence",
+                "character.assembly.json",
+                "--format",
+                "json",
+            ],
+        );
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stderr.is_empty());
+        let refusal: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(refusal["schema"], "urn:animsmith:schema:producer-refusal:1");
+        assert_eq!(refusal["rejection"]["stage"], "transform");
+        assert_eq!(refusal["rejection"]["kind"], "asset-recipe-mismatch");
+        assert!(
+            refusal["rejection"]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("hold extension refused")
+        );
+        if prior_outputs {
+            assert_eq!(
+                std::fs::read(dir.path().join("character.glb")).unwrap(),
+                b"old artifact"
+            );
+            assert_eq!(
+                std::fs::read(dir.path().join("character.assembly.json")).unwrap(),
+                b"old evidence"
+            );
+        } else {
+            assert!(!dir.path().join("character.glb").exists());
+            assert!(!dir.path().join("character.assembly.json").exists());
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join("inputs/base.glb")).unwrap(),
+            base_before
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("inputs/motion.glb")).unwrap(),
+            motion_before
+        );
+    }
+}
+
+#[test]
+fn assembly_keeps_a_single_frame_window_with_zero_hold_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    write_timing_assembly_inputs(dir.path(), 1.0);
+    std::fs::write(dir.path().join("recipe.toml"), concat!(
+        "schema_version = 3\nschema = \"urn:animsmith:schema:character-assembly-recipe:3\"\n",
+        "input_root = \"inputs\"\nbase_input = \"base.glb\"\nfps = 30.0\n",
+        "[[clips]]\nname = \"pose\"\ninput = \"motion.glb\"\ntake = \"source\"\nframe_window = [1, 1]\nhold_frames = 0\n",
+    )).unwrap();
+    let result = run(dir.path());
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_published_pair_is_bound(dir.path());
+    let written = animsmith_gltf::load(&dir.path().join("character.glb")).unwrap();
+    assert_eq!(written.clips[0].duration_s, 0.0);
+    assert_eq!(written.clips[0].tracks[0].times, [0.0]);
+    assert_eq!(
+        written.clips[0].tracks[0].key_vec3(0),
+        Some(animsmith_core::glam::Vec3::ZERO)
+    );
+}
+
 #[test]
 #[cfg(unix)]
 fn linked_input_is_rejected_before_outputs_change() {
