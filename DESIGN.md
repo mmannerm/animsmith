@@ -668,6 +668,14 @@ learns an embedder's contract schema.
 `animsmith report clip.glb -o report.html` → **one self-contained offline
 HTML file** (CI-artifact- and PR-attachment-friendly; no CDN, no install).
 
+Both HTML forms reuse the CLI's current lint analysis and its same `MetricGrids`,
+resolved roles and validated `LintFileReportV19` owner. The renderer accepts no
+independent prediction/provenance pair: it checks source association, preserves
+current immutable V3/V5/V6 attachments, and derives a named display projection.
+Engine evidence remains whole-input even when clip selection narrows mechanical
+findings and charts. This keeps source-only diagnostics visible without a second
+engine evaluator or historical-schema dispatcher in the report crate.
+
 The explicit comparison spelling is a separate presentation producer: it
 preflights named/indexed skeleton correspondence, selected metric-grid work,
 and input text before either side's checks run; writes atomically only to an

@@ -182,3 +182,13 @@ function animsmithFrameLoop(advance) {
     },
   };
 }
+
+// A presentation summary of current immutable engine evidence, never an
+// interpretation of a historical schema or an engine acceptance verdict.
+function animsmithEngineFacetText(facet) {
+  const subject = facet.scope.subject == null ? "" : ` · ${facet.scope.subject}`;
+  const state = facet.state === "available" ? "prediction available" :
+    `required prediction unavailable: ${facet.reasons.join(", ")}`;
+  const result = facet.result == null ? "" : ` · result ${JSON.stringify(facet.result)}`;
+  return `${facet.check_id} · ${facet.scope.code}${subject} — ${state}${result}`;
+}

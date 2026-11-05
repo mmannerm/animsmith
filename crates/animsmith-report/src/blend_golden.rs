@@ -426,7 +426,9 @@ fn write_blend_goldens() {
     }
     let mut cases = Vec::new();
     for (name, doc) in fixtures() {
-        let grids = MetricGrids::new(&doc);
+        let source = crate::test_support::source(doc);
+        let doc = source.document();
+        let grids = MetricGrids::new(doc);
         let a = grids.grid(0).expect("primary clip must have a metric grid");
         let b = grids.grid(1).expect("paired clip must have a metric grid");
         let mut samples: Vec<Value> = Vec::new();
@@ -478,7 +480,11 @@ fn write_blend_goldens() {
         }
         let roles = ResolvedRoles::from_names(&doc.skeleton, names);
         let config = Config::default();
-        let html = render(ReportInputs::new(&grids, &roles, &[], &config));
+        let evidence = crate::test_support::evidence(&source, &roles, &[]);
+        let html = render(ReportInputs::new(
+            &grids, &roles, &source, &evidence, &config,
+        ))
+        .unwrap();
         assert_embedded_samples(&html, [&a, &b]);
         if let Some(path) = &output {
             std::fs::write(path.join(&html_name), html).unwrap();

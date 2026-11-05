@@ -311,10 +311,16 @@ mod tests {
         }
     }
     fn payload(doc: &Document, evidence: bool, filter: Option<&str>) -> Value {
-        let grids = MetricGrids::new(doc);
-        payload_from_grids(&grids, evidence, filter)
+        let source = crate::test_support::source(doc.clone());
+        let grids = MetricGrids::new(source.document());
+        payload_from_grids(&source, &grids, evidence, filter)
     }
-    fn payload_from_grids(grids: &MetricGrids<'_>, evidence: bool, filter: Option<&str>) -> Value {
+    fn payload_from_grids(
+        source: &animsmith_core::LoadedSource,
+        grids: &MetricGrids<'_>,
+        evidence: bool,
+        filter: Option<&str>,
+    ) -> Value {
         let roles = ResolvedRoles::default();
         let config = Config::default();
         let checks = [animsmith_core::CheckEvaluation::evaluated(
@@ -330,13 +336,15 @@ mod tests {
             ),
         )
         .unwrap()];
+        let report = crate::test_support::evidence(source, &roles, &checks);
         let html = render(ReportInputs {
             options: ReportOptions {
                 evidence_only: evidence,
             },
             clip: filter,
-            ..ReportInputs::new(grids, &roles, &checks, &config)
-        });
+            ..ReportInputs::new(grids, &roles, source, &report, &config)
+        })
+        .unwrap();
         let raw = html
             .split_once("<script type=\"application/json\" id=\"report-data\">")
             .unwrap()
@@ -532,10 +540,11 @@ mod tests {
         second.name = "b".into();
         second.tracks[0].values = TrackValues::Vec3s(vec![Vec3::splat(9.0); 3]);
         doc.clips.push(second);
-        let grids = MetricGrids::new(&doc);
+        let source = crate::test_support::source(doc.clone());
+        let grids = MetricGrids::new(source.document());
         let originals = [grids.grid(0).unwrap(), grids.grid(1).unwrap()];
         let scope = work::Scope::start();
-        let full = payload_from_grids(&grids, false, None);
+        let full = payload_from_grids(&source, &grids, false, None);
         let trace = scope.finish();
         assert!(trace.order_valid && trace.preflight_finished);
         assert_eq!(trace.source.len(), 2);
@@ -557,7 +566,7 @@ mod tests {
         assert_eq!((trace.raw_bytes, trace.base64_bytes), (240, 320));
 
         let scope = work::Scope::start();
-        let selected = payload_from_grids(&grids, false, Some("b"));
+        let selected = payload_from_grids(&source, &grids, false, Some("b"));
         let trace = scope.finish();
         assert_eq!(selected["clips"], serde_json::json!([full["clips"][1]]));
         assert_eq!(trace.source.len(), 1);
@@ -568,7 +577,7 @@ mod tests {
         );
 
         let scope = work::Scope::start();
-        let evidence = payload_from_grids(&grids, true, None);
+        let evidence = payload_from_grids(&source, &grids, true, None);
         let trace = scope.finish();
         assert_eq!(evidence["findings"], full["findings"]);
         assert!(!trace.preflight_finished);

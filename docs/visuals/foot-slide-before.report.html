@@ -197,7 +197,7 @@ path.series-member-5 { stroke-dasharray: 1 4; }
 <ul id="findings"></ul>
 <h2>Coverage gaps</h2>
 <ul id="gaps"></ul>
-<h2>Engine predictions</h2>
+<h2>Whole-input engine evidence</h2>
 <ul id="predictions"></ul>
 <h2>Charts</h2>
 <div id="charts"><figure class="chart" data-clip="acceptance-matrix" data-clipindex="0" data-kind="gait" data-pad="34" data-plotw="292"><figcaption>acceptance-matrix — foot height relative to hips · what to look for: this clip is declared a loop, so the curves should end where they began; the foot-slide check judged stance intervals on this clip, and a foot that moves horizontally during a plant is the slide it reports</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — foot height relative to hips over frames 0 to 4: L foot, R foot 0.00 to 0.30 m; L−R -0.30 to 0.30 m on its own right-hand axis"><title>acceptance-matrix — foot height relative to hips</title><line class="series-left" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">L foot</text><line class="series-right" x1="131.3" x2="141.3" y1="9" y2="9"/><text class="legend" x="144.3" y="12.0">R foot</text><line class="series-diff" x1="228.7" x2="238.7" y1="9" y2="9"/><text class="legend" x="241.7" y="12.0">L−R (right axis)</text><path class="series-left" d="M34.0,134.0L107.0,134.0L180.0,56.7L253.0,18.0L326.0,134.0" fill="none"/><path class="series-right" d="M34.0,134.0L107.0,18.0L180.0,134.0L253.0,134.0L326.0,134.0" fill="none"/><path class="series-diff" d="M34.0,76.0L107.0,134.0L180.0,37.3L253.0,18.0L326.0,76.0" fill="none"/><line class="playhead" x1="34" x2="34" y1="18" y2="134.0"/><text class="axis" x="2.0" y="21.0">0.30 m</text><text class="axis" x="2.0" y="134.0">0.00 m</text><text class="axis" x="358.0" y="21.0" text-anchor="end">0.30 m</text><text class="axis" x="358.0" y="134.0" text-anchor="end">-0.30 m</text><text class="axis" x="34.0" y="146.0">frame 0</text><text class="axis" x="326.0" y="146.0" text-anchor="end">frame 4</text></svg></figure><figure class="chart" data-clip="acceptance-matrix" data-clipindex="0" data-kind="rootpath"><figcaption>acceptance-matrix — root path (top-down) · what to look for: this clip is declared a loop, so its root path should end where it began; this clip declares who owns its horizontal travel and the in-place check judged the root against that declaration, so the path is the evidence for it · the dot is the current frame, the hollow circle where the track starts and the square where it ends · the path spans 0.040 m at its widest · the track closes on itself</figcaption><svg viewBox="0 0 360 150" width="100%" role="img" aria-label="acceptance-matrix — root path (top-down): X -0.02 to 0.02 m, Z 0.00 to 0.02 m, 5 frames on one uniform scale"><title>acceptance-matrix — root path (top-down)</title><line class="root-path" x1="34.0" x2="44.0" y1="9" y2="9"/><text class="legend" x="47.0" y="12.0">root</text><circle class="pathstart" cx="136.3" cy="9" r="6"/><text class="legend" x="144.3" y="12.0">start</text><rect class="pathend" x="230.7" y="6.0" width="6" height="6"/><text class="legend" x="241.7" y="12.0">end</text><path class="root-path" d="M180.0,105.0L238.0,105.0L180.0,47.0L122.0,105.0L180.0,105.0" fill="none"/><circle class="pathstart" cx="180.0" cy="105.0" r="6"/><line class="pathleader" x1="180.0" y1="105.0" x2="191.0" y2="94.0"/><rect class="pathend" x="188.0" y="91.0" width="6" height="6"/><circle class="pathdot" r="3" cx="180.0" cy="105.0"/><text class="axis" x="2.0" y="146.0">X -0.02…0.02 m</text><text class="axis" x="358.0" y="146.0" text-anchor="end">Z 0.00…0.02 m</text></svg><template class="pathpoints">180.0,105.0;238.0,105.0;180.0,47.0;122.0,105.0;180.0,105.0</template></figure></div>
@@ -387,8 +387,18 @@ function animsmithFrameLoop(advance) {
     },
   };
 }
+
+// A presentation summary of current immutable engine evidence, never an
+// interpretation of a historical schema or an engine acceptance verdict.
+function animsmithEngineFacetText(facet) {
+  const subject = facet.scope.subject == null ? "" : ` · ${facet.scope.subject}`;
+  const state = facet.state === "available" ? "prediction available" :
+    `required prediction unavailable: ${facet.reasons.join(", ")}`;
+  const result = facet.result == null ? "" : ` · result ${JSON.stringify(facet.result)}`;
+  return `${facet.check_id} · ${facet.scope.code}${subject} — ${state}${result}`;
+}
 </script>
-<script type="application/json" id="report-data">{"blend":{"base64_bytes":1336,"kind":"sampled-local-trs-blend-v1","omission":null,"raw_bytes":1000},"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"clips":[{"cycle":4,"duration":1.0,"frames":5,"locals":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAD8AAAA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8K16M8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAP83MTD0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAmpmZPgAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAPwAAAD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAACtejPAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/zczMPc3MTD4AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAA/AAAAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/CtejvAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD/NzEw+mpmZPgAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/zcxMPQAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAD8AAAA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAP83MzD4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAPwAAAD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPw==","name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}}],"evidence_only":false,"file":"report-comparison-before.glb","findings":[{"bone":"hand","check":"constant-track","clip":"acceptance-matrix","message":"rotation track has 5 keys but never moves — export bloat","node":null,"severity":"note","time":null},{"bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":0.25},{"bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"groups":[],"prediction_provenance":null,"predictions":[],"profile":"custom"}</script>
+<script type="application/json" id="report-data">{"blend":{"base64_bytes":1336,"kind":"sampled-local-trs-blend-v1","omission":null,"raw_bytes":1000},"bones":[{"name":"root","parent":-1},{"name":"hips","parent":0},{"name":"left_foot","parent":1},{"name":"right_foot","parent":1},{"name":"hand","parent":1}],"clips":[{"cycle":4,"duration":1.0,"frames":5,"locals":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAD8AAAA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8K16M8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAP83MTD0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAmpmZPgAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAPwAAAD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAACtejPAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/zczMPc3MTD4AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAA/AAAAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/CtejvAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD/NzEw+mpmZPgAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/zcxMPQAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAD8AAAA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAP83MzD4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAPwAAAD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPw==","name":"acceptance-matrix","positions":"AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAACtejPAAAAAAAAAAACtejPAAAgD8AAAAAKVyPPQAAgD8AAAAACtejPGZmpj8AAAAAuB4FPwAAwD8AAAAAAAAAAAAAAAAK16M8AAAAAAAAgD8K16M8zczMPZqZmT8K16M8AAAAAAAAgD8K16M8AAAAPwAAwD8K16M8CtejvAAAAAAAAAAACtejvAAAgD8AAAAA7FE4PmZmpj8AAAAAkML1PAAAgD8AAAAAj8L1PgAAwD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAzczMPgAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAPwAAwD8AAAAA","trails":{"hips":1,"left_foot":2,"right_foot":3,"root":0}}],"engine_evidence":{"checks":[{"applicability":"not_applicable","check_id":"engine-addressability","configuration":"enabled","evaluation":"not_evaluated","findings":[],"selection":"selected"},{"applicability":"not_applicable","check_id":"engine-clip-boundary","configuration":"enabled","evaluation":"not_evaluated","findings":[],"selection":"selected"},{"applicability":"not_applicable","check_id":"engine-unit-scale","configuration":"enabled","evaluation":"not_evaluated","findings":[],"selection":"selected"},{"applicability":"not_applicable","check_id":"engine-track-support","configuration":"enabled","evaluation":"not_evaluated","findings":[],"selection":"selected"},{"applicability":"not_applicable","check_id":"engine-root-motion","configuration":"enabled","evaluation":"not_evaluated","findings":[],"selection":"selected"}],"projection":{"facets":[],"kind":"animsmith-engine-display-v1","profile":null,"scope":"whole_input"},"provenance":null},"evidence_only":false,"file":"report-comparison-before.glb","findings":[{"bone":"hand","check":"constant-track","clip":"acceptance-matrix","message":"rotation track has 5 keys but never moves — export bloat","node":null,"severity":"note","time":null},{"bone":"left_foot","check":"loop-closure","clip":"acceptance-matrix","message":"loop does not close in position: bone 'left_foot' is 0.4000 m from its first-frame model-space position (cap 0.0100 m)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"loop-seam-vel","clip":"acceptance-matrix","message":"loop velocity changes at the seam: bone 'left_foot' differs by 1.3416 m/s between the incoming and outgoing model-space velocities (cap 0.1000 m/s)","node":null,"severity":"error","time":1.0},{"bone":"left_foot","check":"foot-slide","clip":"acceptance-matrix","message":"left foot skates during stance: speed deviates 0.72 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":0.25},{"bone":"right_foot","check":"foot-slide","clip":"acceptance-matrix","message":"right foot skates during stance: speed deviates 0.88 m/s from the expected 1.00 m/s (cap 0.30) — foot plants will slip at runtime","node":null,"severity":"warning","time":1.0}],"gaps":[{"check_id":"bind-pose","code":"insufficient_rotation_evidence","message":"only 1 usable first-frame rotation track(s); at least three are required","scope":{"code":"first_frame_rest_delta","subject":"acceptance-matrix"}}],"groups":[],"kind":"animsmith-report-v1","profile":"custom"}</script>
 <script>// animsmith report viewer — hand-written WebGL2 skeleton renderer.
 // Source panes draw judged pose-grid frames. The optional illustrative pane
 // blends sampled locals across weight; authored clip time is never resampled.
@@ -1085,29 +1095,34 @@ for (const gap of data.gaps) {
 
 // Prediction facets remain distinct from content findings and ordinary gaps.
 const predictionList = document.getElementById("predictions");
-if (!data.prediction_provenance) {
+const engineEvidence = data.engine_evidence;
+const engineDisplay = engineEvidence.projection;
+const addEngineRow = (text, className) => {
   const li = document.createElement("li");
-  li.textContent = "engine-neutral — no profile resolved";
+  if (className) li.className = className;
+  li.textContent = text;
   predictionList.appendChild(li);
-} else if (!data.predictions.length) {
-  const li = document.createElement("li");
-  const selection = data.prediction_provenance.profile.selection;
-  li.textContent = `profile ${selection.family} revision ${selection.profile_revision} resolved; ` +
-    "no engine-backed checks emitted predictions";
-  predictionList.appendChild(li);
+};
+addEngineRow("Whole-input engine evidence includes other clips and source-only subjects.");
+if (!engineDisplay.profile) {
+  addEngineRow("engine-neutral — no profile resolved");
+} else if (!engineDisplay.facets.length) {
+  const selection = engineDisplay.profile;
+  addEngineRow(`profile ${selection.family} revision ${selection.profile_revision} resolved; no engine-backed checks emitted predictions`);
 }
-for (const row of data.predictions) {
-  for (const facet of row.prediction.facets) {
-    const li = document.createElement("li");
-    li.className = "prediction " + facet.state;
-    const subject = facet.scope.subject == null ? "" : ` · ${facet.scope.subject}`;
-    const state = facet.state === "available"
-      ? "available"
-      : `required prediction unavailable: ${facet.reasons.join(", ")}`;
-    li.textContent = `${row.check_id} · ${facet.scope.code}${subject} — ${state}`;
-    predictionList.appendChild(li);
-  }
+for (const facet of engineDisplay.facets) {
+  addEngineRow(animsmithEngineFacetText(facet), "prediction " + facet.state);
 }
+for (const check of engineEvidence.checks) {
+  if (!check.prediction) addEngineRow(`${check.check_id} · ${check.configuration} · ${check.applicability} · ${check.evaluation}`);
+}
+const engineDetails = document.createElement("details");
+const engineSummary = document.createElement("summary");
+engineSummary.textContent = "Original engine checks and provenance";
+const engineRaw = document.createElement("pre");
+engineRaw.textContent = JSON.stringify({ provenance: engineEvidence.provenance, checks: engineEvidence.checks }, null, 2);
+engineDetails.appendChild(engineSummary); engineDetails.appendChild(engineRaw);
+predictionList.appendChild(engineDetails);
 
 // Fragment selection runs once the clip list, charts, and findings exist, so
 // a deep link lands exactly where the equivalent click would. Each option that

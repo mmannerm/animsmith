@@ -8,8 +8,8 @@
 `animsmith-report` renders typed animsmith check evaluations into a single offline HTML
 report. It is the report-generation crate used by the CLI's `report`
 command: callers provide `MetricGrids` built from the loaded `Document`,
-resolved rig roles, check evaluations, and optional prediction provenance;
-the crate returns self-contained HTML without flattening predictions into findings.
+resolved rig roles, the exact `LoadedSource`, and validated current
+`LintFileReportV19` evidence; the crate returns self-contained HTML without flattening predictions into findings.
 
 The report embeds the pose-grid frames computed on the Rust side and
 plays back exactly those frames in a small hand-written WebGL viewer.
@@ -32,8 +32,10 @@ engine-agnostic presentation, not a check or runtime conformance result.
 
 The additional sampled local streams have a 32 MiB aggregate raw-byte budget;
 exceeding it omits blending while preserving source playback and findings.
-Malformed clips omit their own blend capability. The existing `render` API
-remains infallible, and this added-data budget does not bound all report memory.
+Malformed clips omit their own blend capability. This added-data budget does
+not bound all report memory.
+Both renderers return `Result<String, ReportError>` and check source/evidence
+identity and presentation bounds before rendering.
 See the [blend presentation contract](https://github.com/mmannerm/animsmith/blob/main/docs/output.md#html-report-source-poses-and-illustrative-blending)
 for the exact math, work bounds, omission rules and camera limitations.
 
@@ -82,8 +84,9 @@ configuration used for their checks. It refuses identical or incomplete rooted
 dependency-closure identities, including duplicate authored names that a loader
 disambiguated in its normalized document, as well as
 non-identical named/indexed skeleton correspondence, embeds bounded sampled
-poses, and writes separate finding, gap, and prediction-provenance records for
-each selected clip. The viewer displays both complete closure identities. Its
+poses, and writes separate finding and gap records for each selected clip.
+Each side also retains whole-input engine evidence, including other clips and
+source-only subjects. The viewer displays both complete closure identities. Its
 normalized-phase display labels both source times and does not claim an authored
 retime or artistic/engine acceptance.
 

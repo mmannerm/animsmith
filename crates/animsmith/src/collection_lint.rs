@@ -290,7 +290,11 @@ fn execute_source(
         report,
         requires_failure,
         indexed_measurements,
+        grids,
+        #[cfg(feature = "report")]
+            roles: _,
     } = analysis;
+    drop(grids);
     let envelope =
         LintEnvelopeV19::new(current_tool(), vec![report]).map_err(|error| error.to_string())?;
     let nested_output_available =

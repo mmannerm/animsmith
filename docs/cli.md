@@ -153,14 +153,25 @@ and exit 1. Skin membership, inverse-bind evidence, and deformation-model
 evidence are separate facets; they never become an opaque score or turn this
 structural result into a deformation claim.
 
+Both `report` forms use the same current validated analysis as `lint`, including
+addressability, clip-boundary, unit-scale, track-support and root-motion evidence
+for their supported exact profiles. Original provenance, lifecycle, prediction
+wrappers, unavailable reasons and machine results remain separate from the
+presentation projection. No clip selector is needed to inspect source-only
+engine evidence. Report creation exits 0 when HTML is written even when that
+evidence describes lint failures; rendering or loading refusal exits 2. See the
+[HTML engine evidence contract](output.md#html-report-engine-evidence) for bounds
+and source association requirements.
+
 `report --compare-after` writes one offline synchronized before/after diagnostic.
 Both input files and both clip names are explicit; it refuses duplicate or
 incompatible named skeletons, missing/ambiguous clips, unavailable metric
 grids, identical or incomplete rooted dependency closures, and report work
 beyond its fixed bounds. Authored duplicate take names remain ambiguous even
 when a loader gives normalized clips distinct display suffixes. Each panel
-shows both its primary input and complete closure identity, and includes only
-selected-clip or whole-input gaps and predictions. The output cannot alias
+shows both its primary input and complete closure identity. Mechanical findings
+and gaps are scoped to the selected clip or whole input. Engine evidence keeps
+all source subjects and clips, under a clearly labelled whole-input section. The output cannot alias
 either primary input, a rooted sidecar, or the selected config; refusal
 preserves any existing output. The two panels synchronize by
 normalized sampled-frame phase and display both source times — that display
