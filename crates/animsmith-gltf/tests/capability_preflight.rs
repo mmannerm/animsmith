@@ -1357,6 +1357,41 @@ fn rejects_unreferenced_sparse_payloads_overlapping_a_rewritten_accessor() {
 }
 
 #[test]
+fn rejects_sparse_overlap_hidden_by_empty_base_or_explicit_stride() {
+    for empty_base in [false, true] {
+        let value = positions_and_unreferenced_accessor(
+            json!({
+                "componentType":5126,"type":"SCALAR","count":if empty_base {0} else {2},
+                "sparse":{
+                    "count":if empty_base {1} else {2},
+                    "indices":{"bufferView":1,"componentType":5121},
+                    "values":{"bufferView":2}
+                }
+            }),
+            vec![
+                json!({"buffer":0,"byteOffset":32,"byteLength":36}),
+                json!({"buffer":0,"byteOffset":80,"byteLength":2}),
+                if empty_base {
+                    json!({"buffer":0,"byteOffset":32,"byteLength":4})
+                } else {
+                    // Packed interpretation ends at8; declared stride reads
+                    // the second value at36, inside rewritten POSITION.
+                    json!({"buffer":0,"byteLength":40,"byteStride":36})
+                },
+            ],
+        );
+        let (violations, _) = unsupported(&value);
+        assert_eq!(
+            locations(
+                &violations,
+                GltfCapabilityViolationKind::OverlappingAccessorRanges
+            ),
+            vec!["/accessors/0", "/accessors/1/sparse/values/bufferView"],
+        );
+    }
+}
+
+#[test]
 fn rejects_an_unreferenced_sparse_accessor_dense_base_overlapping_a_rewrite() {
     let value = positions_and_unreferenced_accessor(
         json!({
