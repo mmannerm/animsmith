@@ -425,6 +425,17 @@ covers the identity-file comparison and the refresh that repairs it, on
 temporary copies; the version and Bevy-patch pins are exercised by the opt-in
 matrix below, which has a lock fixture for them.
 
+This static guard does not resolve Cargo's dependency graph. The opt-in
+matrix builds the probe with `--locked`, so a missing dependency edge fails
+before compilation rather than silently changing the recorded lock. After
+an intentional graph correction, resolve the isolated manifest with its
+pinned toolchain and refresh the identity using the command above. A changed
+identity makes readbacks from the previous lock fail strict validation;
+regenerate them with the current probe. Resolution alone can fetch the
+isolated graph and platform dependencies on a cold machine; `--offline`
+instead requires them already cached. Graph resolution therefore stays in
+the opt-in lane with the locked build, tool unit tests, and runtime matrix.
+
 The opt-in compile and runtime matrix for the probe itself needs Rust
 `1.95.0` and is not part of CI:
 

@@ -225,17 +225,20 @@ impl VerifiedSnapshot {
             primary: (primary_path.clone(), primary.clone()),
             resources: Vec::with_capacity(closure.external_resources().len()),
         };
+        // Closure keys are relative to the primary file, while authorized
+        // opens and snapshot paths are relative to their respective roots.
+        let primary_parent = primary_relative.parent().ok_or(SnapshotError::Source)?;
         let primary_source = source_root
             .open_source(primary_relative, primary.bytes())
             .map_err(|()| SnapshotError::Source)?;
         stage_verified_file(&primary_source, &primary_path, primary)?;
         for resource in closure.external_resources() {
-            let relative = Path::new(resource.key().as_str());
-            if !safe_relative_path(relative) {
+            let relative = primary_parent.join(resource.key().as_str());
+            if !safe_relative_path(&relative) {
                 return Err(SnapshotError::Source);
             }
             let source = source_root
-                .open_source(relative, resource.identity().bytes())
+                .open_source(&relative, resource.identity().bytes())
                 .map_err(|()| SnapshotError::Source)?;
             let destination = snapshot.root.join(relative);
             snapshot
