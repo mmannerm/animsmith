@@ -264,6 +264,98 @@ fn assert_pose_grid_equal(before: &Document, after: &Document, clip_name: &str) 
 }
 
 #[test]
+fn pruning_preserves_cubic_hemisphere_crossing_motion_after_reload() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let input = dir.path().join("cubic.glb");
+    let output = dir.path().join("pruned.glb");
+    let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+    let opposite_near = Quat::from_xyzw(0.0, 0.0, -0.000_25, -0.999_999_94);
+    let cases = [
+        ("crossing", Interpolation::CubicSpline, opposite_near),
+        ("constant-cubic", Interpolation::CubicSpline, Quat::IDENTITY),
+        ("antipodal-linear", Interpolation::Linear, -Quat::IDENTITY),
+        ("antipodal-step", Interpolation::Step, -Quat::IDENTITY),
+    ];
+    let document = Document {
+        skeleton: Skeleton {
+            bones: vec![Bone {
+                name: "root".into(),
+                parent: None,
+                rest: Transform::IDENTITY,
+                inverse_bind: None,
+            }],
+        },
+        clips: cases
+            .into_iter()
+            .map(|(name, interpolation, end)| Clip {
+                name: name.into(),
+                duration_s: 1.0,
+                tracks: vec![
+                    Track {
+                        bone: 0,
+                        property: Property::Rotation,
+                        interpolation,
+                        times: vec![0.0, 1.0],
+                        values: TrackValues::Quats(
+                            if interpolation == Interpolation::CubicSpline {
+                                vec![zero, Quat::IDENTITY, zero, zero, end, zero]
+                            } else {
+                                vec![Quat::IDENTITY, end]
+                            },
+                        ),
+                    },
+                    Track {
+                        bone: 0,
+                        property: Property::Translation,
+                        interpolation: Interpolation::Linear,
+                        times: vec![0.0, 1.0],
+                        values: TrackValues::Vec3s(vec![Vec3::ZERO, Vec3::X]),
+                    },
+                ],
+            })
+            .collect(),
+        ..Document::default()
+    };
+    animsmith_gltf::write::write(&document, &input).expect("writes synthetic source");
+    let before = animsmith_gltf::load(&input).expect("loads source");
+    let result = run(&[
+        "transform".as_ref(),
+        input.as_os_str(),
+        "--prune-constant-tracks".as_ref(),
+        "--output".as_ref(),
+        output.as_os_str(),
+    ]);
+    assert!(result.status.success(), "{}", error_text(&result));
+    let after = animsmith_gltf::load(&output).expect("reloads published output");
+
+    let crossing_snapshot = |doc: &Document| {
+        track_snapshot(doc)
+            .into_iter()
+            .find(|(name, _)| name == "crossing")
+            .expect("crossing clip survives")
+    };
+    assert_eq!(crossing_snapshot(&after), crossing_snapshot(&before));
+    for doc in [&before, &after] {
+        let clip = find_clip(doc, "crossing");
+        // Independent oracle: at u=1/2 the zero-tangent Hermite weights
+        // are 1/2, so normalize((q0 + q1) / 2). For these authored f32
+        // components, 2*atan2(length(xyz), abs(w)) is 179.972679245 degrees.
+        // Explicitly sample the interior, absent from the two-key proof grid.
+        let midpoint = sample_clip(&doc.skeleton, clip, 3).local(1, 0).rotation;
+        let degrees = f64::from(Quat::IDENTITY.angle_between(midpoint).to_degrees());
+        assert!(
+            (degrees - 179.972_679_245).abs() < 0.001,
+            "cubic midpoint must retain its authored rotation, got {degrees} degrees"
+        );
+    }
+    for name in ["constant-cubic", "antipodal-linear", "antipodal-step"] {
+        let clip = find_clip(&after, name);
+        assert!(!has_track(clip, 0, Property::Rotation), "{name}");
+        assert!(has_track(clip, 0, Property::Translation), "{name}");
+    }
+}
+
+#[test]
 fn transform_prune_constant_tracks_is_opt_in_and_preserves_assets() {
     let dir = tempfile::tempdir().expect("temporary directory");
     let input = dir.path().join("input.glb");

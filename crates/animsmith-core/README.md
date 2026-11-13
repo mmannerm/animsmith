@@ -182,7 +182,11 @@ adds no CLI command and performs no proof or publication. See the
 `animsmith_core::transform::prune_constant_tracks` is an opt-in mechanical
 edit for redundant multi-key TRS tracks. It shares the built-in
 `constant-track` classifier, tests cumulative removals on the original clip's
-sample grid, and returns authored-order removed and retained records. Callers
+sample grid, and returns authored-order removed and retained records.
+Cubic rotation tracks with keys in opposite hemispheres remain: their
+component-wise interpolation can move between nearly equivalent endpoint rotations.
+Constant cubic rotation candidates require one hemisphere and zero tangents;
+STEP and LINEAR candidates retain sign-invariant comparison. Callers
 provide any bone IDs whose authored channels must remain; the function also
 refuses changes that alter sampled local TRS or model-space position/rotation,
 cannot be sampled safely, or would leave the clip without a writable track.

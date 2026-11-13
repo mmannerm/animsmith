@@ -441,7 +441,11 @@ expects a repeated final sample; the complete endpoint-mode classifier remains
 `constant-track` note. It removes only multi-key translation, rotation, and
 scale tracks whose evaluated keyed values are constant: vector components may
 vary by at most `1e-4`, and rotations by at most `1e-3` radians under
-sign-invariant quaternion comparison. Single-key pins, malformed/non-finite
+sign-invariant quaternion comparison. Cubic rotation candidates additionally
+require every key to share one hemisphere and all tangents to be zero:
+component-wise cubic interpolation can rotate between opposite-sign endpoints
+even when they represent nearly identical rotations. STEP and LINEAR tracks
+retain sign-invariant comparison. Single-key pins, malformed/non-finite
 data, and cubic-spline tangents that create motion above tolerance are not
 candidates and remain unchanged. For each candidate, the transform either
 removes it or prints a refusal reason: removing it would change sampled local

@@ -190,6 +190,10 @@ animsmith diff    <A> <B> [--format text|json]     # A/B: assets or one-file out
   sign-invariant rotations `1e-3` radians), verifies the resulting sampled
   local TRS and model-space position/rotation, and reports every original track
   index it removed or retained.
+  Cubic rotation candidates must also keep every key in one hemisphere with
+  zero tangents; component-wise Hermite interpolation does not apply the
+  shortest-path sign correction used for LINEAR rotation. STEP and LINEAR
+  candidates retain sign-invariant equivalence.
   It runs after selected transforms and never substitutes for DCC curve cleanup
   or key reduction. Per-clip `animates_bones` names protect motion evidence;
   `[rig] required_bones` remains a skeleton-presence-only contract.
